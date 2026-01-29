@@ -1,9 +1,8 @@
-const { listMaps, pickMap } = require("./maps");
-
 const path = require("path");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const { pickMap } = require("./maps"); // ✅ map registry (server/maps/index.js)
 
 // --------------------
 // Config (tweakable)
@@ -24,9 +23,9 @@ const TICK_HZ = 20;
 const TICK_MS = Math.floor(1000 / TICK_HZ);
 const PLAYER_SPEED = 220; // px/sec (tweak)
 
-// Temporary world bounds (until we add map + collision)
-const WORLD_W = 2400;
-const WORLD_H = 1600;
+// Fallback world bounds (used before a map is chosen)
+const DEFAULT_WORLD_W = 2400;
+const DEFAULT_WORLD_H = 1600;
 
 // --------------------
 // In-memory game store
@@ -36,7 +35,8 @@ const WORLD_H = 1600;
  *   code,
  *   hostPlayerId,
  *   phase: "lobby" | "running",
- *   settings: { tableBase, teamCount, inputMode },
+ *   settings: { tableBase, teamCount, inputMode, mapChoice },
+ *   map: { id, name, world:{w,h}, walls:[] } | null,
  *   players: Map(playerId -> Player),
  * }
  *
@@ -80,6 +80,11 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function getWorldForGame(game) {
+  if (game?.map?.world?.w && game?.map?.world?.h) return game.map.world;
+  return { w: DEFAULT_WORLD_W, h: DEFAULT_WORLD_H };
+}
+
 function lobbySummary(game) {
   return {
     players: [...game.players.values()].map((p) => ({
@@ -106,9 +111,10 @@ function removePlayerFromGame(io, game, playerId) {
 }
 
 function snapshotForGame(game) {
+  const world = getWorldForGame(game);
   return {
     time: Date.now(),
-    world: { w: WORLD_W, h: WORLD_H },
+    world,
     players: [...game.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -128,15 +134,11 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// Serve the client folder (easy local dev)
+// Serve the client folder (local dev)
 const CLIENT_PATH = path.resolve(__dirname, "..", "client");
 console.log("SERVING CLIENT FROM:", CLIENT_PATH);
-app.use(express.static(CLIENT_PATH));
-
-
-// ✅ DEBUG: prove which folder is actually being served
-console.log("Serving client from:", path.join(__dirname, "..", "client"));
 console.log("Server folder is:", __dirname);
+app.use(express.static(CLIENT_PATH));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -153,6 +155,8 @@ setInterval(() => {
   for (const code of Object.keys(games)) {
     const game = games[code];
     if (!game || game.phase !== "running") continue;
+
+    const world = getWorldForGame(game);
 
     for (const p of game.players.values()) {
       const up = !!p.input?.up;
@@ -177,8 +181,9 @@ setInterval(() => {
       p.x += vx * PLAYER_SPEED * dt;
       p.y += vy * PLAYER_SPEED * dt;
 
-      p.x = clamp(p.x, 0, WORLD_W);
-      p.y = clamp(p.y, 0, WORLD_H);
+      // Clamp to map/world bounds
+      p.x = clamp(p.x, 0, world.w);
+      p.y = clamp(p.y, 0, world.h);
     }
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -204,6 +209,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("createGame", (payload = {}) => {
+    // sanitize host settings
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
     const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
     const inputMode =
@@ -213,21 +219,26 @@ io.on("connection", (socket) => {
         ? payload.inputMode
         : "kbm";
 
+    // ✅ new: map choice (can be "map01" or "random" etc.)
+    const mapChoice = String(payload.mapChoice || "map01");
+
     const code = createUniqueCode();
 
     const game = {
       code,
       hostPlayerId: session.playerId,
       phase: "lobby",
-      settings: { tableBase, teamCount, inputMode },
+      settings: { tableBase, teamCount, inputMode, mapChoice },
+      map: null, // chosen at startGame so "random" resolves once
       players: new Map(),
     };
 
+    // add host
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: 0,
+      teamId: 0, // default (host can reassign)
       x: randInt(200, 500),
       y: randInt(200, 500),
       dirX: 1,
@@ -272,6 +283,7 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // join
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
@@ -308,6 +320,7 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
+    // only host can assign
     if (session.playerId !== game.hostPlayerId) return;
 
     const targetId = String(payload.playerId || "");
@@ -329,23 +342,48 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
+    // only host
     if (session.playerId !== game.hostPlayerId) return;
 
+    // require at least 2 players
     if (game.players.size < 2) return;
 
+    // require all assigned
     for (const p of game.players.values()) {
       if (p.teamId === null || p.teamId === undefined) return;
+    }
+
+    // ✅ choose map now (so "random" resolves ONCE)
+    const map = pickMap(game.settings.mapChoice);
+    game.map = map;
+
+    // optional: spawn players near spawn points (simple)
+    if (Array.isArray(map.spawns) && map.spawns.length) {
+      let i = 0;
+      for (const p of game.players.values()) {
+        const s = map.spawns[i % map.spawns.length];
+        p.x = s.x;
+        p.y = s.y;
+        i++;
+      }
     }
 
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
-      world: { w: WORLD_W, h: WORLD_H },
+      map: {
+        id: map.id,
+        name: map.name,
+        world: map.world,
+        walls: map.walls,
+      },
     });
 
+    // Immediately push one snapshot so clients draw instantly
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   });
 
+  // Movement input (authoritative server sim)
   socket.on("input", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -371,6 +409,7 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
+    // host leaves → end game (v0 policy)
     if (game.hostPlayerId === session.playerId) {
       io.to(code).emit("GAME_ENDED", { reason: "host_left" });
       delete games[code];
