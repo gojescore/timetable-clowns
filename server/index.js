@@ -2,7 +2,7 @@ const path = require("path");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { pickMap } = require("./maps"); // ✅ map registry (server/maps/index.js)
+const { pickMap } = require("./maps"); // server/maps/index.js builds derived walls + machines
 
 // --------------------
 // Config (tweakable)
@@ -21,11 +21,10 @@ const MAX_TABLE = 10;
 // Tick + movement
 const TICK_HZ = 20;
 const TICK_MS = Math.floor(1000 / TICK_HZ);
-const PLAYER_SPEED = 220; // px/sec (tweak)
+const PLAYER_SPEED = 220; // px/sec
 
-// Fallback world bounds (used before a map is chosen)
-const DEFAULT_WORLD_W = 2400;
-const DEFAULT_WORLD_H = 1600;
+// Player collision size (must match client draw size: 28x28)
+const PLAYER_HALF = 14;
 
 // --------------------
 // In-memory game store
@@ -36,7 +35,7 @@ const DEFAULT_WORLD_H = 1600;
  *   hostPlayerId,
  *   phase: "lobby" | "running",
  *   settings: { tableBase, teamCount, inputMode, mapChoice },
- *   map: { id, name, world:{w,h}, walls:[] } | null,
+ *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
  *   players: Map(playerId -> Player),
  * }
  *
@@ -51,36 +50,12 @@ const games = Object.create(null);
 // --------------------
 // Helpers
 // --------------------
-// --- Collision tuning (must match client draw size: 28x28)
-const PLAYER_HALF = 14; // player is 28x28
-
-function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
-  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
-}
-
-function collidesAt(game, cx, cy) {
-  const map = game.map;
-  if (!map || !Array.isArray(map.walls)) return false;
-
-  const px = cx - PLAYER_HALF;
-  const py = cy - PLAYER_HALF;
-  const pw = PLAYER_HALF * 2;
-  const ph = PLAYER_HALF * 2;
-
-  for (const w of map.walls) {
-    if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
-  }
-  return false;
-}
-
-
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function genCode() {
-  // Avoid ambiguous chars: 0/O, 1/I
-  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // avoid 0/O, 1/I
   let code = "";
   for (let i = 0; i < CODE_LEN; i++) code += alphabet[randInt(0, alphabet.length - 1)];
   return code;
@@ -104,8 +79,10 @@ function clamp(n, min, max) {
 }
 
 function getWorldForGame(game) {
-  if (game?.map?.world?.w && game?.map?.world?.h) return game.map.world;
-  return { w: DEFAULT_WORLD_W, h: DEFAULT_WORLD_H };
+  const w = game?.map?.world?.w;
+  const h = game?.map?.world?.h;
+  if (Number.isFinite(w) && Number.isFinite(h)) return game.map.world;
+  return { w: 2400, h: 1600 };
 }
 
 function lobbySummary(game) {
@@ -133,6 +110,26 @@ function removePlayerFromGame(io, game, playerId) {
   emitLobbyUpdate(io, game);
 }
 
+// --- Collision helpers (AABB)
+function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function collidesAt(game, cx, cy) {
+  const map = game.map;
+  if (!map || !Array.isArray(map.walls)) return false;
+
+  const px = cx - PLAYER_HALF;
+  const py = cy - PLAYER_HALF;
+  const pw = PLAYER_HALF * 2;
+  const ph = PLAYER_HALF * 2;
+
+  for (const w of map.walls) {
+    if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
+  }
+  return false;
+}
+
 function snapshotForGame(game) {
   const world = getWorldForGame(game);
   return {
@@ -157,7 +154,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// Serve the client folder (local dev)
+// Serve client folder (local dev)
 const CLIENT_PATH = path.resolve(__dirname, "..", "client");
 console.log("SERVING CLIENT FROM:", CLIENT_PATH);
 console.log("Server folder is:", __dirname);
@@ -201,30 +198,29 @@ setInterval(() => {
         p.dirY = vy;
       }
 
-const nextX = p.x + vx * PLAYER_SPEED * dt;
-const nextY = p.y + vy * PLAYER_SPEED * dt;
+      const nextX = p.x + vx * PLAYER_SPEED * dt;
+      const nextY = p.y + vy * PLAYER_SPEED * dt;
 
-// Clamp to world bounds taking player size into account
-const minX = PLAYER_HALF;
-const minY = PLAYER_HALF;
-const maxX = world.w - PLAYER_HALF;
-const maxY = world.h - PLAYER_HALF;
+      // Clamp to world bounds taking player size into account
+      const minX = PLAYER_HALF;
+      const minY = PLAYER_HALF;
+      const maxX = world.w - PLAYER_HALF;
+      const maxY = world.h - PLAYER_HALF;
 
-// Move X first, collide, then Y (simple + stable)
-let cx = clamp(nextX, minX, maxX);
-let cy = clamp(p.y,   minY, maxY);
+      // Move X first (blocked by walls), then Y (slide along walls)
+      let cx = clamp(nextX, minX, maxX);
+      let cy = clamp(p.y, minY, maxY);
 
-if (!collidesAt(game, cx, cy)) {
-  p.x = cx;
-} // else: blocked in X
+      if (!collidesAt(game, cx, cy)) {
+        p.x = cx;
+      }
 
-cx = clamp(p.x,   minX, maxX);
-cy = clamp(nextY, minY, maxY);
+      cx = clamp(p.x, minX, maxX);
+      cy = clamp(nextY, minY, maxY);
 
-if (!collidesAt(game, cx, cy)) {
-  p.y = cy;
-} // else: blocked in Y
-
+      if (!collidesAt(game, cx, cy)) {
+        p.y = cy;
+      }
     }
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -250,7 +246,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("createGame", (payload = {}) => {
-    // sanitize host settings
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
     const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
     const inputMode =
@@ -260,7 +255,6 @@ io.on("connection", (socket) => {
         ? payload.inputMode
         : "kbm";
 
-    // ✅ new: map choice (can be "map01" or "random" etc.)
     const mapChoice = String(payload.mapChoice || "map01");
 
     const code = createUniqueCode();
@@ -274,12 +268,11 @@ io.on("connection", (socket) => {
       players: new Map(),
     };
 
-    // add host
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: 0, // default (host can reassign)
+      teamId: 0,
       x: randInt(200, 500),
       y: randInt(200, 500),
       dirX: 1,
@@ -324,7 +317,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // join
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
@@ -361,7 +353,6 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // only host can assign
     if (session.playerId !== game.hostPlayerId) return;
 
     const targetId = String(payload.playerId || "");
@@ -383,22 +374,18 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // only host
     if (session.playerId !== game.hostPlayerId) return;
-
-    // require at least 2 players
     if (game.players.size < 2) return;
 
-    // require all assigned
     for (const p of game.players.values()) {
       if (p.teamId === null || p.teamId === undefined) return;
     }
 
-    // ✅ choose map now (so "random" resolves ONCE)
+    // Pick + build derived map (rooms->walls, machines flattened, etc.)
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // optional: spawn players near spawn points (simple)
+    // Spawn players (if map has spawn points)
     if (Array.isArray(map.spawns) && map.spawns.length) {
       let i = 0;
       for (const p of game.players.values()) {
@@ -417,14 +404,13 @@ io.on("connection", (socket) => {
         name: map.name,
         world: map.world,
         walls: map.walls,
+        machines: map.machines, // ✅ NEW: send machines to client
       },
     });
 
-    // Immediately push one snapshot so clients draw instantly
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   });
 
-  // Movement input (authoritative server sim)
   socket.on("input", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -450,7 +436,6 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // host leaves → end game (v0 policy)
     if (game.hostPlayerId === session.playerId) {
       io.to(code).emit("GAME_ENDED", { reason: "host_left" });
       delete games[code];
