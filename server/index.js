@@ -4,8 +4,11 @@ const http = require("http");
 const { Server } = require("socket.io");
 const { pickMap } = require("./maps");
 
-// NEW: economy (money + pickups)
+// --------------------
+// NEW: economy + upgrades
+// --------------------
 const economy = require("./economy");
+const upgrades = require("./upgrades/apply");
 
 // --------------------
 // Config
@@ -44,8 +47,6 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
  *   settings: { tableBase, teamCount, inputMode, mapChoice },
  *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
  *   players: Map(playerId -> Player),
- *
- *   // NEW: economy
  *   pickups: Array<{id,type,x,y,amount,createdAt}>
  * }
  *
@@ -57,12 +58,16 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
  *   pendingPrompt: null | { id, machineId, machineNum, base, correct },
  *   lastCorrectMachineId: null | string,
  *
- *   // NEW: progress rules
+ *   // progress rules
  *   nextMachineNum: 1..10,
  *   clearedMachines: Set(machineId),
  *
- *   // NEW: economy
- *   money: number
+ *   // economy
+ *   money: number,
+ *
+ *   // upgrades scaffold
+ *   upgrades: { permanent: string[], slots: Array<{id:string, usesLeft:number}> },
+ *   pendingUpgradeOffer: null | { id: string, options: string[] }
  * }
  */
 const games = Object.create(null);
@@ -171,7 +176,6 @@ function snapshotForGame(game) {
     time: Date.now(),
     world,
 
-    // NEW: economy snapshot
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
 
     players: [...game.players.values()].map((p) => ({
@@ -182,10 +186,12 @@ function snapshotForGame(game) {
       y: p.y,
       dirX: p.dirX,
       dirY: p.dirY,
-      nextMachineNum: p.nextMachineNum, // (client may ignore for now)
+      nextMachineNum: p.nextMachineNum,
 
-      // NEW: money
       money: typeof p.money === "number" ? p.money : 0,
+
+      // NEW: upgrades snapshot (client may ignore for now)
+      upgrades: p.upgrades || { permanent: [], slots: [] },
     })),
   };
 }
@@ -215,6 +221,10 @@ function findNearbyMachine(game, x, y, radius) {
 }
 
 function makePromptId() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+
+function makeOfferId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
@@ -288,7 +298,7 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
     }
 
-    // NEW: pickup collection + TTL cleanup (server-authoritative)
+    // economy: pickup collection + TTL cleanup
     economy.tryCollectPickups(game);
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -335,7 +345,6 @@ io.on("connection", (socket) => {
       map: null,
       players: new Map(),
 
-      // NEW: economy
       pickups: [],
     };
 
@@ -356,12 +365,15 @@ io.on("connection", (socket) => {
       nextMachineNum: 1,
       clearedMachines: new Set(),
 
-      // NEW: money
       money: 100,
+
+      // NEW: upgrades scaffold
+      upgrades: { permanent: [], slots: [] },
+      pendingUpgradeOffer: null,
     };
 
-    // ensure defaults (in case constants change later)
     economy.ensurePlayerEconomy(hostPlayer);
+    upgrades.ensureUpgradeState(hostPlayer);
 
     game.players.set(session.playerId, hostPlayer);
 
@@ -419,11 +431,15 @@ io.on("connection", (socket) => {
       nextMachineNum: 1,
       clearedMachines: new Set(),
 
-      // NEW: money
       money: 100,
+
+      // NEW: upgrades scaffold
+      upgrades: { permanent: [], slots: [] },
+      pendingUpgradeOffer: null,
     };
 
     economy.ensurePlayerEconomy(joinPlayer);
+    upgrades.ensureUpgradeState(joinPlayer);
 
     game.players.set(session.playerId, joinPlayer);
 
@@ -491,12 +507,12 @@ io.on("connection", (socket) => {
         p.y = s.y;
         i++;
 
-        // Ensure economy defaults exist
         economy.ensurePlayerEconomy(p);
+        upgrades.ensureUpgradeState(p);
       }
     }
 
-    // Reset pickups on game start (clean slate)
+    // Reset pickups on game start
     game.pickups = [];
 
     game.phase = "running";
@@ -615,14 +631,62 @@ io.on("connection", (socket) => {
 
       socket.emit("ANSWER_RESULT", { ok: true });
 
-      // NEW: spawn money pickups on roads/spaces only
+      // economy: spawn money pickups
       economy.awardCorrectAnswer(game, p.id);
+
+      // upgrades: offer ALL upgrades (scaffold)
+      upgrades.ensureUpgradeState(p);
+      const offerId = makeOfferId();
+      const options = upgrades.buildOfferOptions(); // array of objects for UI
+      p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
+      socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
 
-      // NEW: money penalty (floor at 0)
+      // economy: money penalty (floor at 0)
       economy.penalizeWrongAnswer(game, p.id);
     }
+  });
+
+  // -------- Upgrade selection (scaffold) --------
+  socket.on("chooseUpgrade", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    const offer = p.pendingUpgradeOffer;
+    if (!offer) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
+      return;
+    }
+
+    const offerId = String(payload.offerId || "");
+    if (offerId !== offer.id) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+      return;
+    }
+
+    const upgradeId = String(payload.upgradeId || "");
+    if (!offer.options.includes(upgradeId)) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "not_in_offer" });
+      return;
+    }
+
+    const res = upgrades.applyUpgradeSelection(p, upgradeId);
+    if (!res.ok) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
+      return;
+    }
+
+    // consume offer
+    p.pendingUpgradeOffer = null;
+
+    socket.emit("UPGRADE_RESULT", { ok: true, applied: res.applied, upgrades: p.upgrades });
   });
 
   socket.on("disconnect", () => {
