@@ -204,8 +204,6 @@
   <script>
     const socket = io();
 
-    const INTERACT_RADIUS = 60; // must match server
-
     const el = {
       name: document.getElementById("name"),
       role: document.getElementById("role"),
@@ -248,6 +246,15 @@
 
     // prompt state
     let activePromptId = null;
+
+    // Machine highlight radius (must match server)
+    const INTERACT_RADIUS = 60;
+
+    // Speech bubble (in-canvas)
+    let bubble = null; // { text, untilMs }
+    function showBubble(text, ms = 1600) {
+      bubble = { text: String(text), untilMs: Date.now() + ms };
+    }
 
     function updateRoleUI(){
       const guest = el.role.value === "guest";
@@ -440,6 +447,12 @@
       }
     });
 
+    // Speech bubble when wrong order
+    socket.on("INTERACT_DENIED", (p) => {
+      if (!p || p.reason !== "wrong_order") return;
+      showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
+    });
+
     // ---------- Rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d");
@@ -456,42 +469,99 @@
       }
     }
 
-function drawMachines(camX, camY){
-  if (!mapData?.machines || !lastSnapshot) return;
+    function drawMachines(camX, camY){
+      if (!mapData?.machines || !lastSnapshot) return;
 
-  const me = lastSnapshot.players.find(p => p.id === myId);
-  const mx = me?.x ?? -999999;
-  const my = me?.y ?? -999999;
-  const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
+      const me = lastSnapshot.players.find(p => p.id === myId);
+      const mx = me?.x ?? -999999;
+      const my = me?.y ?? -999999;
+      const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
 
-  for (const m of mapData.machines) {
-    const x = m.x - camX;
-    const y = m.y - camY;
+      for (const m of mapData.machines) {
+        const x = m.x - camX;
+        const y = m.y - camY;
 
-    // near check (server uses same radius)
-    const dx = m.x - mx;
-    const dy = m.y - my;
-    const near = (dx*dx + dy*dy) <= r2;
+        const dx = m.x - mx;
+        const dy = m.y - my;
+        const near = (dx*dx + dy*dy) <= r2;
 
-    // body
-    ctx.fillStyle = "rgba(255, 200, 0, .85)";
-    ctx.fillRect(x - 10, y - 10, 20, 20);
+        // body
+        ctx.fillStyle = "rgba(255, 200, 0, .85)";
+        ctx.fillRect(x - 10, y - 10, 20, 20);
 
-    // outline (red when near)
-    ctx.lineWidth = near ? 3 : 1;
-    ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
-    ctx.strokeRect(x - 10, y - 10, 20, 20);
+        // outline (red when close enough)
+        ctx.lineWidth = near ? 3 : 1;
+        ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
+        ctx.strokeRect(x - 10, y - 10, 20, 20);
 
-    // number
-    ctx.fillStyle = "rgba(10, 10, 10, .9)";
-    ctx.font = "12px system-ui";
-    ctx.fillText(String(m.num), x - 4, y + 4);
-  }
+        // number
+        ctx.fillStyle = "rgba(10, 10, 10, .9)";
+        ctx.font = "12px system-ui";
+        ctx.fillText(String(m.num), x - 4, y + 4);
+      }
 
-  // reset lineWidth so it doesn't affect other drawing
-  ctx.lineWidth = 1;
-}
+      ctx.lineWidth = 1;
+    }
 
+    function drawSpeechBubble(mePx, mePy, camX, camY) {
+      if (!bubble) return;
+      if (Date.now() > bubble.untilMs) { bubble = null; return; }
+
+      const text = bubble.text;
+
+      // position above player
+      const x = mePx - camX;
+      const y = mePy - camY;
+
+      ctx.save();
+      ctx.font = "13px system-ui";
+      const padX = 10;
+      const padY = 7;
+      const textW = Math.min(420, Math.ceil(ctx.measureText(text).width));
+      const boxW = textW + padX * 2;
+      const boxH = 30;
+
+      const bx = Math.round(x - boxW / 2);
+      const by = Math.round(y - 48 - boxH);
+
+      // bubble box
+      ctx.fillStyle = "rgba(20, 24, 40, .92)";
+      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
+      ctx.lineWidth = 2;
+
+      roundRect(ctx, bx, by, boxW, boxH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      // tail
+      ctx.beginPath();
+      ctx.moveTo(x - 9, by + boxH);
+      ctx.lineTo(x + 9, by + boxH);
+      ctx.lineTo(x, by + boxH + 10);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(20, 24, 40, .92)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
+      ctx.stroke();
+
+      // text
+      ctx.fillStyle = "rgba(230,237,247,.95)";
+      ctx.fillText(text, bx + padX, by + 20);
+
+      ctx.restore();
+      ctx.lineWidth = 1;
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
 
     function draw(){
       if (!lastSnapshot) return;
@@ -528,6 +598,9 @@ function drawMachines(camX, camY){
         ctx.font = "12px system-ui";
         ctx.fillText(p.name, px - 14, py - 20);
       }
+
+      // speech bubble over YOUR player (only when needed)
+      if (me) drawSpeechBubble(me.x, me.y, camX, camY);
     }
 
     function loop(){
