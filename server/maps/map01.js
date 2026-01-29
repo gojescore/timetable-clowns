@@ -1,7 +1,10 @@
 // server/maps/map01.js
 // Training Hall (10 rooms)
-// Added: roadAreas + isRoad(x,y) for MONEY pickup spawning on roads/spaces only.
-// NOTE: This keeps ALL your existing map content unchanged.
+//
+// NOTE:
+// This file is DATA ONLY.
+// Because server/maps/index.js uses structuredClone(), functions do not survive.
+// So we keep roadAreas here, and buildDerived() attaches derived.isRoad() at runtime.
 
 module.exports = {
   id: "map01",
@@ -120,77 +123,30 @@ module.exports = {
   walls: [{ x: 1120, y: 820, w: 160, h: 160 }],
 
   // =====================================================================
-  // NEW: ROADS / SPACES ONLY
+  // ROADS / SPACES ONLY (DATA)
   //
   // Money pickups must spawn on roads/spaces (NOT inside rooms).
   // We model roads as a set of rectangles that represent the corridors.
-  //
-  // These are conservative, "corridor-like" rectangles based on your room
-  // layout. If money ever spawns in a wrong place, tweak these rects only.
+  // Tweak these rects if money spawns in an unexpected spot.
   // =====================================================================
-
-  // Rects: {x,y,w,h}
   roadAreas: [
-    // --- Vertical corridors between the 4 rooms in row 1 and row 2 ---
-    // (gap between row1 bottom=400 and row2 top=500 => corridor height ~100)
+    // Vertical corridors between row 1 and row 2
     { x: 560, y: 400, w: 60, h: 100 },
     { x: 1040, y: 400, w: 60, h: 100 },
     { x: 1520, y: 400, w: 60, h: 100 },
 
-    // --- Main horizontal corridor below row 2 / above row 3 ---
-    // (row2 bottom=760, row3 top=980 => big open space)
-    // Left side (under row2, reaching toward r9)
+    // Main horizontal corridor below row 2 / above row 3
     { x: 120, y: 780, w: 1140, h: 160 },
-    // Right side (under row2, reaching toward r10)
     { x: 1140, y: 780, w: 1140, h: 160 },
 
-    // --- Vertical connectors down to row 3 rooms (r9 and r10) ---
-    // Corridor going down near the middle between r9 & r10
+    // Vertical connector down between r9 & r10
     { x: 1140, y: 940, w: 120, h: 520 },
 
-    // --- Bottom corridor under r9 & r10 (so roads exist near the bottom) ---
+    // Bottom corridor
     { x: 120, y: 1380, w: 2160, h: 140 },
 
-    // --- Left & right outer edge corridors (optional roaming space) ---
+    // Outer edge corridors
     { x: 60, y: 120, w: 80, h: 1400 },
     { x: 2260, y: 120, w: 80, h: 1400 },
   ],
-
-  // Helper used by economy to ensure road-only spawning.
-  // (Point-based check, good enough for pickups.)
-  isRoad(x, y) {
-    // outside world is never road
-    if (x < 0 || y < 0 || x > this.world.w || y > this.world.h) return false;
-
-    for (const r of this.roadAreas) {
-      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
-        // Ensure we don't accidentally consider inside a room as road
-        // (If a roadArea overlaps a room by mistake, rooms win.)
-        if (this.isInsideAnyRoom(x, y)) return false;
-        if (this.isInsideAnyWall(x, y)) return false;
-        return true;
-      }
-    }
-    return false;
-  },
-
-  // ---- helpers (kept inside map object for convenience) ----
-  isInsideAnyRoom(x, y) {
-    for (const room of this.rooms) {
-      const rr = room.rect;
-      if (x >= rr.x && x <= rr.x + rr.w && y >= rr.y && y <= rr.y + rr.h) {
-        return true;
-      }
-    }
-    return false;
-  },
-
-  isInsideAnyWall(x, y) {
-    for (const w of this.walls) {
-      if (x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h) {
-        return true;
-      }
-    }
-    return false;
-  },
 };
