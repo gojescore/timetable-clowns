@@ -4,6 +4,9 @@ const http = require("http");
 const { Server } = require("socket.io");
 const { pickMap } = require("./maps");
 
+// NEW: economy (money + pickups)
+const economy = require("./economy");
+
 // --------------------
 // Config
 // --------------------
@@ -41,6 +44,9 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
  *   settings: { tableBase, teamCount, inputMode, mapChoice },
  *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
  *   players: Map(playerId -> Player),
+ *
+ *   // NEW: economy
+ *   pickups: Array<{id,type,x,y,amount,createdAt}>
  * }
  *
  * Player = {
@@ -53,7 +59,10 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
  *
  *   // NEW: progress rules
  *   nextMachineNum: 1..10,
- *   clearedMachines: Set(machineId)
+ *   clearedMachines: Set(machineId),
+ *
+ *   // NEW: economy
+ *   money: number
  * }
  */
 const games = Object.create(null);
@@ -161,6 +170,10 @@ function snapshotForGame(game) {
   return {
     time: Date.now(),
     world,
+
+    // NEW: economy snapshot
+    pickups: Array.isArray(game.pickups) ? game.pickups : [],
+
     players: [...game.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -170,6 +183,9 @@ function snapshotForGame(game) {
       dirX: p.dirX,
       dirY: p.dirY,
       nextMachineNum: p.nextMachineNum, // (client may ignore for now)
+
+      // NEW: money
+      money: typeof p.money === "number" ? p.money : 0,
     })),
   };
 }
@@ -272,6 +288,9 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
     }
 
+    // NEW: pickup collection + TTL cleanup (server-authoritative)
+    economy.tryCollectPickups(game);
+
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
 }, TICK_MS);
@@ -315,9 +334,12 @@ io.on("connection", (socket) => {
       settings: { tableBase, teamCount, inputMode, mapChoice },
       map: null,
       players: new Map(),
+
+      // NEW: economy
+      pickups: [],
     };
 
-    game.players.set(session.playerId, {
+    const hostPlayer = {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
@@ -333,7 +355,15 @@ io.on("connection", (socket) => {
 
       nextMachineNum: 1,
       clearedMachines: new Set(),
-    });
+
+      // NEW: money
+      money: 100,
+    };
+
+    // ensure defaults (in case constants change later)
+    economy.ensurePlayerEconomy(hostPlayer);
+
+    game.players.set(session.playerId, hostPlayer);
 
     games[code] = game;
 
@@ -372,7 +402,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    game.players.set(session.playerId, {
+    const joinPlayer = {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
@@ -388,7 +418,14 @@ io.on("connection", (socket) => {
 
       nextMachineNum: 1,
       clearedMachines: new Set(),
-    });
+
+      // NEW: money
+      money: 100,
+    };
+
+    economy.ensurePlayerEconomy(joinPlayer);
+
+    game.players.set(session.playerId, joinPlayer);
 
     session.gameCode = code;
     session.isHost = false;
@@ -453,8 +490,14 @@ io.on("connection", (socket) => {
         p.x = s.x;
         p.y = s.y;
         i++;
+
+        // Ensure economy defaults exist
+        economy.ensurePlayerEconomy(p);
       }
     }
+
+    // Reset pickups on game start (clean slate)
+    game.pickups = [];
 
     game.phase = "running";
 
@@ -511,7 +554,6 @@ io.on("connection", (socket) => {
 
     // Must be in numeric order: nextMachineNum only
     if (machine.num !== p.nextMachineNum) {
-      // client currently ignores this event (safe), but it's useful later
       socket.emit("INTERACT_DENIED", {
         reason: "wrong_order",
         nextMachineNum: p.nextMachineNum,
@@ -558,6 +600,9 @@ io.on("connection", (socket) => {
     const ans = Number(payload.answer);
     const ok = Number.isFinite(ans) && ans === pending.correct;
 
+    // Clear prompt now (so they can’t submit twice)
+    p.pendingPrompt = null;
+
     if (ok) {
       // mark cleared + advance order
       p.clearedMachines.add(pending.machineId);
@@ -568,19 +613,15 @@ io.on("connection", (socket) => {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
 
-      p.pendingPrompt = null;
-
       socket.emit("ANSWER_RESULT", { ok: true });
 
-      // hooks later:
-      // - money spawn
-      // - upgrade choice
-      // - respawn point updates
+      // NEW: spawn money pickups on roads/spaces only
+      economy.awardCorrectAnswer(game, p.id);
     } else {
-      p.pendingPrompt = null;
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
 
-      // hook later: money -= 100
+      // NEW: money penalty (floor at 0)
+      economy.penalizeWrongAnswer(game, p.id);
     }
   });
 
