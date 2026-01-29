@@ -27,13 +27,35 @@ const PLAYER_SPEED = 220; // px/sec
 const PLAYER_HALF = 14;
 
 // Interaction
-const INTERACT_RADIUS = 60; // px
-const MACHINE_HALF = 10; // machine is 20x20 in the client
-
+const INTERACT_RADIUS = 60; // must match client highlight
+const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 
 // --------------------
 // In-memory game store
 // --------------------
+/**
+ * games[gameCode] = {
+ *   code,
+ *   hostPlayerId,
+ *   phase: "lobby" | "running",
+ *   settings: { tableBase, teamCount, inputMode, mapChoice },
+ *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
+ *   players: Map(playerId -> Player),
+ * }
+ *
+ * Player = {
+ *   id, name, socketId, teamId,
+ *   x, y, dirX, dirY,
+ *   input: {up,down,left,right},
+ *
+ *   pendingPrompt: null | { id, machineId, machineNum, base, correct },
+ *   lastCorrectMachineId: null | string,
+ *
+ *   // NEW: progress rules
+ *   nextMachineNum: 1..10,
+ *   clearedMachines: Set(machineId)
+ * }
+ */
 const games = Object.create(null);
 
 // --------------------
@@ -44,7 +66,7 @@ function randInt(min, max) {
 }
 
 function genCode() {
-  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // avoid 0/O, 1/I
   let code = "";
   for (let i = 0; i < CODE_LEN; i++) code += alphabet[randInt(0, alphabet.length - 1)];
   return code;
@@ -105,17 +127,22 @@ function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
 
 function collidesAt(game, cx, cy) {
   const map = game.map;
-  if (!map || !Array.isArray(map.walls)) return false;
+  if (!map) return false;
 
+  // Player AABB
   const px = cx - PLAYER_HALF;
   const py = cy - PLAYER_HALF;
   const pw = PLAYER_HALF * 2;
   const ph = PLAYER_HALF * 2;
 
-  for (const w of map.walls) {
-    if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
+  // Walls
+  if (Array.isArray(map.walls)) {
+    for (const w of map.walls) {
+      if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
+    }
   }
-    // Also treat machines as solid obstacles
+
+  // Machines are SOLID for everyone (no walking through machines)
   if (Array.isArray(map.machines)) {
     for (const m of map.machines) {
       const bx = m.x - MACHINE_HALF;
@@ -142,6 +169,7 @@ function snapshotForGame(game) {
       y: p.y,
       dirX: p.dirX,
       dirY: p.dirY,
+      nextMachineNum: p.nextMachineNum, // (client may ignore for now)
     })),
   };
 }
@@ -300,9 +328,11 @@ io.on("connection", (socket) => {
       dirY: 0,
       input: { up: false, down: false, left: false, right: false },
 
-      // interaction state
       pendingPrompt: null,
       lastCorrectMachineId: null,
+
+      nextMachineNum: 1,
+      clearedMachines: new Set(),
     });
 
     games[code] = game;
@@ -355,6 +385,9 @@ io.on("connection", (socket) => {
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
+
+      nextMachineNum: 1,
+      clearedMachines: new Set(),
     });
 
     session.gameCode = code;
@@ -412,12 +445,7 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // enforce 10 machines for your game design
-    if (!Array.isArray(map.machines) || map.machines.length < 10) {
-      console.warn(`Map ${map.id} has ${map.machines?.length || 0} machines (expected 10).`);
-    }
-
-    // spawn
+    // Spawn
     if (Array.isArray(map.spawns) && map.spawns.length) {
       let i = 0;
       for (const p of game.players.values()) {
@@ -461,7 +489,7 @@ io.on("connection", (socket) => {
     };
   });
 
-  // -------- Machine interaction --------
+  // -------- Machine interaction (ORDERED) --------
   socket.on("tryInteract", () => {
     const code = session.gameCode;
     if (!code) return;
@@ -477,6 +505,20 @@ io.on("connection", (socket) => {
 
     const machine = findNearbyMachine(game, p.x, p.y, INTERACT_RADIUS);
     if (!machine) return;
+
+    // Cannot interact with a machine already cleared
+    if (p.clearedMachines.has(machine.id)) return;
+
+    // Must be in numeric order: nextMachineNum only
+    if (machine.num !== p.nextMachineNum) {
+      // client currently ignores this event (safe), but it's useful later
+      socket.emit("INTERACT_DENIED", {
+        reason: "wrong_order",
+        nextMachineNum: p.nextMachineNum,
+        tried: machine.num,
+      });
+      return;
+    }
 
     const base = game.settings.tableBase;
     const correct = base * machine.num;
@@ -517,26 +559,28 @@ io.on("connection", (socket) => {
     const ok = Number.isFinite(ans) && ans === pending.correct;
 
     if (ok) {
+      // mark cleared + advance order
+      p.clearedMachines.add(pending.machineId);
       p.lastCorrectMachineId = pending.machineId;
+
+      // advance to next machine number (cap at 10)
+      if (p.nextMachineNum === pending.machineNum) {
+        p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
+      }
+
       p.pendingPrompt = null;
 
-      socket.emit("ANSWER_RESULT", {
-        ok: true,
-      });
+      socket.emit("ANSWER_RESULT", { ok: true });
 
-      // Hooks for later:
-      // - spawn money on roads
-      // - offer upgrades
-      // - save respawn point
+      // hooks later:
+      // - money spawn
+      // - upgrade choice
+      // - respawn point updates
     } else {
       p.pendingPrompt = null;
+      socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
 
-      socket.emit("ANSWER_RESULT", {
-        ok: false,
-        correct: pending.correct,
-      });
-
-      // Hook for later: money -= 100
+      // hook later: money -= 100
     }
   });
 
