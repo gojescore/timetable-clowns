@@ -127,7 +127,10 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 // Serve the client folder (easy local dev)
-app.use(express.static(path.join(__dirname, "..", "client")));
+const CLIENT_PATH = path.resolve(__dirname, "..", "client");
+console.log("SERVING CLIENT FROM:", CLIENT_PATH);
+app.use(express.static(CLIENT_PATH));
+
 
 // ✅ DEBUG: prove which folder is actually being served
 console.log("Serving client from:", path.join(__dirname, "..", "client"));
