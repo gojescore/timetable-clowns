@@ -17,6 +17,15 @@ const MAX_TEAMS = 6;
 const MIN_TABLE = 1;
 const MAX_TABLE = 10;
 
+// Tick + movement
+const TICK_HZ = 20;
+const TICK_MS = Math.floor(1000 / TICK_HZ);
+const PLAYER_SPEED = 220; // px/sec (tweak)
+
+// Temporary world bounds (until we add map + collision)
+const WORLD_W = 2400;
+const WORLD_H = 1600;
+
 // --------------------
 // In-memory game store
 // --------------------
@@ -26,7 +35,13 @@ const MAX_TABLE = 10;
  *   hostPlayerId,
  *   phase: "lobby" | "running",
  *   settings: { tableBase, teamCount, inputMode },
- *   players: Map(playerId -> { id, name, socketId, teamId|null })
+ *   players: Map(playerId -> Player),
+ * }
+ *
+ * Player = {
+ *   id, name, socketId, teamId,
+ *   x, y, dirX, dirY,
+ *   input: {up,down,left,right}
  * }
  */
 const games = Object.create(null);
@@ -59,6 +74,10 @@ function clampInt(n, min, max, fallback) {
   return Math.max(min, Math.min(max, xi));
 }
 
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
 function lobbySummary(game) {
   return {
     players: [...game.players.values()].map((p) => ({
@@ -84,6 +103,22 @@ function removePlayerFromGame(io, game, playerId) {
   emitLobbyUpdate(io, game);
 }
 
+function snapshotForGame(game) {
+  return {
+    time: Date.now(),
+    world: { w: WORLD_W, h: WORLD_H },
+    players: [...game.players.values()].map((p) => ({
+      id: p.id,
+      name: p.name,
+      teamId: p.teamId,
+      x: p.x,
+      y: p.y,
+      dirX: p.dirX,
+      dirY: p.dirY,
+    })),
+  };
+}
+
 // --------------------
 // Express + HTTP + Socket.IO
 // --------------------
@@ -95,6 +130,58 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(express.static(path.join(__dirname, "..", "client")));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+// --------------------
+// Server tick loop
+// --------------------
+let lastTick = Date.now();
+
+setInterval(() => {
+  const now = Date.now();
+  const dt = (now - lastTick) / 1000;
+  lastTick = now;
+
+  for (const code of Object.keys(games)) {
+    const game = games[code];
+    if (!game || game.phase !== "running") continue;
+
+    for (const p of game.players.values()) {
+      // Build direction from input
+      const up = !!p.input?.up;
+      const down = !!p.input?.down;
+      const left = !!p.input?.left;
+      const right = !!p.input?.right;
+
+      let vx = 0, vy = 0;
+      if (left) vx -= 1;
+      if (right) vx += 1;
+      if (up) vy -= 1;
+      if (down) vy += 1;
+
+      // Normalize diagonal
+      const len = Math.hypot(vx, vy);
+      if (len > 0) {
+        vx /= len;
+        vy /= len;
+
+        // Update facing direction (last non-zero)
+        p.dirX = vx;
+        p.dirY = vy;
+      }
+
+      // Move
+      p.x += vx * PLAYER_SPEED * dt;
+      p.y += vy * PLAYER_SPEED * dt;
+
+      // Clamp to world bounds
+      p.x = clamp(p.x, 0, WORLD_W);
+      p.y = clamp(p.y, 0, WORLD_H);
+    }
+
+    // Broadcast snapshot
+    io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
+  }
+}, TICK_MS);
 
 // --------------------
 // Socket.IO logic
@@ -141,6 +228,11 @@ io.on("connection", (socket) => {
       name: session.name,
       socketId: socket.id,
       teamId: 0, // default (host can reassign)
+      x: randInt(200, 500),
+      y: randInt(200, 500),
+      dirX: 1,
+      dirY: 0,
+      input: { up: false, down: false, left: false, right: false },
     });
 
     games[code] = game;
@@ -186,6 +278,11 @@ io.on("connection", (socket) => {
       name: session.name,
       socketId: socket.id,
       teamId: null,
+      x: randInt(200, 500),
+      y: randInt(200, 500),
+      dirX: 1,
+      dirY: 0,
+      input: { up: false, down: false, left: false, right: false },
     });
 
     session.gameCode = code;
@@ -248,14 +345,30 @@ io.on("connection", (socket) => {
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
-      map: { stub: true },
-      players: [...game.players.values()].map((p) => ({
-        id: p.id,
-        name: p.name,
-        teamId: p.teamId,
-      })),
-      machineMappings: [],
+      world: { w: WORLD_W, h: WORLD_H },
     });
+
+    // Immediately push one snapshot so clients draw instantly
+    io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
+  });
+
+  // Movement input (authoritative server sim)
+  socket.on("input", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    p.input = {
+      up: !!payload.up,
+      down: !!payload.down,
+      left: !!payload.left,
+      right: !!payload.right,
+    };
   });
 
   socket.on("disconnect", () => {
