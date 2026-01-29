@@ -542,31 +542,33 @@
       }
     }
 
-    // NEW: money pickups rendering
-    function drawPickups(camX, camY){
-      if (!lastSnapshot?.pickups) return;
+ // NEW: money pickups rendering (green rectangle with $)
+  function drawPickups(camX, camY){
+    if (!lastSnapshot?.pickups) return;
 
-      for (const pk of lastSnapshot.pickups) {
-        if (!pk || pk.type !== "money") continue;
+    for (const pk of lastSnapshot.pickups) {
+      if (!pk || pk.type !== "money") continue;
 
-        const x = pk.x - camX;
-        const y = pk.y - camY;
+      const x = pk.x - camX;
+      const y = pk.y - camY;
 
-        // coin (simple)
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(244, 176, 0, .95)";
-        ctx.arc(x, y, 8, 0, Math.PI * 2);
-        ctx.fill();
+      const w = 18;
+      const h = 12;
 
-        ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.stroke();
+      // green bill rectangle
+      ctx.fillStyle = "rgba(34, 197, 94, .95)"; // green
+      ctx.fillRect(x - w/2, y - h/2, w, h);
 
-        // tiny $
-        ctx.fillStyle = "rgba(20, 20, 20, .85)";
-        ctx.font = "10px system-ui";
-        ctx.fillText("$", x - 3, y + 3);
-      }
+      // outline
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.strokeRect(x - w/2, y - h/2, w, h);
+
+      // $
+      ctx.fillStyle = "rgba(10, 10, 10, .85)";
+      ctx.font = "10px system-ui";
+      ctx.fillText("$", x - 3, y + 4);
     }
+  }
 
     function drawMachines(camX, camY){
       if (!mapData?.machines || !lastSnapshot) return;
