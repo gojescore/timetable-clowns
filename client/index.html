@@ -12,6 +12,7 @@
       --muted:rgba(230,237,247,.7);
       --line:rgba(255,255,255,.12);
       --accent:#2b66ff;
+      --danger:#ef4444;
     }
     *{box-sizing:border-box}
     body{
@@ -44,6 +45,11 @@
       background:var(--accent);
       border-color:var(--accent);
     }
+    button.danger{
+      background:transparent;
+      border-color:rgba(239,68,68,.5);
+      color:#fecaca;
+    }
     .muted{color:var(--muted)}
     .hidden{display:none}
     .pill{
@@ -69,13 +75,15 @@
       background:#0e1630;
       display:block;
     }
+    .tiny{font-size:12px}
   </style>
 </head>
 <body>
   <div class="wrap">
-   <h1>🎪 Timetable Clowns — 3100 TEST</h1>
-
-    <p class="muted">Multiplayer lobby + rectangle movement. Host creates a code, guests join, host assigns teams, then move with WASD / arrows.</p>
+    <h1>🎪 Timetable Clowns</h1>
+    <p class="muted">
+      Multiplayer lobby + rectangle movement. Host creates a code, guests join, host assigns teams, then move with WASD / arrows.
+    </p>
 
     <!-- START / JOIN -->
     <div class="card" id="startCard">
@@ -89,7 +97,7 @@
       </div>
 
       <div class="row" id="hostSettings">
-        <select id="tableBase">
+        <select id="tableBase" title="Times table base">
           <option value="1">Table 1</option>
           <option value="2">Table 2</option>
           <option value="3">Table 3</option>
@@ -102,7 +110,7 @@
           <option value="10">Table 10</option>
         </select>
 
-        <select id="teamCount">
+        <select id="teamCount" title="Number of teams">
           <option value="1">1 team</option>
           <option value="2" selected>2 teams</option>
           <option value="3">3 teams</option>
@@ -111,7 +119,13 @@
           <option value="6">6 teams</option>
         </select>
 
-        <select id="inputMode">
+        <!-- ✅ NEW: Map choice (ready for more maps + random) -->
+        <select id="mapChoice" title="Map">
+          <option value="map01" selected>Training Hall (map01)</option>
+          <option value="random">Random</option>
+        </select>
+
+        <select id="inputMode" title="Input mode">
           <option value="kbm" selected>Keyboard + Mouse</option>
           <option value="kb">Keyboard only</option>
           <option value="kbm_gamepad">Keyboard + Mouse + Controller</option>
@@ -122,6 +136,10 @@
         <button id="go" class="primary">Go</button>
         <span id="status" class="muted">Connecting…</span>
       </div>
+
+      <p class="muted tiny">
+        Tip: run server on <span class="pill">http://localhost:3100</span> while developing so you avoid port 3000 collisions.
+      </p>
     </div>
 
     <!-- LOBBY -->
@@ -130,7 +148,9 @@
         <div>
           <div class="muted">Game code</div>
           <div class="code" id="gameCode">-----</div>
+          <div class="muted tiny" id="mapLabel">Map: —</div>
         </div>
+
         <div>
           <div class="muted">You</div>
           <div>
@@ -138,6 +158,7 @@
             <span class="pill" id="meTeam">team: ?</span>
           </div>
         </div>
+
         <div class="hostOnly" id="hostControls">
           <div class="muted">Host</div>
           <button id="startGame" class="primary">Start game</button>
@@ -152,7 +173,7 @@
     <!-- RUNNING -->
     <div class="card hidden" id="runningCard">
       <h2>Game started 🎉</h2>
-      <p class="muted">Move: WASD / Arrow keys. (Rectangles for now.)</p>
+      <p class="muted" id="runningHint">Move: WASD / Arrow keys. (Rectangles for now.)</p>
       <canvas id="game" width="900" height="520"></canvas>
     </div>
   </div>
@@ -169,6 +190,7 @@
       hostSettings: document.getElementById("hostSettings"),
       tableBase: document.getElementById("tableBase"),
       teamCount: document.getElementById("teamCount"),
+      mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
       go: document.getElementById("go"),
       status: document.getElementById("status"),
@@ -176,6 +198,7 @@
       lobby: document.getElementById("lobbyCard"),
       running: document.getElementById("runningCard"),
       gameCode: document.getElementById("gameCode"),
+      mapLabel: document.getElementById("mapLabel"),
       meId: document.getElementById("meId"),
       meTeam: document.getElementById("meTeam"),
       playerList: document.getElementById("playerList"),
@@ -183,12 +206,17 @@
       hostControls: document.getElementById("hostControls"),
       startGame: document.getElementById("startGame"),
 
+      runningHint: document.getElementById("runningHint"),
       canvas: document.getElementById("game"),
     };
 
     let myId = null;
     let isHost = false;
     let teamCount = 2;
+
+    // Map data (sent at GAME_STARTED)
+    let mapData = null;
+    let world = { w: 2400, h: 1600 };
 
     // ---------- Role UI ----------
     function updateRoleUI(){
@@ -221,8 +249,10 @@
         socket.emit("createGame", {
           tableBase: Number(el.tableBase.value),
           teamCount,
+          mapChoice: el.mapChoice.value,       // ✅ NEW
           inputMode: el.inputMode.value
         });
+        el.mapLabel.textContent = "Map: (chosen at start)";
       } else {
         isHost = false;
         socket.emit("joinGame", {
@@ -257,11 +287,17 @@
       socket.emit("startGame");
     });
 
-    // ✅ SINGLE handler: switch UI to game screen
-    socket.on("GAME_STARTED", () => {
+    // ✅ Switch UI to game screen + store map info
+    socket.on("GAME_STARTED", (payload = {}) => {
       el.lobby.classList.add("hidden");
       el.running.classList.remove("hidden");
       el.status.textContent = "Game running.";
+
+      if (payload.map) {
+        mapData = payload.map;
+        if (mapData.world) world = mapData.world;
+        el.runningHint.textContent = `Move: WASD / Arrow keys. Map: ${mapData.name || mapData.id || "?"}`;
+      }
     });
 
     socket.on("GAME_ENDED", ({ reason }) => {
@@ -343,32 +379,47 @@
     const ctx = canvas.getContext("2d");
 
     let lastSnapshot = null;
-    let world = { w: 2400, h: 1600 };
 
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
     });
 
+    function drawWalls(camX, camY){
+      if (!mapData || !Array.isArray(mapData.walls)) return;
+
+      for (const w of mapData.walls) {
+        const x = w.x - camX;
+        const y = w.y - camY;
+        ctx.fillStyle = "rgba(255,255,255,.12)";
+        ctx.fillRect(x, y, w.w, w.h);
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.strokeRect(x, y, w.w, w.h);
+      }
+    }
+
     function draw(){
       if (!lastSnapshot) return;
 
       const me = lastSnapshot.players.find(p => p.id === myId);
-      const camX = me ? (me.x - canvas.width / 2) : 0;
-      const camY = me ? (me.y - canvas.height / 2) : 0;
+      const camXraw = me ? (me.x - canvas.width / 2) : 0;
+      const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
-      const x0 = Math.max(0, Math.min(world.w - canvas.width, camX));
-      const y0 = Math.max(0, Math.min(world.h - canvas.height, camY));
+      const camX = Math.max(0, Math.min(world.w - canvas.width, camXraw));
+      const camY = Math.max(0, Math.min(world.h - canvas.height, camYraw));
 
       ctx.clearRect(0,0,canvas.width,canvas.height);
 
       // world border for orientation
       ctx.strokeStyle = "rgba(255,255,255,.15)";
-      ctx.strokeRect(-x0 + 20, -y0 + 20, world.w - 40, world.h - 40);
+      ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
+
+      // map walls (if any)
+      drawWalls(camX, camY);
 
       for (const p of lastSnapshot.players) {
-        const px = p.x - x0;
-        const py = p.y - y0;
+        const px = p.x - camX;
+        const py = p.y - camY;
 
         // rectangle player
         ctx.fillStyle = (p.id === myId) ? "rgba(43,102,255,.9)" : "rgba(255,255,255,.75)";
