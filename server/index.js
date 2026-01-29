@@ -5,7 +5,7 @@ const { Server } = require("socket.io");
 const { pickMap } = require("./maps");
 
 // --------------------
-// NEW: economy + upgrades
+// Economy + upgrades
 // --------------------
 const economy = require("./economy");
 const upgrades = require("./upgrades/apply");
@@ -175,9 +175,7 @@ function snapshotForGame(game) {
   return {
     time: Date.now(),
     world,
-
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
-
     players: [...game.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -187,10 +185,9 @@ function snapshotForGame(game) {
       dirX: p.dirX,
       dirY: p.dirY,
       nextMachineNum: p.nextMachineNum,
-
       money: typeof p.money === "number" ? p.money : 0,
 
-      // NEW: upgrades snapshot (client may ignore for now)
+      // upgrades snapshot
       upgrades: p.upgrades || { permanent: [], slots: [] },
     })),
   };
@@ -265,7 +262,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -344,7 +342,6 @@ io.on("connection", (socket) => {
       settings: { tableBase, teamCount, inputMode, mapChoice },
       map: null,
       players: new Map(),
-
       pickups: [],
     };
 
@@ -367,7 +364,6 @@ io.on("connection", (socket) => {
 
       money: 100,
 
-      // NEW: upgrades scaffold
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
     };
@@ -376,7 +372,6 @@ io.on("connection", (socket) => {
     upgrades.ensureUpgradeState(hostPlayer);
 
     game.players.set(session.playerId, hostPlayer);
-
     games[code] = game;
 
     session.gameCode = code;
@@ -433,7 +428,6 @@ io.on("connection", (socket) => {
 
       money: 100,
 
-      // NEW: upgrades scaffold
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
     };
@@ -512,9 +506,7 @@ io.on("connection", (socket) => {
       }
     }
 
-    // Reset pickups on game start
     game.pickups = [];
-
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
@@ -559,23 +551,20 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
-    // Don't allow starting another prompt while one is open
     if (p.pendingPrompt) return;
 
     const machine = findNearbyMachine(game, p.x, p.y, INTERACT_RADIUS);
     if (!machine) return;
 
     // Cannot interact with a machine already cleared
-    // Cannot interact with a machine already cleared
-if (p.clearedMachines.has(machine.id)) {
-  socket.emit("INTERACT_DENIED", {
-    reason: "already_cleared",
-    nextMachineNum: p.nextMachineNum,
-    tried: machine.num,
-  });
-  return;
-}
-
+    if (p.clearedMachines.has(machine.id)) {
+      socket.emit("INTERACT_DENIED", {
+        reason: "already_cleared",
+        nextMachineNum: p.nextMachineNum,
+        tried: machine.num,
+      });
+      return;
+    }
 
     // Must be in numeric order: nextMachineNum only
     if (machine.num !== p.nextMachineNum) {
@@ -629,11 +618,9 @@ if (p.clearedMachines.has(machine.id)) {
     p.pendingPrompt = null;
 
     if (ok) {
-      // mark cleared + advance order
       p.clearedMachines.add(pending.machineId);
       p.lastCorrectMachineId = pending.machineId;
 
-      // advance to next machine number (cap at 10)
       if (p.nextMachineNum === pending.machineNum) {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
@@ -651,13 +638,11 @@ if (p.clearedMachines.has(machine.id)) {
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
-
-      // economy: money penalty (floor at 0)
       economy.penalizeWrongAnswer(game, p.id);
     }
   });
 
-  // -------- Upgrade selection (scaffold) --------
+  // -------- Upgrade selection --------
   socket.on("chooseUpgrade", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -695,7 +680,13 @@ if (p.clearedMachines.has(machine.id)) {
     // consume offer
     p.pendingUpgradeOffer = null;
 
-    socket.emit("UPGRADE_RESULT", { ok: true, applied: res.applied, upgrades: p.upgrades });
+    // IMPORTANT: send `chosen` so client can render real squares
+    socket.emit("UPGRADE_RESULT", {
+      ok: true,
+      chosen: res.chosen,     // {id,name,kind,desc}
+      applied: res.applied,
+      upgrades: p.upgrades,
+    });
   });
 
   socket.on("disconnect", () => {
