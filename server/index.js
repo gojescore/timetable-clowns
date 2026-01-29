@@ -28,6 +28,8 @@ const PLAYER_HALF = 14;
 
 // Interaction
 const INTERACT_RADIUS = 60; // px
+const MACHINE_HALF = 10; // machine is 20x20 in the client
+
 
 // --------------------
 // In-memory game store
@@ -113,6 +115,17 @@ function collidesAt(game, cx, cy) {
   for (const w of map.walls) {
     if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
   }
+    // Also treat machines as solid obstacles
+  if (Array.isArray(map.machines)) {
+    for (const m of map.machines) {
+      const bx = m.x - MACHINE_HALF;
+      const by = m.y - MACHINE_HALF;
+      const bw = MACHINE_HALF * 2;
+      const bh = MACHINE_HALF * 2;
+      if (aabbIntersects(px, py, pw, ph, bx, by, bw, bh)) return true;
+    }
+  }
+
   return false;
 }
 
