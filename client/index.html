@@ -12,7 +12,6 @@
       --muted:rgba(230,237,247,.7);
       --line:rgba(255,255,255,.12);
       --accent:#2b66ff;
-      --danger:#ef4444;
     }
     *{box-sizing:border-box}
     body{
@@ -45,11 +44,6 @@
       background:var(--accent);
       border-color:var(--accent);
     }
-    button.danger{
-      background:transparent;
-      border-color:rgba(239,68,68,.5);
-      color:#fecaca;
-    }
     .muted{color:var(--muted)}
     .hidden{display:none}
     .pill{
@@ -81,9 +75,7 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">
-      Multiplayer lobby + rectangle movement. Host creates a code, guests join, host assigns teams, then move with WASD / arrows.
-    </p>
+    <p class="muted">Multiplayer lobby + rectangle movement + walls + machines (draw only). Host creates a code, guests join, host assigns teams, then move with WASD / arrows.</p>
 
     <!-- START / JOIN -->
     <div class="card" id="startCard">
@@ -119,7 +111,7 @@
           <option value="6">6 teams</option>
         </select>
 
-        <!-- ✅ NEW: Map choice (ready for more maps + random) -->
+        <!-- ✅ Map choice (ready for more maps + random) -->
         <select id="mapChoice" title="Map">
           <option value="map01" selected>Training Hall (map01)</option>
           <option value="random">Random</option>
@@ -138,7 +130,7 @@
       </div>
 
       <p class="muted tiny">
-        Tip: run server on <span class="pill">http://localhost:3100</span> while developing so you avoid port 3000 collisions.
+        Dev tip: run server on <span class="pill">http://localhost:3100</span> to avoid port collisions.
       </p>
     </div>
 
@@ -150,7 +142,6 @@
           <div class="code" id="gameCode">-----</div>
           <div class="muted tiny" id="mapLabel">Map: —</div>
         </div>
-
         <div>
           <div class="muted">You</div>
           <div>
@@ -158,7 +149,6 @@
             <span class="pill" id="meTeam">team: ?</span>
           </div>
         </div>
-
         <div class="hostOnly" id="hostControls">
           <div class="muted">Host</div>
           <button id="startGame" class="primary">Start game</button>
@@ -249,7 +239,7 @@
         socket.emit("createGame", {
           tableBase: Number(el.tableBase.value),
           teamCount,
-          mapChoice: el.mapChoice.value,       // ✅ NEW
+          mapChoice: el.mapChoice.value, // ✅
           inputMode: el.inputMode.value
         });
         el.mapLabel.textContent = "Map: (chosen at start)";
@@ -296,7 +286,8 @@
       if (payload.map) {
         mapData = payload.map;
         if (mapData.world) world = mapData.world;
-        el.runningHint.textContent = `Move: WASD / Arrow keys. Map: ${mapData.name || mapData.id || "?"}`;
+        el.runningHint.textContent =
+          `Move: WASD / Arrow keys. Map: ${mapData.name || mapData.id || "?"}`;
       }
     });
 
@@ -398,6 +389,22 @@
       }
     }
 
+    function drawMachines(camX, camY){
+      if (!mapData || !Array.isArray(mapData.machines)) return;
+
+      for (const m of mapData.machines) {
+        const x = m.x - camX;
+        const y = m.y - camY;
+
+        ctx.fillStyle = "rgba(255, 200, 0, .85)";
+        ctx.fillRect(x - 10, y - 10, 20, 20);
+
+        ctx.fillStyle = "rgba(10, 10, 10, .9)";
+        ctx.font = "12px system-ui";
+        ctx.fillText(String(m.num), x - 4, y + 4);
+      }
+    }
+
     function draw(){
       if (!lastSnapshot) return;
 
@@ -414,8 +421,9 @@
       ctx.strokeStyle = "rgba(255,255,255,.15)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
-      // map walls (if any)
+      // map walls + machines
       drawWalls(camX, camY);
+      drawMachines(camX, camY);
 
       for (const p of lastSnapshot.players) {
         const px = p.x - camX;
