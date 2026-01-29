@@ -24,3 +24,34 @@ module.exports = {
   ],
 };
 
+rooms: [
+  {
+    id: "roomA",
+    rect: { x: 400, y: 260, w: 520, h: 420 },
+
+    // openings are door gaps on the room edges
+    // side: "N"|"S"|"E"|"W", and "at" is offset along that edge
+    // size is doorway width (for N/S) or height (for E/W)
+    openings: [
+      { side: "N", at: 220, size: 120 }, // doorway on top edge
+      { side: "E", at: 160, size: 120 }, // doorway on right edge
+    ],
+
+    machines: [
+      { id: "m1", num: 6, x: 600, y: 420 },
+      { id: "m2", num: 9, x: 780, y: 520 },
+    ],
+  },
+
+  {
+    id: "roomB",
+    rect: { x: 1400, y: 820, w: 520, h: 420 },
+    openings: [
+      { side: "W", at: 160, size: 120 },
+      { side: "S", at: 220, size: 120 },
+    ],
+    machines: [
+      { id: "m3", num: 3, x: 1580, y: 1020 },
+    ],
+  },
+],
