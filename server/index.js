@@ -4,13 +4,16 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 // --------------------
-// Basic config (tweak)
+// Config (tweakable)
 // --------------------
 const PORT = process.env.PORT || 3000;
+
 const CODE_LEN = 5;
 const MAX_PLAYERS = 12;
+
 const MIN_TEAMS = 1;
 const MAX_TEAMS = 6;
+
 const MIN_TABLE = 1;
 const MAX_TABLE = 10;
 
@@ -57,17 +60,28 @@ function clampInt(n, min, max, fallback) {
 }
 
 function lobbySummary(game) {
-  const players = [...game.players.values()].map(p => ({
-    id: p.id,
-    name: p.name,
-    teamId: p.teamId
-  }));
-  return { players };
+  return {
+    players: [...game.players.values()].map((p) => ({
+      id: p.id,
+      name: p.name,
+      teamId: p.teamId,
+    })),
+  };
 }
 
 function emitLobbyUpdate(io, game) {
-  // Everyone in the room gets the same lobby update
   io.to(game.code).emit("LOBBY_UPDATE", lobbySummary(game));
+}
+
+function removePlayerFromGame(io, game, playerId) {
+  game.players.delete(playerId);
+
+  if (game.players.size === 0) {
+    delete games[game.code];
+    return;
+  }
+
+  emitLobbyUpdate(io, game);
 }
 
 // --------------------
@@ -75,12 +89,9 @@ function emitLobbyUpdate(io, game) {
 // --------------------
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*"}
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-// Serve client (simple dev mode)
-// In production you can host client separately; this is just convenient.
+// Serve the client folder (easy local dev)
 app.use(express.static(path.join(__dirname, "..", "client")));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
@@ -89,12 +100,11 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 // Socket.IO logic
 // --------------------
 io.on("connection", (socket) => {
-  // per-socket session
   const session = {
-    playerId: socket.id,   // simple v0 id
+    playerId: socket.id, // v0 id
     name: "Anonymous",
     gameCode: null,
-    isHost: false
+    isHost: false,
   };
 
   socket.emit("WELCOME", { playerId: session.playerId });
@@ -102,16 +112,18 @@ io.on("connection", (socket) => {
   socket.on("hello", (payload = {}) => {
     const nameRaw = String(payload.name || "").trim();
     session.name = nameRaw.length ? nameRaw.slice(0, 24) : "Anonymous";
-    // no broadcast needed
   });
 
   socket.on("createGame", (payload = {}) => {
-    // Sanitize host settings
+    // sanitize host settings
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
     const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
-    const inputMode = (payload.inputMode === "kb" || payload.inputMode === "kbm" || payload.inputMode === "kbm_gamepad")
-      ? payload.inputMode
-      : "kbm";
+    const inputMode =
+      payload.inputMode === "kb" ||
+      payload.inputMode === "kbm" ||
+      payload.inputMode === "kbm_gamepad"
+        ? payload.inputMode
+        : "kbm";
 
     const code = createUniqueCode();
 
@@ -120,15 +132,15 @@ io.on("connection", (socket) => {
       hostPlayerId: session.playerId,
       phase: "lobby",
       settings: { tableBase, teamCount, inputMode },
-      players: new Map()
+      players: new Map(),
     };
 
-    // Add host as first player
+    // add host
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: 0 // default host team; host can reassign later
+      teamId: 0, // default (host can reassign)
     });
 
     games[code] = game;
@@ -142,7 +154,10 @@ io.on("connection", (socket) => {
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: Array.from({ length: teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+      teams: Array.from({ length: teamCount }, (_, i) => ({
+        teamId: i,
+        name: `Team ${i + 1}`,
+      })),
     });
 
     emitLobbyUpdate(io, game);
@@ -170,18 +185,21 @@ io.on("connection", (socket) => {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: null
+      teamId: null,
     });
 
     session.gameCode = code;
-    session.isHost = (game.hostPlayerId === session.playerId);
+    session.isHost = false;
 
     socket.join(code);
 
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: Array.from({ length: game.settings.teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+      teams: Array.from({ length: game.settings.teamCount }, (_, i) => ({
+        teamId: i,
+        name: `Team ${i + 1}`,
+      })),
     });
 
     emitLobbyUpdate(io, game);
@@ -194,7 +212,7 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // Only host can assign
+    // only host can assign
     if (session.playerId !== game.hostPlayerId) return;
 
     const targetId = String(payload.playerId || "");
@@ -216,27 +234,27 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
+    // only host
     if (session.playerId !== game.hostPlayerId) return;
 
-    // Require at least 2 players for now
+    // require at least 2 players
     if (game.players.size < 2) return;
 
-    // Require everyone assigned a team (host assigns)
+    // require all assigned
     for (const p of game.players.values()) {
       if (p.teamId === null || p.teamId === undefined) return;
     }
 
     game.phase = "running";
 
-    // v0: no real map yet. Stub payload so client can switch screens.
     io.to(code).emit("GAME_STARTED", {
       map: { stub: true },
-      players: [...game.players.values()].map(p => ({
+      players: [...game.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
-        teamId: p.teamId
+        teamId: p.teamId,
       })),
-      machineMappings: [] // will come later
+      machineMappings: [],
     });
   });
 
@@ -247,28 +265,17 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // remove player
-    game.players.delete(session.playerId);
-
-    // if host left, end game (v0 policy)
+    // host leaves → end game (v0 policy)
     if (game.hostPlayerId === session.playerId) {
       io.to(code).emit("GAME_ENDED", { reason: "host_left" });
       delete games[code];
       return;
     }
 
-    // if empty, cleanup
-    if (game.players.size === 0) {
-      delete games[code];
-      return;
-    }
-
-    emitLobbyUpdate(io, game);
+    removePlayerFromGame(io, game, session.playerId);
   });
 });
 
-// --------------------
 server.listen(PORT, () => {
   console.log(`timetable-clowns server running on http://localhost:${PORT}`);
 });
-
