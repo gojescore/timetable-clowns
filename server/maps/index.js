@@ -1,3 +1,4 @@
+// server/maps/index.js
 const map01 = require("./map01");
 
 const MAPS = {
@@ -110,6 +111,50 @@ function buildDerived(map) {
     }
   }
   derived.machines = machines;
+
+  // ============================================================
+  // NEW: Attach runtime helpers that structuredClone() would drop
+  // ============================================================
+
+  // Road-only check (for money spawning)
+  derived.isRoad = function isRoad(x, y) {
+    // outside world is never road
+    if (!derived.world) return false;
+    if (x < 0 || y < 0 || x > derived.world.w || y > derived.world.h) return false;
+
+    const roadAreas = Array.isArray(derived.roadAreas) ? derived.roadAreas : [];
+    let inRoad = false;
+
+    for (const r of roadAreas) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        inRoad = true;
+        break;
+      }
+    }
+    if (!inRoad) return false;
+
+    // Rooms win: never spawn inside a room rectangle
+    if (Array.isArray(derived.rooms)) {
+      for (const room of derived.rooms) {
+        const rr = room.rect;
+        if (!rr) continue;
+        if (x >= rr.x && x <= rr.x + rr.w && y >= rr.y && y <= rr.y + rr.h) {
+          return false;
+        }
+      }
+    }
+
+    // Walls win: never spawn in any wall rect (includes generated room walls)
+    if (Array.isArray(derived.walls)) {
+      for (const w of derived.walls) {
+        if (x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  };
 
   return derived;
 }
