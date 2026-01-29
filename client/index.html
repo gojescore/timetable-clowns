@@ -204,6 +204,8 @@
   <script>
     const socket = io();
 
+    const INTERACT_RADIUS = 60; // must match server
+
     const el = {
       name: document.getElementById("name"),
       role: document.getElementById("role"),
@@ -454,20 +456,42 @@
       }
     }
 
-    function drawMachines(camX, camY){
-      if (!mapData?.machines) return;
-      for (const m of mapData.machines) {
-        const x = m.x - camX;
-        const y = m.y - camY;
+function drawMachines(camX, camY){
+  if (!mapData?.machines || !lastSnapshot) return;
 
-        ctx.fillStyle = "rgba(255, 200, 0, .85)";
-        ctx.fillRect(x - 10, y - 10, 20, 20);
+  const me = lastSnapshot.players.find(p => p.id === myId);
+  const mx = me?.x ?? -999999;
+  const my = me?.y ?? -999999;
+  const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
 
-        ctx.fillStyle = "rgba(10, 10, 10, .9)";
-        ctx.font = "12px system-ui";
-        ctx.fillText(String(m.num), x - 4, y + 4);
-      }
-    }
+  for (const m of mapData.machines) {
+    const x = m.x - camX;
+    const y = m.y - camY;
+
+    // near check (server uses same radius)
+    const dx = m.x - mx;
+    const dy = m.y - my;
+    const near = (dx*dx + dy*dy) <= r2;
+
+    // body
+    ctx.fillStyle = "rgba(255, 200, 0, .85)";
+    ctx.fillRect(x - 10, y - 10, 20, 20);
+
+    // outline (red when near)
+    ctx.lineWidth = near ? 3 : 1;
+    ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
+    ctx.strokeRect(x - 10, y - 10, 20, 20);
+
+    // number
+    ctx.fillStyle = "rgba(10, 10, 10, .9)";
+    ctx.font = "12px system-ui";
+    ctx.fillText(String(m.num), x - 4, y + 4);
+  }
+
+  // reset lineWidth so it doesn't affect other drawing
+  ctx.lineWidth = 1;
+}
+
 
     function draw(){
       if (!lastSnapshot) return;
