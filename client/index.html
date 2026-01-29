@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Timetable Clowns — Lobby</title>
+  <title>Timetable Clowns — Lobby + Movement</title>
   <style>
     :root{
       --bg:#0b1220;
@@ -61,12 +61,20 @@
     ul{padding-left:18px}
     li{margin:6px 0}
     .hostOnly{display:none}
+    canvas{
+      width:100%;
+      max-width:900px;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      background:#0e1630;
+      display:block;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Multiplayer lobby (v0). Host creates a code, guests join, host assigns teams.</p>
+    <p class="muted">Multiplayer lobby + rectangle movement. Host creates a code, guests join, host assigns teams, then move with WASD / arrows.</p>
 
     <!-- START / JOIN -->
     <div class="card" id="startCard">
@@ -137,19 +145,20 @@
 
       <h3>Players</h3>
       <ul id="playerList"></ul>
+      <p class="muted">Tip: everyone must have a team (no “—”) before Start game works.</p>
     </div>
 
-    <!-- RUNNING (stub) -->
+    <!-- RUNNING -->
     <div class="card hidden" id="runningCard">
-  <h2>Game started 🎉</h2>
-  <p class="muted">WASD / Arrow keys to move. (Rectangles for now.)</p>
-  <canvas id="game" width="900" height="520" style="width:100%;max-width:900px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#0e1630"></canvas>
-</div>
-
+      <h2>Game started 🎉</h2>
+      <p class="muted">Move: WASD / Arrow keys. (Rectangles for now.)</p>
+      <canvas id="game" width="900" height="520"></canvas>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
+    // ---------- Socket setup ----------
     const socket = io();
 
     const el = {
@@ -171,13 +180,16 @@
       playerList: document.getElementById("playerList"),
 
       hostControls: document.getElementById("hostControls"),
-      startGame: document.getElementById("startGame")
+      startGame: document.getElementById("startGame"),
+
+      canvas: document.getElementById("game"),
     };
 
     let myId = null;
     let isHost = false;
     let teamCount = 2;
 
+    // ---------- Role UI ----------
     function updateRoleUI(){
       const guest = el.role.value === "guest";
       el.joinCode.classList.toggle("hidden", !guest);
@@ -196,9 +208,7 @@
     });
 
     function sayHello(){
-      socket.emit("hello", {
-        name: el.name.value.trim() || "Anonymous"
-      });
+      socket.emit("hello", { name: el.name.value.trim() || "Anonymous" });
     }
 
     el.go.addEventListener("click", () => {
@@ -246,6 +256,7 @@
       socket.emit("startGame");
     });
 
+    // ✅ SINGLE handler: switch UI to game screen
     socket.on("GAME_STARTED", () => {
       el.lobby.classList.add("hidden");
       el.running.classList.remove("hidden");
@@ -260,12 +271,15 @@
 
     function renderPlayers(players){
       el.playerList.innerHTML = "";
+
       const me = players.find(p => p.id === myId);
       el.meTeam.textContent = "team: " + (me?.teamId ?? "?");
 
       for (const p of players) {
         const li = document.createElement("li");
-        li.textContent = `${p.name} (team: ${p.teamId ?? "—"})`;
+        const label = document.createElement("span");
+        label.textContent = `${p.name} (team: ${p.teamId ?? "—"})`;
+        li.appendChild(label);
 
         if (isHost) {
           const sel = document.createElement("select");
@@ -283,13 +297,11 @@
             sel.appendChild(opt);
           }
 
-          sel.value = p.teamId ?? "";
+          sel.value = (p.teamId === null || p.teamId === undefined) ? "" : String(p.teamId);
+
           sel.addEventListener("change", () => {
             if (sel.value === "") return;
-            socket.emit("assignTeam", {
-              playerId: p.id,
-              teamId: Number(sel.value)
-            });
+            socket.emit("assignTeam", { playerId: p.id, teamId: Number(sel.value) });
           });
 
           li.appendChild(sel);
@@ -298,94 +310,88 @@
         el.playerList.appendChild(li);
       }
     }
-    // --------------------
-// Minimal game rendering (v1)
-// --------------------
-const canvas = document.getElementById("game");
-const ctx = canvas ? canvas.getContext("2d") : null;
 
-let lastSnapshot = null;
-let world = { w: 2400, h: 1600 };
+    // ---------- Movement input ----------
+    const inputState = { up:false, down:false, left:false, right:false };
 
-const inputState = { up:false, down:false, left:false, right:false };
+    function sendInput(){
+      socket.emit("input", inputState);
+    }
 
-function sendInput(){
-  socket.emit("input", inputState);
-}
+    function setKey(e, isDown){
+      const k = e.key.toLowerCase();
+      let used = true;
 
-function setKey(e, isDown){
-  const k = e.key.toLowerCase();
-  let used = true;
+      if (k === "w" || e.key === "ArrowUp") inputState.up = isDown;
+      else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
+      else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
+      else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
+      else used = false;
 
-  if (k === "w" || e.key === "ArrowUp") inputState.up = isDown;
-  else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
-  else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
-  else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
-  else used = false;
+      if (used) {
+        e.preventDefault();
+        sendInput();
+      }
+    }
 
-  if (used) {
-    e.preventDefault();
-    sendInput();
-  }
-}
+    window.addEventListener("keydown", (e) => setKey(e, true));
+    window.addEventListener("keyup", (e) => setKey(e, false));
 
-window.addEventListener("keydown", (e) => setKey(e, true));
-window.addEventListener("keyup", (e) => setKey(e, false));
+    // ---------- Rendering ----------
+    const canvas = el.canvas;
+    const ctx = canvas.getContext("2d");
 
-socket.on("GAME_STARTED", (payload = {}) => {
-  // Show running screen (already done in your code)
-  if (payload.world) world = payload.world;
-});
+    let lastSnapshot = null;
+    let world = { w: 2400, h: 1600 };
 
-socket.on("STATE_SNAPSHOT", (snap) => {
-  lastSnapshot = snap;
-  if (snap.world) world = snap.world;
-});
+    socket.on("STATE_SNAPSHOT", (snap) => {
+      lastSnapshot = snap;
+      if (snap.world) world = snap.world;
+    });
 
-function draw(){
-  if (!ctx || !lastSnapshot) return;
+    function draw(){
+      if (!lastSnapshot) return;
 
-  const me = lastSnapshot.players.find(p => p.id === myId);
-  const camX = me ? (me.x - canvas.width / 2) : 0;
-  const camY = me ? (me.y - canvas.height / 2) : 0;
+      const me = lastSnapshot.players.find(p => p.id === myId);
+      const camX = me ? (me.x - canvas.width / 2) : 0;
+      const camY = me ? (me.y - canvas.height / 2) : 0;
 
-  const x0 = Math.max(0, Math.min(world.w - canvas.width, camX));
-  const y0 = Math.max(0, Math.min(world.h - canvas.height, camY));
+      const x0 = Math.max(0, Math.min(world.w - canvas.width, camX));
+      const y0 = Math.max(0, Math.min(world.h - canvas.height, camY));
 
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // world border (for orientation)
-  ctx.strokeStyle = "rgba(255,255,255,.15)";
-  ctx.strokeRect(-x0 + 20, -y0 + 20, world.w - 40, world.h - 40);
+      // world border for orientation
+      ctx.strokeStyle = "rgba(255,255,255,.15)";
+      ctx.strokeRect(-x0 + 20, -y0 + 20, world.w - 40, world.h - 40);
 
-  for (const p of lastSnapshot.players) {
-    const px = p.x - x0;
-    const py = p.y - y0;
+      for (const p of lastSnapshot.players) {
+        const px = p.x - x0;
+        const py = p.y - y0;
 
-    // rectangle player
-    ctx.fillStyle = (p.id === myId) ? "rgba(43,102,255,.9)" : "rgba(255,255,255,.75)";
-    ctx.fillRect(px - 14, py - 14, 28, 28);
+        // rectangle player
+        ctx.fillStyle = (p.id === myId) ? "rgba(43,102,255,.9)" : "rgba(255,255,255,.75)";
+        ctx.fillRect(px - 14, py - 14, 28, 28);
 
-    // tiny facing line
-    ctx.strokeStyle = "rgba(0,0,0,.35)";
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(px + p.dirX * 18, py + p.dirY * 18);
-    ctx.stroke();
+        // facing line
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
+        ctx.stroke();
 
-    // name
-    ctx.fillStyle = "rgba(230,237,247,.85)";
-    ctx.font = "12px system-ui";
-    ctx.fillText(p.name, px - 14, py - 20);
-  }
-}
+        // name
+        ctx.fillStyle = "rgba(230,237,247,.85)";
+        ctx.font = "12px system-ui";
+        ctx.fillText(p.name, px - 14, py - 20);
+      }
+    }
 
-function loop(){
-  draw();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-
+    function loop(){
+      draw();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
   </script>
 </body>
 </html>
