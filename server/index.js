@@ -129,6 +129,10 @@ const io = new Server(server, { cors: { origin: "*" } });
 // Serve the client folder (easy local dev)
 app.use(express.static(path.join(__dirname, "..", "client")));
 
+// ✅ DEBUG: prove which folder is actually being served
+console.log("Serving client from:", path.join(__dirname, "..", "client"));
+console.log("Server folder is:", __dirname);
+
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 // --------------------
@@ -146,7 +150,6 @@ setInterval(() => {
     if (!game || game.phase !== "running") continue;
 
     for (const p of game.players.values()) {
-      // Build direction from input
       const up = !!p.input?.up;
       const down = !!p.input?.down;
       const left = !!p.input?.left;
@@ -158,27 +161,21 @@ setInterval(() => {
       if (up) vy -= 1;
       if (down) vy += 1;
 
-      // Normalize diagonal
       const len = Math.hypot(vx, vy);
       if (len > 0) {
         vx /= len;
         vy /= len;
-
-        // Update facing direction (last non-zero)
         p.dirX = vx;
         p.dirY = vy;
       }
 
-      // Move
       p.x += vx * PLAYER_SPEED * dt;
       p.y += vy * PLAYER_SPEED * dt;
 
-      // Clamp to world bounds
       p.x = clamp(p.x, 0, WORLD_W);
       p.y = clamp(p.y, 0, WORLD_H);
     }
 
-    // Broadcast snapshot
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
 }, TICK_MS);
@@ -202,7 +199,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("createGame", (payload = {}) => {
-    // sanitize host settings
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
     const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
     const inputMode =
@@ -222,12 +218,11 @@ io.on("connection", (socket) => {
       players: new Map(),
     };
 
-    // add host
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: 0, // default (host can reassign)
+      teamId: 0,
       x: randInt(200, 500),
       y: randInt(200, 500),
       dirX: 1,
@@ -272,7 +267,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // join
     game.players.set(session.playerId, {
       id: session.playerId,
       name: session.name,
@@ -309,7 +303,6 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // only host can assign
     if (session.playerId !== game.hostPlayerId) return;
 
     const targetId = String(payload.playerId || "");
@@ -331,13 +324,10 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // only host
     if (session.playerId !== game.hostPlayerId) return;
 
-    // require at least 2 players
     if (game.players.size < 2) return;
 
-    // require all assigned
     for (const p of game.players.values()) {
       if (p.teamId === null || p.teamId === undefined) return;
     }
@@ -348,11 +338,9 @@ io.on("connection", (socket) => {
       world: { w: WORLD_W, h: WORLD_H },
     });
 
-    // Immediately push one snapshot so clients draw instantly
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   });
 
-  // Movement input (authoritative server sim)
   socket.on("input", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -378,7 +366,6 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // host leaves → end game (v0 policy)
     if (game.hostPlayerId === session.playerId) {
       io.to(code).emit("GAME_ENDED", { reason: "host_left" });
       delete games[code];
