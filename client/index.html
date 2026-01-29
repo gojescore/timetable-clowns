@@ -140,7 +140,7 @@
       display:inline-block;
     }
 
-    /* NEW: bottom upgrade bar */
+    /* Bottom upgrade bar */
     .upgradeBar{
       margin-top:10px;
       padding:10px;
@@ -195,26 +195,61 @@
       align-items:center;
     }
 
-    /* Upgrade picker buttons */
-    .upgradeBtn{
-      width:100%;
-      text-align:left;
-      margin:8px 0 6px;
-      padding:10px 12px;
-      border-radius:12px;
+    /* ===== NEW: Upgrade picker grid tiles ===== */
+    .upgGrid{
+      display:grid;
+      gap:10px;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+      margin-top:10px;
+    }
+    .upgGrid.grid4{
+      grid-template-columns:repeat(4, minmax(0, 1fr));
+    }
+    .upgTile{
+      aspect-ratio: 1 / 1;
+      border-radius:14px;
       border:1px solid var(--line);
       background:#0e1630;
       color:var(--ink);
       cursor:pointer;
+      padding:10px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      transition: transform .06s ease, border-color .06s ease;
     }
-    .upgradeBtn.primary{
-      background:var(--accent);
-      border-color:var(--accent);
+    .upgTile:hover{
+      transform: translateY(-1px);
+      border-color: rgba(255,255,255,.22);
     }
-    .upgradeDesc{
-      font-size:13px;
-      margin:0 0 8px;
+    .upgName{
+      font-weight:900;
+      font-size:14px;
+      line-height:1.1;
+    }
+    .upgKind{
+      font-size:12px;
       color:var(--muted);
+      margin-top:6px;
+    }
+    .upgFoot{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:8px;
+      margin-top:10px;
+    }
+    .upgTag{
+      font-size:12px;
+      padding:3px 8px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      color:var(--muted);
+    }
+    .upgPick{
+      font-size:12px;
+      font-weight:800;
+      color:rgba(230,237,247,.9);
     }
   </style>
 </head>
@@ -317,7 +352,7 @@
 
       <canvas id="game" width="900" height="520"></canvas>
 
-      <!-- NEW: bottom upgrade bar -->
+      <!-- Bottom upgrade bar -->
       <div class="upgradeBar" id="upgradeBar">
         <div class="upgradeSlots" id="upgradeSlots"></div>
         <div class="uLegend">
@@ -506,7 +541,6 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
-      // build empty upgrade slots
       renderUpgradeBar();
     });
 
@@ -514,15 +548,11 @@
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
 
-      // Update HUD from snapshot
       const me = snap.players?.find(p => p.id === myId);
       if (me) {
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
-
-        // If server later adds upgrades in snapshot, you can render from it here.
-        // For now we keep local myUpgrades (UI scaffold).
       }
     });
 
@@ -571,7 +601,6 @@
       return !!activePromptId || !!activeOfferId;
     }
 
-    // NEW: only treat movement keys as game input when game is running
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
     }
@@ -678,36 +707,65 @@
         showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
       }
 
-      // NEW: returning to a cleared machine
       if (p.reason === "already_cleared") {
         showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
       }
     });
 
-    // ---------- Upgrade UI ----------
+    // ---------- Upgrade UI (GRID TILES) ----------
     function openUpgradeOffer({ offerId, options }) {
       activeOfferId = offerId;
       el.upgradeMsg.textContent = "";
       el.upgradeMsg.className = "msg";
 
+      const opts = Array.isArray(options) ? options : [];
       el.upgradeList.innerHTML = "";
 
-      for (const opt of (options || [])) {
-        const btn = document.createElement("button");
-        btn.className = "upgradeBtn primary";
-        btn.textContent = `${opt.name}`;
-        btn.addEventListener("click", () => {
+      // 4x4 when many options, otherwise 3x3
+      const use4 = opts.length >= 10;
+
+      const grid = document.createElement("div");
+      grid.className = "upgGrid" + (use4 ? " grid4" : "");
+
+      for (const opt of opts) {
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "upgTile";
+
+        const name = document.createElement("div");
+        name.className = "upgName";
+        name.textContent = opt.name || opt.id || "Upgrade";
+
+        const kind = document.createElement("div");
+        kind.className = "upgKind";
+        kind.textContent = opt.desc || (opt.kind ? `(${opt.kind})` : "");
+
+        const foot = document.createElement("div");
+        foot.className = "upgFoot";
+
+        const tag = document.createElement("div");
+        tag.className = "upgTag";
+        tag.textContent = opt.kind ? String(opt.kind) : "upgrade";
+
+        const pick = document.createElement("div");
+        pick.className = "upgPick";
+        pick.textContent = "Pick";
+
+        foot.appendChild(tag);
+        foot.appendChild(pick);
+
+        tile.appendChild(name);
+        tile.appendChild(kind);
+        tile.appendChild(foot);
+
+        tile.addEventListener("click", () => {
           socket.emit("chooseUpgrade", { offerId: activeOfferId, upgradeId: opt.id });
         });
 
-        const desc = document.createElement("div");
-        desc.className = "upgradeDesc";
-        desc.textContent = opt.desc || (opt.kind ? `(${opt.kind})` : "");
-
-        el.upgradeList.appendChild(btn);
-        el.upgradeList.appendChild(desc);
+        grid.appendChild(tile);
       }
 
+      el.upgradeList.appendChild(grid);
       el.upgradeOverlay.classList.add("show");
     }
 
@@ -732,9 +790,7 @@
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
 
-        // Update bottom bar visually (client scaffold):
-        // The server should ideally send chosen upgrade info back;
-        // until then, we store a basic placeholder.
+        // Visual-only scaffold for now:
         if (p.chosen && p.chosen.id) {
           myUpgrades.push({
             id: p.chosen.id,
@@ -755,8 +811,7 @@
     });
 
     function renderUpgradeBar() {
-      // show max 6 slots visually for now (later you’ll enforce rules)
-      const slots = 6;
+      const slots = 6; // visual slots (rules later)
 
       el.upgradeSlots.innerHTML = "";
       for (let i = 0; i < slots; i++) {
@@ -784,10 +839,9 @@
     function shortName(name){
       const s = String(name || "").trim();
       if (!s) return "";
-      // 2-line-ish abbreviation
       if (s.length <= 6) return s;
       const parts = s.split(/\s+/);
-      if (parts.length >= 2) return (parts[0].slice(0,3) + "\n" + parts[1].slice(0,3)).replace("\n","");
+      if (parts.length >= 2) return (parts[0].slice(0,3) + parts[1].slice(0,3));
       return s.slice(0,6);
     }
 
@@ -807,6 +861,7 @@
       }
     }
 
+    // Money pickups rendering (green rectangle with $)
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
