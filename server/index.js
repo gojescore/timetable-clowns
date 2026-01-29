@@ -566,7 +566,16 @@ io.on("connection", (socket) => {
     if (!machine) return;
 
     // Cannot interact with a machine already cleared
-    if (p.clearedMachines.has(machine.id)) return;
+    // Cannot interact with a machine already cleared
+if (p.clearedMachines.has(machine.id)) {
+  socket.emit("INTERACT_DENIED", {
+    reason: "already_cleared",
+    nextMachineNum: p.nextMachineNum,
+    tried: machine.num,
+  });
+  return;
+}
+
 
     // Must be in numeric order: nextMachineNum only
     if (machine.num !== p.nextMachineNum) {
