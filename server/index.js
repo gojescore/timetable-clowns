@@ -51,6 +51,29 @@ const games = Object.create(null);
 // --------------------
 // Helpers
 // --------------------
+// --- Collision tuning (must match client draw size: 28x28)
+const PLAYER_HALF = 14; // player is 28x28
+
+function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function collidesAt(game, cx, cy) {
+  const map = game.map;
+  if (!map || !Array.isArray(map.walls)) return false;
+
+  const px = cx - PLAYER_HALF;
+  const py = cy - PLAYER_HALF;
+  const pw = PLAYER_HALF * 2;
+  const ph = PLAYER_HALF * 2;
+
+  for (const w of map.walls) {
+    if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
+  }
+  return false;
+}
+
+
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -178,12 +201,30 @@ setInterval(() => {
         p.dirY = vy;
       }
 
-      p.x += vx * PLAYER_SPEED * dt;
-      p.y += vy * PLAYER_SPEED * dt;
+const nextX = p.x + vx * PLAYER_SPEED * dt;
+const nextY = p.y + vy * PLAYER_SPEED * dt;
 
-      // Clamp to map/world bounds
-      p.x = clamp(p.x, 0, world.w);
-      p.y = clamp(p.y, 0, world.h);
+// Clamp to world bounds taking player size into account
+const minX = PLAYER_HALF;
+const minY = PLAYER_HALF;
+const maxX = world.w - PLAYER_HALF;
+const maxY = world.h - PLAYER_HALF;
+
+// Move X first, collide, then Y (simple + stable)
+let cx = clamp(nextX, minX, maxX);
+let cy = clamp(p.y,   minY, maxY);
+
+if (!collidesAt(game, cx, cy)) {
+  p.x = cx;
+} // else: blocked in X
+
+cx = clamp(p.x,   minX, maxX);
+cy = clamp(nextY, minY, maxY);
+
+if (!collidesAt(game, cx, cy)) {
+  p.y = cy;
+} // else: blocked in Y
+
     }
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
