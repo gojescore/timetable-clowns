@@ -15,6 +15,9 @@
       --good:#22c55e;
       --bad:#ef4444;
       --coin:#f4b000;
+
+      /* NEW: money bill color */
+      --money:#22c55e;
     }
     *{box-sizing:border-box}
     body{
@@ -107,7 +110,7 @@
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
-    /* NEW: HUD overlay (in running card, above canvas) */
+    /* HUD overlay (in running card, above canvas) */
     .hudRow{
       display:flex;
       gap:10px;
@@ -137,6 +140,28 @@
       background:var(--coin);
       box-shadow:0 0 0 2px rgba(0,0,0,.18) inset;
       display:inline-block;
+    }
+
+    /* NEW: upgrade list buttons */
+    .upgradeBtn{
+      width:100%;
+      text-align:left;
+      margin:8px 0 6px;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0e1630;
+      color:var(--ink);
+      cursor:pointer;
+    }
+    .upgradeBtn.primary{
+      background:var(--accent);
+      border-color:var(--accent);
+    }
+    .upgradeDesc{
+      font-size:13px;
+      margin:0 0 8px;
+      color:var(--muted);
     }
   </style>
 </head>
@@ -218,7 +243,7 @@
       <h2>Game started 🎉</h2>
       <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
 
-      <!-- NEW: HUD -->
+      <!-- HUD -->
       <div class="hudRow" id="hudRow">
         <div class="hudLeft">
           <span class="hudPill" title="You">
@@ -255,6 +280,21 @@
     </div>
   </div>
 
+  <!-- NEW: Upgrade overlay -->
+  <div class="overlay" id="upgradeOverlay">
+    <div class="modal">
+      <h3>Choose an upgrade</h3>
+      <p class="muted" style="margin:.2em 0 .6em">Pick one. (Effects come later.)</p>
+
+      <div id="upgradeList"></div>
+
+      <div class="actions">
+        <button id="upgradeCloseBtn">Close</button>
+      </div>
+      <div class="msg" id="upgradeMsg"></div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
@@ -281,7 +321,7 @@
       startGame: document.getElementById("startGame"),
       runningHint: document.getElementById("runningHint"),
 
-      // NEW: HUD
+      // HUD
       hudName: document.getElementById("hudName"),
       hudTeam: document.getElementById("hudTeam"),
       hudMoney: document.getElementById("hudMoney"),
@@ -295,6 +335,12 @@
       submitBtn: document.getElementById("submitBtn"),
       cancelBtn: document.getElementById("cancelBtn"),
       msg: document.getElementById("msg"),
+
+      // NEW: upgrades
+      upgradeOverlay: document.getElementById("upgradeOverlay"),
+      upgradeList: document.getElementById("upgradeList"),
+      upgradeCloseBtn: document.getElementById("upgradeCloseBtn"),
+      upgradeMsg: document.getElementById("upgradeMsg"),
     };
 
     let myId = null;
@@ -307,6 +353,9 @@
 
     // prompt state
     let activePromptId = null;
+
+    // NEW: upgrade offer state
+    let activeOfferId = null;
 
     // Machine highlight radius (must match server)
     const INTERACT_RADIUS = 60;
@@ -399,6 +448,7 @@
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+        // life later (keep as 1 for now unless server adds it)
       }
     });
 
@@ -443,13 +493,17 @@
     // ---------- Movement input ----------
     const inputState = { up:false, down:false, left:false, right:false };
 
+    function isUiBlockingInput() {
+      return !!activePromptId || !!activeOfferId; // NEW: block also during upgrades
+    }
+
     function sendInput(){
       socket.emit("input", inputState);
     }
 
     function setKey(e, isDown){
-      // If prompt open, ignore movement keys
-      if (activePromptId) return;
+      // If prompt/upgrade open, ignore movement keys
+      if (isUiBlockingInput()) return;
 
       const k = e.key.toLowerCase();
       let used = true;
@@ -468,7 +522,7 @@
 
     // Interact key (E)
     window.addEventListener("keydown", (e) => {
-      if (e.key.toLowerCase() === "e" && !activePromptId) {
+      if (e.key.toLowerCase() === "e" && !isUiBlockingInput()) {
         socket.emit("tryInteract");
       }
     });
@@ -526,6 +580,60 @@
       showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
     });
 
+    // ---------- NEW: Upgrade UI ----------
+    function openUpgradeOffer({ offerId, options }) {
+      activeOfferId = offerId;
+      el.upgradeMsg.textContent = "";
+      el.upgradeMsg.className = "msg";
+
+      el.upgradeList.innerHTML = "";
+
+      for (const opt of (options || [])) {
+        const btn = document.createElement("button");
+        btn.className = "upgradeBtn primary";
+        btn.textContent = `${opt.name} — ${opt.kind}`;
+        btn.addEventListener("click", () => {
+          socket.emit("chooseUpgrade", { offerId: activeOfferId, upgradeId: opt.id });
+        });
+
+        const desc = document.createElement("div");
+        desc.className = "upgradeDesc";
+        desc.textContent = opt.desc || "";
+
+        el.upgradeList.appendChild(btn);
+        el.upgradeList.appendChild(desc);
+      }
+
+      el.upgradeOverlay.classList.add("show");
+    }
+
+    function closeUpgradeOffer() {
+      activeOfferId = null;
+      el.upgradeOverlay.classList.remove("show");
+      el.upgradeList.innerHTML = "";
+      el.upgradeMsg.textContent = "";
+    }
+
+    el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
+
+    socket.on("UPGRADE_OFFER", (p) => {
+      if (!p) return;
+      openUpgradeOffer(p);
+    });
+
+    socket.on("UPGRADE_RESULT", (p) => {
+      if (!p) return;
+
+      if (p.ok) {
+        el.upgradeMsg.textContent = "Picked ✅";
+        el.upgradeMsg.className = "msg good";
+        setTimeout(closeUpgradeOffer, 450);
+      } else {
+        el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
+        el.upgradeMsg.className = "msg bad";
+      }
+    });
+
     // ---------- Rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d");
@@ -542,33 +650,31 @@
       }
     }
 
- // NEW: money pickups rendering (green rectangle with $)
-  function drawPickups(camX, camY){
-    if (!lastSnapshot?.pickups) return;
+    // NEW: money pickups rendering (small green rectangle with $)
+    function drawPickups(camX, camY){
+      const list = lastSnapshot?.pickups;
+      if (!Array.isArray(list)) return;
 
-    for (const pk of lastSnapshot.pickups) {
-      if (!pk || pk.type !== "money") continue;
+      for (const pk of list) {
+        if (!pk || pk.type !== "money") continue;
 
-      const x = pk.x - camX;
-      const y = pk.y - camY;
+        const x = pk.x - camX;
+        const y = pk.y - camY;
 
-      const w = 18;
-      const h = 12;
+        const w = 18;
+        const h = 12;
 
-      // green bill rectangle
-      ctx.fillStyle = "rgba(34, 197, 94, .95)"; // green
-      ctx.fillRect(x - w/2, y - h/2, w, h);
+        ctx.fillStyle = "rgba(34, 197, 94, .95)";
+        ctx.fillRect(x - w/2, y - h/2, w, h);
 
-      // outline
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.strokeRect(x - w/2, y - h/2, w, h);
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
 
-      // $
-      ctx.fillStyle = "rgba(10, 10, 10, .85)";
-      ctx.font = "10px system-ui";
-      ctx.fillText("$", x - 3, y + 4);
+        ctx.fillStyle = "rgba(10,10,10,.9)";
+        ctx.font = "10px system-ui";
+        ctx.fillText("$", x - 3, y + 4);
+      }
     }
-  }
 
     function drawMachines(camX, camY){
       if (!mapData?.machines || !lastSnapshot) return;
@@ -617,7 +723,6 @@
       ctx.save();
       ctx.font = "13px system-ui";
       const padX = 10;
-      const padY = 7;
       const textW = Math.min(420, Math.ceil(ctx.measureText(text).width));
       const boxW = textW + padX * 2;
       const boxH = 30;
@@ -681,7 +786,7 @@
 
       drawWalls(camX, camY);
 
-      // NEW: pickups should appear on top of floor, under machines/players
+      // NEW: render pickups
       drawPickups(camX, camY);
 
       drawMachines(camX, camY);
