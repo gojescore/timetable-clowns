@@ -14,6 +14,7 @@
       --accent:#2b66ff;
       --good:#22c55e;
       --bad:#ef4444;
+      --coin:#f4b000;
     }
     *{box-sizing:border-box}
     body{
@@ -51,6 +52,7 @@
       border-radius:999px;
       border:1px solid var(--line);
       margin-right:6px;
+      white-space:nowrap;
     }
     .code{
       font-weight:900;
@@ -60,6 +62,7 @@
     ul{padding-left:18px}
     li{margin:6px 0}
     .hostOnly{display:none}
+
     canvas{
       width:100%;
       max-width:900px;
@@ -103,6 +106,38 @@
     .msg{margin-top:8px; font-weight:700}
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
+
+    /* NEW: HUD overlay (in running card, above canvas) */
+    .hudRow{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+      margin:8px 0 10px;
+    }
+    .hudLeft, .hudRight{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .hudPill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.12);
+      white-space:nowrap;
+    }
+    .dotCoin{
+      width:10px;height:10px;border-radius:999px;
+      background:var(--coin);
+      box-shadow:0 0 0 2px rgba(0,0,0,.18) inset;
+      display:inline-block;
+    }
   </style>
 </head>
 <body>
@@ -182,6 +217,26 @@
     <div class="card hidden" id="runningCard">
       <h2>Game started 🎉</h2>
       <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
+
+      <!-- NEW: HUD -->
+      <div class="hudRow" id="hudRow">
+        <div class="hudLeft">
+          <span class="hudPill" title="You">
+            <span class="pill" id="hudName">?</span>
+            <span class="pill" id="hudTeam">team: ?</span>
+          </span>
+        </div>
+        <div class="hudRight">
+          <span class="hudPill" title="Money">
+            <span class="dotCoin"></span>
+            <span id="hudMoney">$0</span>
+          </span>
+          <span class="hudPill muted" title="Life (later)">
+            ❤️ <span id="hudLife">1</span>
+          </span>
+        </div>
+      </div>
+
       <canvas id="game" width="900" height="520"></canvas>
     </div>
   </div>
@@ -225,6 +280,12 @@
       hostControls: document.getElementById("hostControls"),
       startGame: document.getElementById("startGame"),
       runningHint: document.getElementById("runningHint"),
+
+      // NEW: HUD
+      hudName: document.getElementById("hudName"),
+      hudTeam: document.getElementById("hudTeam"),
+      hudMoney: document.getElementById("hudMoney"),
+      hudLife: document.getElementById("hudLife"),
 
       canvas: document.getElementById("game"),
 
@@ -322,11 +383,23 @@
       if (mapData?.world) world = mapData.world;
       el.runningHint.textContent =
         `Move: WASD / Arrow keys. Interact: E near a machine. Map: ${mapData?.name || mapData?.id || "?"}`;
+
+      // reset HUD until we get a snapshot
+      el.hudMoney.textContent = "$0";
+      el.hudLife.textContent = "1";
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
+
+      // Update HUD from snapshot
+      const me = snap.players?.find(p => p.id === myId);
+      if (me) {
+        el.hudName.textContent = me.name || "?";
+        el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
+        el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+      }
     });
 
     function renderPlayers(players){
@@ -469,6 +542,32 @@
       }
     }
 
+    // NEW: money pickups rendering
+    function drawPickups(camX, camY){
+      if (!lastSnapshot?.pickups) return;
+
+      for (const pk of lastSnapshot.pickups) {
+        if (!pk || pk.type !== "money") continue;
+
+        const x = pk.x - camX;
+        const y = pk.y - camY;
+
+        // coin (simple)
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(244, 176, 0, .95)";
+        ctx.arc(x, y, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.stroke();
+
+        // tiny $
+        ctx.fillStyle = "rgba(20, 20, 20, .85)";
+        ctx.font = "10px system-ui";
+        ctx.fillText("$", x - 3, y + 3);
+      }
+    }
+
     function drawMachines(camX, camY){
       if (!mapData?.machines || !lastSnapshot) return;
 
@@ -579,6 +678,10 @@
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
       drawWalls(camX, camY);
+
+      // NEW: pickups should appear on top of floor, under machines/players
+      drawPickups(camX, camY);
+
       drawMachines(camX, camY);
 
       for (const p of lastSnapshot.players) {
