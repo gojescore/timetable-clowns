@@ -2,10 +2,10 @@ const path = require("path");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { pickMap } = require("./maps"); // server/maps/index.js builds derived walls + machines
+const { pickMap } = require("./maps");
 
 // --------------------
-// Config (tweakable)
+// Config
 // --------------------
 const PORT = process.env.PORT || 3000;
 
@@ -26,25 +26,12 @@ const PLAYER_SPEED = 220; // px/sec
 // Player collision size (must match client draw size: 28x28)
 const PLAYER_HALF = 14;
 
+// Interaction
+const INTERACT_RADIUS = 60; // px
+
 // --------------------
 // In-memory game store
 // --------------------
-/**
- * games[gameCode] = {
- *   code,
- *   hostPlayerId,
- *   phase: "lobby" | "running",
- *   settings: { tableBase, teamCount, inputMode, mapChoice },
- *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
- *   players: Map(playerId -> Player),
- * }
- *
- * Player = {
- *   id, name, socketId, teamId,
- *   x, y, dirX, dirY,
- *   input: {up,down,left,right}
- * }
- */
 const games = Object.create(null);
 
 // --------------------
@@ -55,7 +42,7 @@ function randInt(min, max) {
 }
 
 function genCode() {
-  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // avoid 0/O, 1/I
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
   let code = "";
   for (let i = 0; i < CODE_LEN; i++) code += alphabet[randInt(0, alphabet.length - 1)];
   return code;
@@ -106,7 +93,6 @@ function removePlayerFromGame(io, game, playerId) {
     delete games[game.code];
     return;
   }
-
   emitLobbyUpdate(io, game);
 }
 
@@ -145,6 +131,34 @@ function snapshotForGame(game) {
       dirY: p.dirY,
     })),
   };
+}
+
+function dist2(ax, ay, bx, by) {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+function findNearbyMachine(game, x, y, radius) {
+  const map = game.map;
+  if (!map || !Array.isArray(map.machines)) return null;
+
+  const r2 = radius * radius;
+  let best = null;
+  let bestD2 = Infinity;
+
+  for (const m of map.machines) {
+    const d2 = dist2(x, y, m.x, m.y);
+    if (d2 <= r2 && d2 < bestD2) {
+      best = m;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
+
+function makePromptId() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
 // --------------------
@@ -207,20 +221,14 @@ setInterval(() => {
       const maxX = world.w - PLAYER_HALF;
       const maxY = world.h - PLAYER_HALF;
 
-      // Move X first (blocked by walls), then Y (slide along walls)
+      // X then Y (slide)
       let cx = clamp(nextX, minX, maxX);
       let cy = clamp(p.y, minY, maxY);
-
-      if (!collidesAt(game, cx, cy)) {
-        p.x = cx;
-      }
+      if (!collidesAt(game, cx, cy)) p.x = cx;
 
       cx = clamp(p.x, minX, maxX);
       cy = clamp(nextY, minY, maxY);
-
-      if (!collidesAt(game, cx, cy)) {
-        p.y = cy;
-      }
+      if (!collidesAt(game, cx, cy)) p.y = cy;
     }
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -232,7 +240,7 @@ setInterval(() => {
 // --------------------
 io.on("connection", (socket) => {
   const session = {
-    playerId: socket.id, // v0 id
+    playerId: socket.id,
     name: "Anonymous",
     gameCode: null,
     isHost: false,
@@ -248,6 +256,7 @@ io.on("connection", (socket) => {
   socket.on("createGame", (payload = {}) => {
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
     const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
+
     const inputMode =
       payload.inputMode === "kb" ||
       payload.inputMode === "kbm" ||
@@ -256,7 +265,6 @@ io.on("connection", (socket) => {
         : "kbm";
 
     const mapChoice = String(payload.mapChoice || "map01");
-
     const code = createUniqueCode();
 
     const game = {
@@ -264,7 +272,7 @@ io.on("connection", (socket) => {
       hostPlayerId: session.playerId,
       phase: "lobby",
       settings: { tableBase, teamCount, inputMode, mapChoice },
-      map: null, // chosen at startGame so "random" resolves once
+      map: null,
       players: new Map(),
     };
 
@@ -278,6 +286,10 @@ io.on("connection", (socket) => {
       dirX: 1,
       dirY: 0,
       input: { up: false, down: false, left: false, right: false },
+
+      // interaction state
+      pendingPrompt: null,
+      lastCorrectMachineId: null,
     });
 
     games[code] = game;
@@ -327,6 +339,9 @@ io.on("connection", (socket) => {
       dirX: 1,
       dirY: 0,
       input: { up: false, down: false, left: false, right: false },
+
+      pendingPrompt: null,
+      lastCorrectMachineId: null,
     });
 
     session.gameCode = code;
@@ -381,11 +396,15 @@ io.on("connection", (socket) => {
       if (p.teamId === null || p.teamId === undefined) return;
     }
 
-    // Pick + build derived map (rooms->walls, machines flattened, etc.)
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // Spawn players (if map has spawn points)
+    // enforce 10 machines for your game design
+    if (!Array.isArray(map.machines) || map.machines.length < 10) {
+      console.warn(`Map ${map.id} has ${map.machines?.length || 0} machines (expected 10).`);
+    }
+
+    // spawn
     if (Array.isArray(map.spawns) && map.spawns.length) {
       let i = 0;
       for (const p of game.players.values()) {
@@ -404,7 +423,7 @@ io.on("connection", (socket) => {
         name: map.name,
         world: map.world,
         walls: map.walls,
-        machines: map.machines, // ✅ NEW: send machines to client
+        machines: map.machines,
       },
     });
 
@@ -427,6 +446,85 @@ io.on("connection", (socket) => {
       left: !!payload.left,
       right: !!payload.right,
     };
+  });
+
+  // -------- Machine interaction --------
+  socket.on("tryInteract", () => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    // Don't allow starting another prompt while one is open
+    if (p.pendingPrompt) return;
+
+    const machine = findNearbyMachine(game, p.x, p.y, INTERACT_RADIUS);
+    if (!machine) return;
+
+    const base = game.settings.tableBase;
+    const correct = base * machine.num;
+    const promptId = makePromptId();
+
+    p.pendingPrompt = {
+      id: promptId,
+      machineId: machine.id,
+      machineNum: machine.num,
+      base,
+      correct,
+    };
+
+    socket.emit("MATH_PROMPT", {
+      promptId,
+      base,
+      machineNum: machine.num,
+    });
+  });
+
+  socket.on("submitAnswer", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    const pending = p.pendingPrompt;
+    if (!pending) return;
+
+    const promptId = String(payload.promptId || "");
+    if (promptId !== pending.id) return;
+
+    const ans = Number(payload.answer);
+    const ok = Number.isFinite(ans) && ans === pending.correct;
+
+    if (ok) {
+      p.lastCorrectMachineId = pending.machineId;
+      p.pendingPrompt = null;
+
+      socket.emit("ANSWER_RESULT", {
+        ok: true,
+      });
+
+      // Hooks for later:
+      // - spawn money on roads
+      // - offer upgrades
+      // - save respawn point
+    } else {
+      p.pendingPrompt = null;
+
+      socket.emit("ANSWER_RESULT", {
+        ok: false,
+        correct: pending.correct,
+      });
+
+      // Hook for later: money -= 100
+    }
   });
 
   socket.on("disconnect", () => {
