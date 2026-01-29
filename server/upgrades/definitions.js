@@ -52,8 +52,8 @@ const UPGRADES = [
     id: "big_nose",
     name: "Big Nose",
     kind: "consumable",
-    maxUses: 1,     // disappears after first hit (later)
-    useCost: 0,     // acquiring is free; using is automatic on hit later
+    maxUses: 1, // disappears after first hit (later)
+    useCost: 0, // acquiring is free; using is automatic on hit later
     desc: "+1 life shield. (effect later)",
   },
 ];
