@@ -141,12 +141,11 @@
 
     <!-- RUNNING (stub) -->
     <div class="card hidden" id="runningCard">
-      <h2>Game started 🎉</h2>
-      <p class="muted">
-        Lobby phase is done.  
-        Next step: map, movement, machines, math prompts.
-      </p>
-    </div>
+  <h2>Game started 🎉</h2>
+  <p class="muted">WASD / Arrow keys to move. (Rectangles for now.)</p>
+  <canvas id="game" width="900" height="520" style="width:100%;max-width:900px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#0e1630"></canvas>
+</div>
+
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
