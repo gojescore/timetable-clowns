@@ -5,7 +5,7 @@ const { Server } = require("socket.io");
 const { pickMap } = require("./maps");
 
 // --------------------
-// Economy + upgrades
+// economy + upgrades
 // --------------------
 const economy = require("./economy");
 const upgrades = require("./upgrades/apply");
@@ -506,7 +506,9 @@ io.on("connection", (socket) => {
       }
     }
 
+    // Reset pickups on game start
     game.pickups = [];
+
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
@@ -551,6 +553,7 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
+    // Don't allow starting another prompt while one is open
     if (p.pendingPrompt) return;
 
     const machine = findNearbyMachine(game, p.x, p.y, INTERACT_RADIUS);
@@ -618,9 +621,11 @@ io.on("connection", (socket) => {
     p.pendingPrompt = null;
 
     if (ok) {
+      // mark cleared + advance order
       p.clearedMachines.add(pending.machineId);
       p.lastCorrectMachineId = pending.machineId;
 
+      // advance to next machine number (cap at 10)
       if (p.nextMachineNum === pending.machineNum) {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
@@ -630,7 +635,7 @@ io.on("connection", (socket) => {
       // economy: spawn money pickups
       economy.awardCorrectAnswer(game, p.id);
 
-      // upgrades: offer ALL upgrades (scaffold)
+      // upgrades: offer ALL upgrades
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
       const options = upgrades.buildOfferOptions(); // array of objects for UI
@@ -638,6 +643,8 @@ io.on("connection", (socket) => {
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
+
+      // economy: money penalty (floor at 0)
       economy.penalizeWrongAnswer(game, p.id);
     }
   });
@@ -680,11 +687,13 @@ io.on("connection", (socket) => {
     // consume offer
     p.pendingUpgradeOffer = null;
 
-    // IMPORTANT: send `chosen` so client can render real squares
+    // ✅ PROTOCOL FIX: include `chosen` the client expects
+    const chosen = upgrades.getUpgradeInfo(upgradeId);
+
     socket.emit("UPGRADE_RESULT", {
       ok: true,
-      chosen: res.chosen,     // {id,name,kind,desc}
       applied: res.applied,
+      chosen, // { id, name, kind } (or null)
       upgrades: p.upgrades,
     });
   });
