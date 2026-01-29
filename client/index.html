@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Timetable Clowns — Lobby</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --panel:#121b2f;
+      --ink:#e6edf7;
+      --muted:rgba(230,237,247,.7);
+      --line:rgba(255,255,255,.12);
+      --accent:#2b66ff;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:var(--bg);
+      color:var(--ink);
+    }
+    .wrap{max-width:980px;margin:0 auto;padding:18px}
+    h1,h2,h3{margin:.2em 0 .4em}
+    .card{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:16px;
+      margin:14px 0;
+    }
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .row > *{flex:1 1 180px}
+    input,select,button{
+      font:inherit;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0e1630;
+      color:var(--ink);
+    }
+    button{cursor:pointer}
+    button.primary{
+      background:var(--accent);
+      border-color:var(--accent);
+    }
+    .muted{color:var(--muted)}
+    .hidden{display:none}
+    .pill{
+      display:inline-block;
+      padding:4px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      margin-right:6px;
+    }
+    .code{
+      font-weight:900;
+      font-size:22px;
+      letter-spacing:2px;
+    }
+    ul{padding-left:18px}
+    li{margin:6px 0}
+    .hostOnly{display:none}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🎪 Timetable Clowns</h1>
+    <p class="muted">Multiplayer lobby (v0). Host creates a code, guests join, host assigns teams.</p>
+
+    <!-- START / JOIN -->
+    <div class="card" id="startCard">
+      <div class="row">
+        <input id="name" placeholder="Your name" />
+        <select id="role">
+          <option value="host">Host</option>
+          <option value="guest">Guest</option>
+        </select>
+        <input id="joinCode" placeholder="Game code (guest)" class="hidden" />
+      </div>
+
+      <div class="row" id="hostSettings">
+        <select id="tableBase">
+          <option value="1">Table 1</option>
+          <option value="2">Table 2</option>
+          <option value="3">Table 3</option>
+          <option value="4" selected>Table 4</option>
+          <option value="5">Table 5</option>
+          <option value="6">Table 6</option>
+          <option value="7">Table 7</option>
+          <option value="8">Table 8</option>
+          <option value="9">Table 9</option>
+          <option value="10">Table 10</option>
+        </select>
+
+        <select id="teamCount">
+          <option value="1">1 team</option>
+          <option value="2" selected>2 teams</option>
+          <option value="3">3 teams</option>
+          <option value="4">4 teams</option>
+          <option value="5">5 teams</option>
+          <option value="6">6 teams</option>
+        </select>
+
+        <select id="inputMode">
+          <option value="kbm" selected>Keyboard + Mouse</option>
+          <option value="kb">Keyboard only</option>
+          <option value="kbm_gamepad">Keyboard + Mouse + Controller</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <button id="go" class="primary">Go</button>
+        <span id="status" class="muted">Connecting…</span>
+      </div>
+    </div>
+
+    <!-- LOBBY -->
+    <div class="card hidden" id="lobbyCard">
+      <div class="row">
+        <div>
+          <div class="muted">Game code</div>
+          <div class="code" id="gameCode">-----</div>
+        </div>
+        <div>
+          <div class="muted">You</div>
+          <div>
+            <span class="pill" id="meId">?</span>
+            <span class="pill" id="meTeam">team: ?</span>
+          </div>
+        </div>
+        <div class="hostOnly" id="hostControls">
+          <div class="muted">Host</div>
+          <button id="startGame" class="primary">Start game</button>
+        </div>
+      </div>
+
+      <h3>Players</h3>
+      <ul id="playerList"></ul>
+    </div>
+
+    <!-- RUNNING (stub) -->
+    <div class="card hidden" id="runningCard">
+      <h2>Game started 🎉</h2>
+      <p class="muted">
+        Lobby phase is done.  
+        Next step: map, movement, machines, math prompts.
+      </p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const el = {
+      name: document.getElementById("name"),
+      role: document.getElementById("role"),
+      joinCode: document.getElementById("joinCode"),
+      hostSettings: document.getElementById("hostSettings"),
+      tableBase: document.getElementById("tableBase"),
+      teamCount: document.getElementById("teamCount"),
+      inputMode: document.getElementById("inputMode"),
+      go: document.getElementById("go"),
+      status: document.getElementById("status"),
+
+      lobby: document.getElementById("lobbyCard"),
+      running: document.getElementById("runningCard"),
+      gameCode: document.getElementById("gameCode"),
+      meId: document.getElementById("meId"),
+      meTeam: document.getElementById("meTeam"),
+      playerList: document.getElementById("playerList"),
+
+      hostControls: document.getElementById("hostControls"),
+      startGame: document.getElementById("startGame")
+    };
+
+    let myId = null;
+    let isHost = false;
+    let teamCount = 2;
+
+    function updateRoleUI(){
+      const guest = el.role.value === "guest";
+      el.joinCode.classList.toggle("hidden", !guest);
+      el.hostSettings.classList.toggle("hidden", guest);
+    }
+    el.role.addEventListener("change", updateRoleUI);
+    updateRoleUI();
+
+    socket.on("connect", () => {
+      el.status.textContent = "Connected.";
+    });
+
+    socket.on("WELCOME", ({ playerId }) => {
+      myId = playerId;
+      el.meId.textContent = playerId.slice(0,6);
+    });
+
+    function sayHello(){
+      socket.emit("hello", {
+        name: el.name.value.trim() || "Anonymous"
+      });
+    }
+
+    el.go.addEventListener("click", () => {
+      sayHello();
+
+      if (el.role.value === "host") {
+        isHost = true;
+        teamCount = Number(el.teamCount.value);
+        socket.emit("createGame", {
+          tableBase: Number(el.tableBase.value),
+          teamCount,
+          inputMode: el.inputMode.value
+        });
+      } else {
+        isHost = false;
+        socket.emit("joinGame", {
+          gameCode: (el.joinCode.value || "").trim().toUpperCase()
+        });
+      }
+    });
+
+    socket.on("GAME_CREATED", ({ gameCode }) => {
+      el.gameCode.textContent = gameCode;
+      el.lobby.classList.remove("hidden");
+      el.hostControls.style.display = "block";
+    });
+
+    socket.on("JOIN_SUCCESS", ({ gameCode, players, teams }) => {
+      el.gameCode.textContent = gameCode;
+      el.lobby.classList.remove("hidden");
+      el.hostControls.style.display = isHost ? "block" : "none";
+      teamCount = teams.length;
+      renderPlayers(players);
+    });
+
+    socket.on("JOIN_FAILED", ({ reason }) => {
+      el.status.textContent = "Join failed: " + reason;
+    });
+
+    socket.on("LOBBY_UPDATE", ({ players }) => {
+      renderPlayers(players);
+    });
+
+    el.startGame.addEventListener("click", () => {
+      socket.emit("startGame");
+    });
+
+    socket.on("GAME_STARTED", () => {
+      el.lobby.classList.add("hidden");
+      el.running.classList.remove("hidden");
+      el.status.textContent = "Game running.";
+    });
+
+    socket.on("GAME_ENDED", ({ reason }) => {
+      el.status.textContent = "Game ended: " + reason;
+      el.lobby.classList.add("hidden");
+      el.running.classList.add("hidden");
+    });
+
+    function renderPlayers(players){
+      el.playerList.innerHTML = "";
+      const me = players.find(p => p.id === myId);
+      el.meTeam.textContent = "team: " + (me?.teamId ?? "?");
+
+      for (const p of players) {
+        const li = document.createElement("li");
+        li.textContent = `${p.name} (team: ${p.teamId ?? "—"})`;
+
+        if (isHost) {
+          const sel = document.createElement("select");
+          sel.style.marginLeft = "10px";
+
+          const optNone = document.createElement("option");
+          optNone.value = "";
+          optNone.textContent = "—";
+          sel.appendChild(optNone);
+
+          for (let t = 0; t < teamCount; t++) {
+            const opt = document.createElement("option");
+            opt.value = String(t);
+            opt.textContent = `Team ${t + 1}`;
+            sel.appendChild(opt);
+          }
+
+          sel.value = p.teamId ?? "";
+          sel.addEventListener("change", () => {
+            if (sel.value === "") return;
+            socket.emit("assignTeam", {
+              playerId: p.id,
+              teamId: Number(sel.value)
+            });
+          });
+
+          li.appendChild(sel);
+        }
+
+        el.playerList.appendChild(li);
+      }
+    }
+  </script>
+</body>
+</html>
