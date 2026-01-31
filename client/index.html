@@ -64,13 +64,14 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
+    /* IMPORTANT: avoid CSS scaling seams.
+       We size canvas via JS to DPR and set CSS size explicitly. */
     canvas{
-      width:100%;
-      max-width:900px;
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
       background:#0e1630;
       display:block;
+      image-rendering:auto;
     }
 
     /* Prompt overlay */
@@ -108,7 +109,7 @@
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
-    /* HUD overlay (in running card, above canvas) */
+    /* HUD overlay */
     .hudRow{
       display:flex;
       gap:10px;
@@ -203,7 +204,7 @@
       align-items:center;
     }
 
-    /* Upgrade picker grid tiles */
+    /* Upgrade picker tiles */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -289,7 +290,7 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables).</p>
+    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables). Debug: V (vis), B (edge), F (fog).</p>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -364,7 +365,6 @@
       <h2>Game started 🎉</h2>
       <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
 
-      <!-- HUD -->
       <div class="hudRow" id="hudRow">
         <div class="hudLeft">
           <span class="hudPill" title="You">
@@ -383,9 +383,9 @@
         </div>
       </div>
 
-      <canvas id="game" width="900" height="520"></canvas>
+      <!-- JS will set CSS size to 900x520 and internal size to DPR -->
+      <canvas id="game"></canvas>
 
-      <!-- Bottom upgrade bar -->
       <div class="upgradeBar" id="upgradeBar">
         <div class="upgradeSlots" id="upgradeSlots"></div>
         <div class="uLegend">
@@ -396,7 +396,6 @@
     </div>
   </div>
 
-  <!-- Prompt overlay -->
   <div class="overlay" id="overlay">
     <div class="modal">
       <h3>Machine</h3>
@@ -410,14 +409,11 @@
     </div>
   </div>
 
-  <!-- Upgrade overlay -->
   <div class="overlay" id="upgradeOverlay">
     <div class="modal">
       <h3>Choose an upgrade</h3>
       <p class="muted" style="margin:.2em 0 .6em">Pick one. (Effects come later.)</p>
-
       <div id="upgradeList"></div>
-
       <div class="actions">
         <button id="upgradeCloseBtn">Close</button>
       </div>
@@ -425,16 +421,13 @@
     </div>
   </div>
 
-  <!-- Drop overlay -->
   <div class="overlay" id="dropOverlay">
     <div class="modal">
       <h3>Backpack full</h3>
       <p class="muted" id="dropText" style="margin:.2em 0 .6em">
         You can only carry 3 consumable upgrades. Choose one to drop.
       </p>
-
       <div id="dropList" class="dropList"></div>
-
       <div class="actions">
         <button id="dropCancelBtn">Cancel</button>
       </div>
@@ -468,13 +461,11 @@
       startGame: document.getElementById("startGame"),
       runningHint: document.getElementById("runningHint"),
 
-      // HUD
       hudName: document.getElementById("hudName"),
       hudTeam: document.getElementById("hudTeam"),
       hudMoney: document.getElementById("hudMoney"),
       hudLife: document.getElementById("hudLife"),
 
-      // upgrades bar
       upgradeSlots: document.getElementById("upgradeSlots"),
 
       canvas: document.getElementById("game"),
@@ -486,13 +477,11 @@
       cancelBtn: document.getElementById("cancelBtn"),
       msg: document.getElementById("msg"),
 
-      // upgrades
       upgradeOverlay: document.getElementById("upgradeOverlay"),
       upgradeList: document.getElementById("upgradeList"),
       upgradeCloseBtn: document.getElementById("upgradeCloseBtn"),
       upgradeMsg: document.getElementById("upgradeMsg"),
 
-      // drop
       dropOverlay: document.getElementById("dropOverlay"),
       dropList: document.getElementById("dropList"),
       dropCancelBtn: document.getElementById("dropCancelBtn"),
@@ -511,12 +500,12 @@
     let activePromptId = null;
     let activeOfferId = null;
     let pendingReplace = null;
+
     let myServerUpgrades = { permanent: [], slots: [] };
 
     const INTERACT_RADIUS = 60;
 
-    // Speech bubble (in-canvas)
-    let bubble = null; // { text, untilMs }
+    let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
     }
@@ -593,6 +582,8 @@
 
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
+
+      setupCanvas(); // ensure DPR-correct sizing once game starts
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
@@ -654,11 +645,9 @@
     function isUiBlockingInput() {
       return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
     }
-
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
     }
-
     function sendInput(){
       socket.emit("input", inputState);
     }
@@ -683,7 +672,6 @@
 
       if (used) { e.preventDefault(); sendInput(); }
     }
-
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
 
@@ -697,14 +685,10 @@
       const isForm = (tag === "input" || tag === "textarea" || tag === "select");
       if (isForm) return;
 
-      if (e.key.toLowerCase() === "e") {
-        socket.emit("tryInteract");
-      }
+      if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
     });
 
-    // -------------------------
     // HOTKEYS: 8 / 9 / 0
-    // -------------------------
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
@@ -755,14 +739,12 @@
       el.overlay.classList.add("show");
       setTimeout(() => el.answer.focus(), 0);
     }
-
     function closePrompt() {
       activePromptId = null;
       el.overlay.classList.remove("show");
       el.answer.value = "";
       el.msg.textContent = "";
     }
-
     function submitPrompt() {
       const val = el.answer.value.trim();
       if (!activePromptId) return;
@@ -777,7 +759,6 @@
     });
 
     socket.on("MATH_PROMPT", (p) => openPrompt(p));
-
     socket.on("ANSWER_RESULT", (p) => {
       if (!activePromptId) return;
 
@@ -794,17 +775,11 @@
 
     socket.on("INTERACT_DENIED", (p) => {
       if (!p) return;
-
-      if (p.reason === "wrong_order") {
-        showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
-      }
-
-      if (p.reason === "already_cleared") {
-        showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
-      }
+      if (p.reason === "wrong_order") showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
+      if (p.reason === "already_cleared") showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
     });
 
-    // ---------- Upgrade UI (GRID TILES) ----------
+    // ---------- Upgrade UI ----------
     function openUpgradeOffer({ offerId, options }) {
       activeOfferId = offerId;
       el.upgradeMsg.textContent = "";
@@ -814,7 +789,6 @@
       el.upgradeList.innerHTML = "";
 
       const use4 = opts.length >= 10;
-
       const grid = document.createElement("div");
       grid.className = "upgGrid" + (use4 ? " grid4" : "");
 
@@ -867,15 +841,10 @@
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
     }
-
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
 
-    socket.on("UPGRADE_OFFER", (p) => {
-      if (!p) return;
-      openUpgradeOffer(p);
-    });
+    socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
-    // -------- Drop overlay --------
     function openDropPicker(payload) {
       pendingReplace = {
         offerId: activeOfferId,
@@ -888,8 +857,7 @@
       el.dropMsg.className = "msg";
 
       const reqName = pendingReplace.requestedInfo?.name || pendingReplace.requestedInfo?.id || "New upgrade";
-      el.dropText.textContent =
-        `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
+      el.dropText.textContent = `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
 
       el.dropList.innerHTML = "";
 
@@ -932,7 +900,6 @@
       el.dropList.innerHTML = "";
       el.dropMsg.textContent = "";
     }
-
     el.dropCancelBtn.addEventListener("click", closeDropPicker);
 
     socket.on("UPGRADE_RESULT", (p) => {
@@ -1029,18 +996,44 @@
       return s.slice(0,6);
     }
 
-    // ---------- Rendering ----------
+    // ============================================================
+    // Canvas setup (DPR correct => fixes 1px seams + blur weirdness)
+    // ============================================================
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
 
+    const VIEW_W = 900;
+    const VIEW_H = 520;
+    let DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+    function setupCanvas() {
+      DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+      // CSS size (fixed) to avoid layout scaling artifacts
+      canvas.style.width = VIEW_W + "px";
+      canvas.style.height = VIEW_H + "px";
+
+      // internal size
+      canvas.width = Math.round(VIEW_W * DPR);
+      canvas.height = Math.round(VIEW_H * DPR);
+
+      // draw in "CSS pixels" coordinates
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+
+      resizeFogCanvases();
+    }
+
+    window.addEventListener("resize", () => {
+      if (!isGameRunning()) return;
+      setupCanvas();
+    });
+
     // ============================================================
-    // Fog-of-war + LOS (100% clear inside + soft edge ONLY at border)
-    // FIXES:
-    // - Hard visibility mask MUST be transparent outside (alpha=0),
-    //   otherwise destination-out erases ALL fog.
-    // - Keeps interior 100% clear; gradient only on border ring.
+    // Fog-of-war + LOS (hard-clear inside + soft edge at border)
+    // + debug views
     // ============================================================
-    const FOG_ENABLED = true;
+    let FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
     const VISION_LEN = 360;
@@ -1051,6 +1044,20 @@
 
     const EDGE_BLUR_PX = 15;
     const EDGE_STRENGTH = 0.85;
+
+    // debug toggles
+    let DEBUG_SHOW_VIS = false;
+    let DEBUG_SHOW_EDGE = false;
+
+    window.addEventListener("keydown", (e) => {
+      if (!isGameRunning()) return;
+      if (e.target && ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+
+      const k = e.key.toLowerCase();
+      if (k === "v") { DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS; }
+      if (k === "b") { DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE; }
+      if (k === "f") { FOG_ENABLED = !FOG_ENABLED; }
+    });
 
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
@@ -1065,7 +1072,8 @@
     const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
 
     function resizeFogCanvases() {
-      const w = canvas.width, h = canvas.height;
+      // use CSS pixel coordinate system for offscreens too
+      const w = VIEW_W, h = VIEW_H;
       if (fogCanvas.width !== w || fogCanvas.height !== h) {
         fogCanvas.width = w; fogCanvas.height = h;
         visCanvas.width = w; visCanvas.height = h;
@@ -1160,7 +1168,7 @@
       return pts;
     }
 
-    // seam fix — half-step offset
+    // seam fix: half-step
     function buildCirclePoly(px, py, radius, segs, rays) {
       const pts = [];
       for (let i = 0; i < rays; i++) {
@@ -1171,10 +1179,12 @@
       return pts;
     }
 
-    function fillPoly(ctx2, pts) {
-      if (!pts || pts.length < 3) return false;
+    // IMPORTANT FIX: fill as a fan from center (prevents self-intersection holes)
+    function fillFan(ctx2, cx, cy, pts) {
+      if (!pts || pts.length < 2) return false;
       ctx2.beginPath();
-      ctx2.moveTo(pts[0].x, pts[0].y);
+      ctx2.moveTo(cx, cy);
+      ctx2.lineTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
       ctx2.closePath();
       ctx2.fill();
@@ -1189,7 +1199,6 @@
       const meX = meWorldX - camX;
       const meY = meWorldY - camY;
 
-      // Build wall segments in SCREEN SPACE
       const worldWalls = mapData?.walls || [];
       const segsWorld = segsFromWalls(worldWalls);
       const segs = segsWorld.map(s => ({
@@ -1205,78 +1214,56 @@
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // ------------------------------------------------------------
-      // 1) HARD visibility mask:
-      //    IMPORTANT: transparent outside, opaque only inside
-      // ------------------------------------------------------------
-      visCtx.save();
+      // 1) Hard visibility mask
       visCtx.globalCompositeOperation = "source-over";
       visCtx.globalAlpha = 1;
-
-      // KEY FIX: do NOT paint a full black rect (that would be alpha=1 everywhere)
-      visCtx.clearRect(0,0,visCanvas.width, visCanvas.height);
+      visCtx.clearRect(0,0,VIEW_W,VIEW_H);
+      visCtx.fillStyle = "rgba(0,0,0,1)";
+      visCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
       visCtx.fillStyle = "rgba(255,255,255,1)";
 
-      // Circle LOS (hard)
+      // Circle (fan fill)
       if (CIRCLE_LOS_RADIUS > 0) {
         const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
-        fillPoly(visCtx, circlePts);
+        fillFan(visCtx, meX, meY, circlePts);
       } else {
         visCtx.beginPath();
         visCtx.arc(meX, meY, 40, 0, Math.PI*2);
         visCtx.fill();
       }
 
-      // Cone LOS (hard)
+      // Cone (fan fill)
       const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
-      const okCone = fillPoly(visCtx, conePts);
+      const okCone = fillFan(visCtx, meX, meY, conePts);
 
-      // Safety: always guarantee a tiny clear dot
+      // always keep a tiny dot
       visCtx.beginPath();
       visCtx.arc(meX, meY, okCone ? 3 : 55, 0, Math.PI*2);
       visCtx.fill();
 
-      visCtx.restore();
-
-      // ------------------------------------------------------------
-      // 2) EDGE RING = blur(vis) minus vis  (gradient only at border)
-      // ------------------------------------------------------------
-      blurCtx.save();
+      // 2) edge ring = blur(vis) - vis
       blurCtx.globalCompositeOperation = "source-over";
       blurCtx.globalAlpha = 1;
-      blurCtx.clearRect(0,0,blurCanvas.width, blurCanvas.height);
-
+      blurCtx.clearRect(0,0,VIEW_W,VIEW_H);
       blurCtx.filter = `blur(${EDGE_BLUR_PX}px)`;
       blurCtx.drawImage(visCanvas, 0, 0);
       blurCtx.filter = "none";
-      blurCtx.restore();
 
-      edgeCtx.save();
       edgeCtx.globalCompositeOperation = "source-over";
       edgeCtx.globalAlpha = 1;
-      edgeCtx.clearRect(0,0,edgeCanvas.width, edgeCanvas.height);
-
+      edgeCtx.clearRect(0,0,VIEW_W,VIEW_H);
       edgeCtx.drawImage(blurCanvas, 0, 0);
 
       edgeCtx.globalCompositeOperation = "destination-out";
       edgeCtx.drawImage(visCanvas, 0, 0);
 
-      edgeCtx.restore();
-
-      // ------------------------------------------------------------
-      // 3) Final fog:
-      //    - paint fog everywhere
-      //    - punch out hard visibility fully
-      //    - punch out only the edge ring partially
-      // ------------------------------------------------------------
-      fogCtx.save();
+      // 3) final fog
       fogCtx.globalCompositeOperation = "source-over";
       fogCtx.globalAlpha = 1;
-      fogCtx.clearRect(0,0,fogCanvas.width, fogCanvas.height);
-
+      fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
       fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
-      fogCtx.fillRect(0,0,fogCanvas.width, fogCanvas.height);
+      fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.globalAlpha = 1;
@@ -1285,7 +1272,20 @@
       fogCtx.globalAlpha = EDGE_STRENGTH;
       fogCtx.drawImage(edgeCanvas, 0, 0);
 
-      fogCtx.restore();
+      fogCtx.globalAlpha = 1;
+      fogCtx.globalCompositeOperation = "source-over";
+    }
+
+    // ---------- Rendering ----------
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
     }
 
     function drawWalls(camX, camY){
@@ -1310,9 +1310,7 @@
         const x = pk.x - camX;
         const y = pk.y - camY;
 
-        const w = 36;
-        const h = 24;
-
+        const w = 36, h = 24;
         ctx.fillStyle = "rgba(34, 197, 94, .95)";
         ctx.fillRect(x - w/2, y - h/2, w, h);
 
@@ -1352,7 +1350,6 @@
         ctx.font = "12px system-ui";
         ctx.fillText(String(m.num), x - 4, y + 4);
       }
-
       ctx.lineWidth = 1;
     }
 
@@ -1361,7 +1358,6 @@
       if (Date.now() > bubble.untilMs) { bubble = null; return; }
 
       const text = bubble.text;
-
       const x = meWorldX - camX;
       const y = meWorldY - camY;
 
@@ -1400,17 +1396,6 @@
       ctx.lineWidth = 1;
     }
 
-    function roundRect(ctx, x, y, w, h, r) {
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x + rr, y);
-      ctx.arcTo(x + w, y, x + w, y + h, rr);
-      ctx.arcTo(x + w, y + h, x, y + h, rr);
-      ctx.arcTo(x, y + h, x, y, rr);
-      ctx.arcTo(x, y, x + w, y, rr);
-      ctx.closePath();
-    }
-
     function drawPlayer(p, camX, camY, isMe){
       const px = p.x - camX;
       const py = p.y - camY;
@@ -1433,13 +1418,18 @@
       if (!lastSnapshot) return;
 
       const me = lastSnapshot.players.find(p => p.id === myId);
-      const camXraw = me ? (me.x - canvas.width / 2) : 0;
-      const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
-      const camX = Math.max(0, Math.min(world.w - canvas.width, camXraw));
-      const camY = Math.max(0, Math.min(world.h - canvas.height, camYraw));
+      // camera in CSS pixels, then SNAP to int pixels to kill seams
+      let camXraw = me ? (me.x - VIEW_W / 2) : 0;
+      let camYraw = me ? (me.y - VIEW_H / 2) : 0;
 
-      ctx.clearRect(0,0,canvas.width,canvas.height);
+      let camX = Math.max(0, Math.min(world.w - VIEW_W, camXraw));
+      let camY = Math.max(0, Math.min(world.h - VIEW_H, camYraw));
+
+      camX = camX | 0; // integer snap
+      camY = camY | 0;
+
+      ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
@@ -1455,11 +1445,25 @@
 
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      if (me) {
+      if (me && FOG_ENABLED) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
         renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
         ctx.drawImage(fogCanvas, 0, 0);
+      }
+
+      // debug overlays (draw on top of fog)
+      if (DEBUG_SHOW_VIS) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(visCanvas, 0, 0);
+        ctx.restore();
+      }
+      if (DEBUG_SHOW_EDGE) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(edgeCanvas, 0, 0);
+        ctx.restore();
       }
 
       if (me) drawPlayer(me, camX, camY, true);
