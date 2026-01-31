@@ -3,8 +3,8 @@
 // Pickups do NOT expire. They disappear only when collected or when the game is deleted.
 
 const PICKUP_TYPE_MONEY = "money";
-const MONEY_PICKUP_AMOUNT = 25;   // change if you want
-const MONEY_PICKUP_RADIUS = 18;   // collection radius around pickup center
+const MONEY_PICKUP_AMOUNT = 25;   // tweak as desired
+const MONEY_PICKUP_RADIUS = 18;   // collection radius
 
 // Treat pickup as having a small "body" so it won't spawn inside walls/machines.
 const MONEY_PICKUP_HALF_W = 9;
@@ -43,36 +43,6 @@ function pointInRect(x, y, r) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-function pickupCollides(map, x, y) {
-  if (!map) return false;
-
-  // pickup AABB
-  const px = x - MONEY_PICKUP_HALF_W;
-  const py = y - MONEY_PICKUP_HALF_H;
-  const pw = MONEY_PICKUP_HALF_W * 2;
-  const ph = MONEY_PICKUP_HALF_H * 2;
-
-  // collide vs walls
-  if (Array.isArray(map.walls)) {
-    for (const w of map.walls) {
-      if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
-    }
-  }
-
-  // collide vs machines (treat machine as 20x20 centered at m.x/m.y like your server)
-  if (Array.isArray(map.machines)) {
-    for (const m of map.machines) {
-      const bx = m.x - 10;
-      const by = m.y - 10;
-      const bw = 20;
-      const bh = 20;
-      if (aabbIntersects(px, py, pw, ph, bx, by, bw, bh)) return true;
-    }
-  }
-
-  return false;
-}
-
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -88,64 +58,136 @@ function randPointInRect(r) {
   };
 }
 
+function getWorld(map) {
+  const w = map?.world?.w;
+  const h = map?.world?.h;
+  if (Number.isFinite(w) && Number.isFinite(h)) return map.world;
+  return { w: 2400, h: 1600 };
+}
+
+// map.rooms is [{ rect:{x,y,w,h}, ... }]
+function getRoomRects(map) {
+  if (!map || !Array.isArray(map.rooms)) return [];
+  const out = [];
+  for (const r of map.rooms) {
+    if (r && r.rect && Number.isFinite(r.rect.x) && Number.isFinite(r.rect.y)) {
+      out.push(r.rect);
+    }
+  }
+  return out;
+}
+
+// Collide pickup AABB vs walls and machines
+function pickupCollides(map, x, y) {
+  if (!map) return false;
+
+  const px = x - MONEY_PICKUP_HALF_W;
+  const py = y - MONEY_PICKUP_HALF_H;
+  const pw = MONEY_PICKUP_HALF_W * 2;
+  const ph = MONEY_PICKUP_HALF_H * 2;
+
+  if (Array.isArray(map.walls)) {
+    for (const w of map.walls) {
+      if (aabbIntersects(px, py, pw, ph, w.x, w.y, w.w, w.h)) return true;
+    }
+  }
+
+  // machines are 20x20 centered at m.x/m.y in your server collision model
+  if (Array.isArray(map.machines)) {
+    for (const m of map.machines) {
+      const bx = m.x - 10;
+      const by = m.y - 10;
+      const bw = 20;
+      const bh = 20;
+      if (aabbIntersects(px, py, pw, ph, bx, by, bw, bh)) return true;
+    }
+  }
+
+  return false;
+}
+
 /**
- * Find a spawn point for money that is NOT in rooms and not colliding with walls/machines.
+ * Find a spawn point for money that MUST be on allowed road rectangles.
  *
  * Priority:
- * 1) map.moneySpawnAreas (rects)  <-- recommended for "roads"
- * 2) map.roads (rects)
- * 3) if map.rooms (rects) exists: pick near player but NOT inside any room
- * 4) fallback: near player but still avoids walls/machines
+ * 1) map.moneySpawnAreas (if you add later)
+ * 2) map.roadAreas (your current map01)
+ * 3) map.roads (compat)
+ *
+ * If no areas exist, falls back to "not in rooms" search (still avoids solids).
  */
 function findMoneySpawnPoint(game, originX, originY) {
   const map = game?.map || null;
-  const world = map?.world || { w: 2400, h: 1600 };
+  const world = getWorld(map);
+  const roomRects = getRoomRects(map);
 
-  // helper to validate candidate point
-  function ok(x, y) {
-    // keep in world bounds
+  // Validate candidate
+  function ok(x, y, requireOnRoad) {
     const cx = clamp(x, MONEY_PICKUP_HALF_W, world.w - MONEY_PICKUP_HALF_W);
     const cy = clamp(y, MONEY_PICKUP_HALF_H, world.h - MONEY_PICKUP_HALF_H);
 
-    // not colliding with solids
     if (pickupCollides(map, cx, cy)) return false;
 
-    // if rooms exist, do NOT allow inside rooms
-    if (Array.isArray(map?.rooms) && map.rooms.length) {
-      for (const r of map.rooms) {
-        if (pointInRect(cx, cy, r)) return false;
+    // never inside rooms (extra safety, even though roads should already avoid them)
+    for (const rr of roomRects) {
+      if (pointInRect(cx, cy, rr)) return false;
+    }
+
+    if (requireOnRoad) {
+      const areas = getRoadAreas(map);
+      let onRoad = false;
+      for (const a of areas) {
+        if (pointInRect(cx, cy, a)) { onRoad = true; break; }
       }
+      if (!onRoad) return false;
     }
 
     return { x: cx, y: cy };
   }
 
-  // 1) explicit allowed spawn areas (BEST)
-  const areas =
-    (Array.isArray(map?.moneySpawnAreas) && map.moneySpawnAreas.length && map.moneySpawnAreas) ||
-    (Array.isArray(map?.roads) && map.roads.length && map.roads) ||
-    null;
+  function getRoadAreas(map) {
+    const moneySpawnAreas =
+      Array.isArray(map?.moneySpawnAreas) && map.moneySpawnAreas.length ? map.moneySpawnAreas : null;
 
-  if (areas) {
-    for (let i = 0; i < 120; i++) {
+    const roadAreas =
+      Array.isArray(map?.roadAreas) && map.roadAreas.length ? map.roadAreas : null;
+
+    const roads =
+      Array.isArray(map?.roads) && map.roads.length ? map.roads : null;
+
+    return moneySpawnAreas || roadAreas || roads || [];
+  }
+
+  // 1) Preferred: explicit road areas
+  const areas = getRoadAreas(map);
+  if (areas.length) {
+    for (let i = 0; i < 220; i++) {
       const a = areas[randInt(0, areas.length - 1)];
       const p = randPointInRect(a);
-      const good = ok(p.x, p.y);
+      const good = ok(p.x, p.y, true);
+      if (good) return good;
+    }
+
+    // If areas exist but we failed due to collisions, try many more points
+    for (let i = 0; i < 600; i++) {
+      const a = areas[randInt(0, areas.length - 1)];
+      const p = randPointInRect(a);
+      const good = ok(p.x, p.y, true);
       if (good) return good;
     }
   }
 
-  // 2) Try around player with increasing radius (but will reject rooms if map.rooms exists)
-  for (let i = 0; i < 160; i++) {
-    const r = 120 + i * 6; // expand search
+  // 2) Fallback: search around origin (still rejects rooms & solids)
+  for (let i = 0; i < 240; i++) {
+    const r = 200 + i * 8;
     const x = originX + randInt(-r, r);
     const y = originY + randInt(-r, r);
-    const good = ok(x, y);
+    const good = ok(x, y, false);
     if (good) return good;
   }
 
-  // 3) Last resort: clamp origin, only avoid solids (still respects rooms if rooms are present)
-  const last = ok(originX, originY);
+  // 3) Last resort: clamp origin (still avoids rooms/solids if possible)
+  const last = ok(originX, originY, false);
   return last || { x: clamp(originX, 0, world.w), y: clamp(originY, 0, world.h) };
 }
 
@@ -158,8 +200,7 @@ function awardCorrectAnswer(game, playerId) {
   if (!p) return;
   ensurePlayerEconomy(p);
 
-  // IMPORTANT CHANGE:
-  // Spawn money in allowed areas (roads), not in the room where the machine is.
+  // IMPORTANT: spawn ONLY on roadAreas (and never inside rooms)
   const spawn = findMoneySpawnPoint(game, p.x, p.y);
 
   game.pickups.push({
@@ -168,7 +209,7 @@ function awardCorrectAnswer(game, playerId) {
     x: spawn.x,
     y: spawn.y,
     amount: MONEY_PICKUP_AMOUNT,
-    createdAt: Date.now(), // debug only (no TTL)
+    createdAt: Date.now(), // debug only (NO TTL)
   });
 }
 
@@ -190,21 +231,21 @@ function tryCollectPickups(game) {
     const pk = game.pickups[i];
     if (!pk || pk.type !== PICKUP_TYPE_MONEY) continue;
 
-    let collectedBy = null;
+    let collector = null;
 
     for (const p of game.players.values()) {
       if (!p) continue;
       ensurePlayerEconomy(p);
 
       if (dist2(p.x, p.y, pk.x, pk.y) <= r2) {
-        collectedBy = p;
+        collector = p;
         break;
       }
     }
 
-    if (collectedBy) {
+    if (collector) {
       const amt = Number.isFinite(pk.amount) ? pk.amount : MONEY_PICKUP_AMOUNT;
-      collectedBy.money = Math.max(0, collectedBy.money + amt);
+      collector.money = Math.max(0, collector.money + amt);
       game.pickups.splice(i, 1);
     }
   }
