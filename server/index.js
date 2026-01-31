@@ -9,6 +9,8 @@ const { pickMap } = require("./maps");
 // --------------------
 const economy = require("./economy");
 const upgrades = require("./upgrades/apply");
+// ✅ needed for `chosen` payload
+const { getUpgradeById } = require("./upgrades/definitions");
 
 // --------------------
 // Config
@@ -296,7 +298,7 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
     }
 
-    // economy: pickup collection + TTL cleanup
+    // economy: pickup collection (NO TTL)
     economy.tryCollectPickups(game);
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -688,12 +690,22 @@ io.on("connection", (socket) => {
     p.pendingUpgradeOffer = null;
 
     // ✅ PROTOCOL FIX: include `chosen` the client expects
-    const chosen = upgrades.getUpgradeInfo(upgradeId);
+    const info = getUpgradeById(upgradeId);
+    const chosen = info
+      ? {
+          id: info.id,
+          name: info.name,
+          kind: info.kind,
+          desc: info.desc || "",
+          maxUses: Number.isFinite(info.maxUses) ? info.maxUses : null,
+          useCost: Number.isFinite(info.useCost) ? info.useCost : null,
+        }
+      : null;
 
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen, // { id, name, kind } (or null)
+      chosen, // { id, name, kind, ... } (or null)
       upgrades: p.upgrades,
     });
   });
