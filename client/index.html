@@ -457,8 +457,8 @@
     // upgrade offer state
     let activeOfferId = null;
 
-    // local UI cache of picked upgrades (until server sends it in snapshot later)
-    const myUpgrades = [];
+    // last "me" upgrades from snapshot
+    let meUpgrades = { permanent: [], slots: [] };
 
     // Machine highlight radius (must match server)
     const INTERACT_RADIUS = 60;
@@ -540,6 +540,8 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
+      // reset local upgrade snapshot cache
+      meUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
 
@@ -552,6 +554,10 @@
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+
+        // NEW: render upgrade bar from server truth
+        meUpgrades = me.upgrades || { permanent: [], slots: [] };
+        renderUpgradeBar();
       }
     });
 
@@ -788,20 +794,6 @@
       if (p.ok) {
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
-
-        // Visual-only scaffold for now:
-        if (p.chosen && p.chosen.id) {
-          myUpgrades.push({
-            id: p.chosen.id,
-            name: p.chosen.name || p.chosen.id,
-            kind: p.chosen.kind || "",
-            hotkey: null
-          });
-        } else {
-          myUpgrades.push({ id: "picked", name: "NEW", kind: "", hotkey: null });
-        }
-
-        renderUpgradeBar();
         setTimeout(closeUpgradeOffer, 450);
       } else {
         el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
@@ -809,28 +801,38 @@
       }
     });
 
+    // NEW: bar from snapshot
     function renderUpgradeBar() {
-      const slots = 6; // visual slots (rules later)
+      const slots = 6;
+
+      const permanent = Array.isArray(meUpgrades?.permanent) ? meUpgrades.permanent : [];
+      const nonperm = Array.isArray(meUpgrades?.slots) ? meUpgrades.slots : [];
+
+      // Fill order: permanents first, then non-perm slots
+      const items = [];
+      for (const id of permanent) items.push({ id, kind: "permanent" });
+      for (const s of nonperm) items.push({ id: s?.id, kind: "consumable", usesLeft: s?.usesLeft });
 
       el.upgradeSlots.innerHTML = "";
       for (let i = 0; i < slots; i++) {
-        const u = myUpgrades[i];
+        const u = items[i];
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
 
-        if (u?.hotkey != null) {
-          const hk = document.createElement("div");
-          hk.className = "uHotkey";
-          hk.textContent = String(u.hotkey);
-          slot.appendChild(hk);
-        }
-
         const txt = document.createElement("div");
         txt.className = "uTxt";
-        txt.textContent = u ? shortName(u.name) : "";
-        slot.appendChild(txt);
 
+        if (u && u.id) {
+          const base = shortName(u.id);
+          txt.textContent = u.kind === "consumable" && Number.isFinite(u.usesLeft)
+            ? `${base}\n${u.usesLeft}`
+            : base;
+        } else {
+          txt.textContent = "";
+        }
+
+        slot.appendChild(txt);
         el.upgradeSlots.appendChild(slot);
       }
     }
@@ -839,7 +841,7 @@
       const s = String(name || "").trim();
       if (!s) return "";
       if (s.length <= 6) return s;
-      const parts = s.split(/\s+/);
+      const parts = s.split(/[_\s]+/);
       if (parts.length >= 2) return (parts[0].slice(0,3) + parts[1].slice(0,3));
       return s.slice(0,6);
     }
