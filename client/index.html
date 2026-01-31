@@ -722,10 +722,8 @@
       const isForm = (tag === "input" || tag === "textarea" || tag === "select");
       if (isForm) return;
 
-      // e.key is "8"/"9"/"0"
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
-
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
         socket.emit("useUpgradeSlot", { slotIndex });
       }
@@ -742,7 +740,6 @@
         return;
       }
 
-      // Update immediately if server sent upgrades
       if (p.upgrades) {
         myServerUpgrades = p.upgrades;
         renderUpgradeBar();
@@ -886,7 +883,6 @@
       openUpgradeOffer(p);
     });
 
-    // -------- Drop overlay --------
     function openDropPicker(payload) {
       pendingReplace = {
         offerId: activeOfferId,
@@ -961,7 +957,7 @@
         el.upgradeMsg.className = "msg good";
 
         if (p.upgrades) {
-          myServerUpgrades = p.upgrades; // snapshot will enrich shortly
+          myServerUpgrades = p.upgrades;
           renderUpgradeBar();
         }
 
@@ -980,9 +976,7 @@
       const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
       const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
-      // display order: consumables first, then permanent
       const display = [];
-
       for (const s of cons) {
         const info = s?.info || {};
         display.push({
@@ -992,7 +986,6 @@
           usesLeft: s.usesLeft,
         });
       }
-
       for (const p of perm) {
         const info = p?.info || {};
         display.push({
@@ -1003,17 +996,14 @@
         });
       }
 
-      // Only the first 3 slots (consumables) get hotkeys 8/9/0
       const hotkeys = ["8", "9", "0"];
 
       for (let i = 0; i < visualSlots; i++) {
         const u = display[i];
-
         const slot = document.createElement("div");
         slot.className = "uSlot";
         slot.title = u?.desc ? u.desc : "";
 
-        // Hotkey label for consumable slots 0..2
         if (i < 3) {
           const hk = document.createElement("div");
           hk.className = "uHotkey";
@@ -1021,7 +1011,6 @@
           slot.appendChild(hk);
         }
 
-        // Uses left indicator for consumables
         if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) {
           const uses = document.createElement("div");
           uses.className = "uUses";
@@ -1047,26 +1036,18 @@
       return s.slice(0,6);
     }
 
-    // ===== Fog-of-war (client-only) =====
-    // Fog must hide EVERYTHING (including walls) -> draw it LAST.
+    // ===== Fog-of-war =====
     const FOG_ENABLED = true;
-
-    // Darkness of fog (1.0 = fully black). We keep a tiny bit below 1 to avoid harsh banding.
     const FOG_ALPHA = 0.96;
 
-    // Main vision cone: fully transparent (no fog inside)
     const VISION_LEN = 360;
     const VISION_ANGLE_DEG = 92;
-
-    // Small "near vision" bubble around you (also fully transparent)
     const NEAR_RADIUS = 70;
 
-    // Feather settings: a few degrees on each side fade into fog.
-    // This is done by drawing several slightly larger cones with decreasing alpha in destination-out.
-    const FEATHER_DEG = 12;      // total extra degrees (spread outwards) across steps
-    const FEATHER_LEN = 40;      // extra length across steps
-    const FEATHER_STEPS = 6;     // more steps = smoother (keep small for performance)
-    const FEATHER_MAX_REMOVE = 0.55; // how much fog is removed at the inner edge of the feather
+    const FEATHER_DEG = 12;
+    const FEATHER_LEN = 40;
+    const FEATHER_STEPS = 6;
+    const FEATHER_MAX_REMOVE = 0.55;
 
     function renderConePath(ctx, cx, cy, len, ang, halfAngle){
       ctx.beginPath();
@@ -1076,63 +1057,59 @@
     }
 
     function renderFogOfWar(ctx, mePx, mePy, dirX, dirY, w, h) {
-  if (!FOG_ENABLED) return;
+      if (!FOG_ENABLED) return;
 
-  const dx = (typeof dirX === "number") ? dirX : 0;
-  const dy = (typeof dirY === "number") ? dirY : 0;
-  const hasDir = (dx*dx + dy*dy) > 0.0001;
+      const dx = (typeof dirX === "number") ? dirX : 0;
+      const dy = (typeof dirY === "number") ? dirY : 0;
+      const hasDir = (dx*dx + dy*dy) > 0.0001;
 
-  const ang = hasDir ? Math.atan2(dy, dx) : 0;
-  const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
+      const ang = hasDir ? Math.atan2(dy, dx) : 0;
+      const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
 
-  ctx.save();
+      ctx.save();
 
-  // 1) Fog on top of everything
-  ctx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
-  ctx.fillRect(0, 0, w, h);
+      // Fog
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
+      ctx.fillRect(0, 0, w, h);
 
-  // 2) Punch out visibility
-  ctx.globalCompositeOperation = "destination-out";
+      // Punch out (FULL strength)
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0,0,0,1)"; // <-- critical
+      ctx.globalAlpha = 1;
 
-  // CRITICAL: punch-out must use FULL alpha, not fog alpha
-  ctx.fillStyle = "rgba(0,0,0,1)";
+      if (NEAR_RADIUS > 0) {
+        ctx.beginPath();
+        ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-  // 2a) Near bubble (fully clear)
-  if (NEAR_RADIUS > 0) {
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-  }
+      renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
+      ctx.fill();
 
-  // 2b) Main cone (fully clear)
-  ctx.globalAlpha = 1;
-  renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
-  ctx.fill();
+      // Feather (partial punch out)
+      for (let i = 1; i <= FEATHER_STEPS; i++) {
+        const t = i / FEATHER_STEPS;
+        const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
+        const len = VISION_LEN + FEATHER_LEN * t;
 
-  // 2c) Feather (partial clear)
-  for (let i = 1; i <= FEATHER_STEPS; i++) {
-    const t = i / FEATHER_STEPS;
-    const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
-    const len = VISION_LEN + FEATHER_LEN * t;
+        const remove = FEATHER_MAX_REMOVE * (1 - t);
+        if (remove <= 0.001) continue;
 
-    const remove = FEATHER_MAX_REMOVE * (1 - t);
-    if (remove <= 0.001) continue;
+        ctx.globalAlpha = remove;
+        renderConePath(ctx, mePx, mePy, len, ang, half + extraHalf);
+        ctx.fill();
+      }
 
-    ctx.globalAlpha = remove;
-    renderConePath(ctx, mePx, mePy, len, ang, half + extraHalf);
-    ctx.fill();
-  }
-
-  ctx.restore();
-}
-
+      ctx.restore();
+    }
 
     // ---------- Rendering ----------
     const canvas = el.canvas;
-    const ctx = canvas.getContext("2d");
+
+    // IMPORTANT: force alpha-enabled canvas context
+    const ctx = canvas.getContext("2d", { alpha: true });
 
     function drawWalls(camX, camY){
       if (!mapData?.walls) return;
@@ -1296,15 +1273,12 @@
 
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      // ===== Fog-of-war LAST: hides EVERYTHING, including walls =====
+      // Fog LAST (must hide everything)
       if (me) {
         const mePx = me.x - camX;
         const mePy = me.y - camY;
-
-        // Match your facing line fallback
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
-
         renderFogOfWar(ctx, mePx, mePy, dirX, dirY, canvas.width, canvas.height);
       }
     }
