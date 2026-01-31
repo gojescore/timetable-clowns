@@ -1076,57 +1076,59 @@
     }
 
     function renderFogOfWar(ctx, mePx, mePy, dirX, dirY, w, h) {
-      if (!FOG_ENABLED) return;
+  if (!FOG_ENABLED) return;
 
-      // If dir is zero, default to facing right to avoid NaN cone.
-      const dx = (typeof dirX === "number") ? dirX : 0;
-      const dy = (typeof dirY === "number") ? dirY : 0;
-      const hasDir = (dx*dx + dy*dy) > 0.0001;
+  const dx = (typeof dirX === "number") ? dirX : 0;
+  const dy = (typeof dirY === "number") ? dirY : 0;
+  const hasDir = (dx*dx + dy*dy) > 0.0001;
 
-      const ang = hasDir ? Math.atan2(dy, dx) : 0;
-      const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
+  const ang = hasDir ? Math.atan2(dy, dx) : 0;
+  const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
 
-      ctx.save();
+  ctx.save();
 
-      // 1) Draw the fog fully on top of everything
-      ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
-      ctx.fillRect(0, 0, w, h);
+  // 1) Fog on top of everything
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
+  ctx.fillRect(0, 0, w, h);
 
-      // 2) Punch out visibility (destination-out subtracts alpha)
-      ctx.globalCompositeOperation = "destination-out";
+  // 2) Punch out visibility
+  ctx.globalCompositeOperation = "destination-out";
 
-      // 2a) Near bubble: FULLY transparent
-      if (NEAR_RADIUS > 0) {
-        ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-      }
+  // CRITICAL: punch-out must use FULL alpha, not fog alpha
+  ctx.fillStyle = "rgba(0,0,0,1)";
 
-      // 2b) Main cone: FULLY transparent (absolute clear view inside)
-      ctx.globalAlpha = 1;
-      renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
-      ctx.fill();
+  // 2a) Near bubble (fully clear)
+  if (NEAR_RADIUS > 0) {
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-      // 2c) Feather: a few degrees on each side that fade into fog
-      // We do multiple passes: slightly larger cone each time, less removal each time.
-      for (let i = 1; i <= FEATHER_STEPS; i++) {
-        const t = i / FEATHER_STEPS;               // 0..1
-        const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
-        const len = VISION_LEN + FEATHER_LEN * t;
+  // 2b) Main cone (fully clear)
+  ctx.globalAlpha = 1;
+  renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
+  ctx.fill();
 
-        // strongest at inner edge of feather, fades to 0 at outer edge
-        const remove = FEATHER_MAX_REMOVE * (1 - t);
-        if (remove <= 0.001) continue;
+  // 2c) Feather (partial clear)
+  for (let i = 1; i <= FEATHER_STEPS; i++) {
+    const t = i / FEATHER_STEPS;
+    const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
+    const len = VISION_LEN + FEATHER_LEN * t;
 
-        ctx.globalAlpha = remove;
-        renderConePath(ctx, mePx, mePy, len, ang, half + extraHalf);
-        ctx.fill();
-      }
+    const remove = FEATHER_MAX_REMOVE * (1 - t);
+    if (remove <= 0.001) continue;
 
-      ctx.restore();
-    }
+    ctx.globalAlpha = remove;
+    renderConePath(ctx, mePx, mePy, len, ang, half + extraHalf);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 
     // ---------- Rendering ----------
     const canvas = el.canvas;
