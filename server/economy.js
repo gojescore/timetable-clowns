@@ -3,7 +3,7 @@
 // Pickups do NOT expire. They disappear only when collected or when the game is deleted.
 
 const PICKUP_TYPE_MONEY = "money";
-const MONEY_PICKUP_AMOUNT = 25;   // tweak as desired
+const MONEY_PICKUP_AMOUNT = 100;   // tweak as desired
 const MONEY_PICKUP_RADIUS = 32;   // collection radius
 
 // Treat pickup as having a small "body" so it won't spawn inside walls/machines.
