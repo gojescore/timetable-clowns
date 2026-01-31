@@ -1048,7 +1048,7 @@
 
     // full circle LOS (no seeing around corners)
     const CIRCLE_LOS_RADIUS = 150;
-    const CIRCLE_RAYS = 180; // 2 degrees each
+    const CIRCLE_RAYS = 720; // 2 degrees each
 
     // feather at cone edges
     const FEATHER_DEG = 12;
@@ -1119,7 +1119,7 @@
 
     function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
       const angles = [];
-
+  
       // cone boundaries
       angles.push(baseAng - halfAng);
       angles.push(baseAng + halfAng);
@@ -1130,7 +1130,7 @@
       }
 
       // also sample a few evenly to avoid gaps
-      const samples = 36;
+      const samples = 120;
       for (let i = 1; i < samples; i++) {
         const t = i / samples;
         angles.push((baseAng - halfAng) + (2*halfAng)*t);
