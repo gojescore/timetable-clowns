@@ -662,9 +662,14 @@
     function isUiBlockingInput() {
       return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
     }
-    function isGameRunning() { return !el.running.classList.contains("hidden"); }
 
-    function sendInput(){ socket.emit("input", inputState); }
+    function isGameRunning() {
+      return !el.running.classList.contains("hidden");
+    }
+
+    function sendInput(){
+      socket.emit("input", inputState);
+    }
 
     function setKey(e, isDown){
       if (!isGameRunning()) return;
@@ -705,7 +710,9 @@
       }
     });
 
+    // -------------------------
     // HOTKEYS: 8 / 9 / 0
+    // -------------------------
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
@@ -724,6 +731,7 @@
 
     socket.on("UPGRADE_USED", (p) => {
       if (!p) return;
+
       if (!p.ok) {
         if (p.reason === "empty_slot") showBubble("No upgrade in that slot.", 1200);
         else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
@@ -731,10 +739,12 @@
         else showBubble("Cannot use right now.", 1200);
         return;
       }
+
       if (p.upgrades) {
         myServerUpgrades = p.upgrades;
         renderUpgradeBar();
       }
+
       const name = p.used?.name || p.used?.id || "Upgrade";
       showBubble(`Used: ${name}`, 1300);
       if (p.removed) {
@@ -778,6 +788,7 @@
 
     socket.on("ANSWER_RESULT", (p) => {
       if (!activePromptId) return;
+
       if (p.ok) {
         el.msg.textContent = "Correct ✅";
         el.msg.className = "msg good";
@@ -791,8 +802,14 @@
 
     socket.on("INTERACT_DENIED", (p) => {
       if (!p) return;
-      if (p.reason === "wrong_order") showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
-      if (p.reason === "already_cleared") showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
+
+      if (p.reason === "wrong_order") {
+        showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
+      }
+
+      if (p.reason === "already_cleared") {
+        showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
+      }
     });
 
     // ---------- Upgrade UI (GRID TILES) ----------
@@ -805,6 +822,7 @@
       el.upgradeList.innerHTML = "";
 
       const use4 = opts.length >= 10;
+
       const grid = document.createElement("div");
       grid.className = "upgGrid" + (use4 ? " grid4" : "");
 
@@ -859,9 +877,13 @@
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
-    socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
-    // Drop overlay
+    socket.on("UPGRADE_OFFER", (p) => {
+      if (!p) return;
+      openUpgradeOffer(p);
+    });
+
+    // -------- Drop overlay --------
     function openDropPicker(payload) {
       pendingReplace = {
         offerId: activeOfferId,
@@ -1015,247 +1037,291 @@
       return s.slice(0,6);
     }
 
-  // ============================================================
-// Fog-of-war + LOS (SOFT EDGE WITHOUT LEAKS, CLEAR INSIDE)
-// ============================================================
-const FOG_ENABLED = true;
-const FOG_ALPHA = 0.96;
-
-// Hard visibility (fully clear)
-const CIRCLE_LOS_RADIUS = 180;
-const CIRCLE_RAYS = 1080;
-
-const VISION_LEN = 380;
-const CONE_ANGLE_DEG = 90;
-const CONE_SAMPLES = 140;
-
-// Soft edge settings (ONLY affects fog OUTSIDE the visible region)
-const EDGE_BLUR_PX = 15;       // how wide the soft edge feels
-const EDGE_STRENGTH = 0.85;    // how much fog is reduced at the border (0..1)
-
-// Offscreen canvases
-const fogCanvas = document.createElement("canvas");
-const fogCtx = fogCanvas.getContext("2d", { alpha: true });
-
-const visCanvas = document.createElement("canvas");      // hard visibility mask
-const visCtx = visCanvas.getContext("2d", { alpha: true });
-
-const blurCanvas = document.createElement("canvas");     // blurred mask
-const blurCtx = blurCanvas.getContext("2d", { alpha: true });
-
-const ringCanvas = document.createElement("canvas");     // ring = blurred - hard
-const ringCtx = ringCanvas.getContext("2d", { alpha: true });
-
-function resizeMasks() {
-  const w = canvas.width;
-  const h = canvas.height;
-
-  if (fogCanvas.width !== w || fogCanvas.height !== h) {
-    fogCanvas.width = w; fogCanvas.height = h;
-  }
-  if (visCanvas.width !== w || visCanvas.height !== h) {
-    visCanvas.width = w; visCanvas.height = h;
-  }
-  if (blurCanvas.width !== w || blurCanvas.height !== h) {
-    blurCanvas.width = w; blurCanvas.height = h;
-  }
-  if (ringCanvas.width !== w || ringCanvas.height !== h) {
-    ringCanvas.width = w; ringCanvas.height = h;
-  }
-
-  fogCtx.imageSmoothingEnabled = true;
-  visCtx.imageSmoothingEnabled = true;
-  blurCtx.imageSmoothingEnabled = true;
-  ringCtx.imageSmoothingEnabled = true;
-}
-
-function segsFromWalls(walls){
-  const segs = [];
-  if (!Array.isArray(walls)) return segs;
-  for (const w of walls) {
-    const x = w.x, y = w.y, ww = w.w, hh = w.h;
-    segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
-    segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
-    segs.push({ ax:x+ww,  ay:y+hh,  bx:x,     by:y+hh  });
-    segs.push({ ax:x,     ay:y+hh,  bx:x,     by:y     });
-  }
-  return segs;
-}
-
-function raySegIntersection(px, py, rx, ry, ax, ay, bx, by){
-  const sx = bx - ax, sy = by - ay;
-  const rxs = rx*sy - ry*sx;
-  if (Math.abs(rxs) < 1e-9) return null;
-
-  const qpx = ax - px;
-  const qpy = ay - py;
-
-  const t = (qpx*sy - qpy*sx) / rxs;
-  const u = (qpx*ry - qpy*rx) / rxs;
-
-  if (t >= 0 && u >= 0 && u <= 1) return { t };
-  return null;
-}
-
-function castRayToWalls(px, py, ang, maxLen, segs){
-  const rx = Math.cos(ang);
-  const ry = Math.sin(ang);
-  let bestT = maxLen;
-
-  for (const s of segs) {
-    const hit = raySegIntersection(px, py, rx, ry, s.ax, s.ay, s.bx, s.by);
-    if (hit && hit.t < bestT) bestT = hit.t;
-  }
-  return { x: px + rx * bestT, y: py + ry * bestT };
-}
-
-function buildCirclePoly(px, py, radius, segs, rays) {
-  const pts = [];
-  for (let i = 0; i < rays; i++) {
-    const a = ((i + 0.5) / rays) * Math.PI * 2;
-    pts.push(castRayToWalls(px, py, a, radius, segs));
-  }
-  return pts;
-}
-
-function buildConePoly(px, py, baseAng, halfAng, maxLen, segs) {
-  const pts = [];
-  for (let i = 0; i <= CONE_SAMPLES; i++) {
-    const t = i / CONE_SAMPLES;
-    const a = (baseAng - halfAng) + (2*halfAng)*t;
-    pts.push(castRayToWalls(px, py, a, maxLen, segs));
-  }
-  return pts;
-}
-
-function fillFan(ctx2, cx, cy, pts){
-  if (!pts || pts.length < 3) return;
-  ctx2.beginPath();
-  ctx2.moveTo(cx, cy);
-  ctx2.lineTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
-  ctx2.closePath();
-  ctx2.fill();
-}
-
-function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
-  if (!FOG_ENABLED) return;
-
-  resizeMasks();
-
-  const meX = meWorldX - camX;
-  const meY = meWorldY - camY;
-
-  // Build wall segments in SCREEN SPACE
-  const worldWalls = mapData?.walls || [];
-  const segsWorld = segsFromWalls(worldWalls);
-  const segs = segsWorld.map(s => ({
-    ax: s.ax - camX, ay: s.ay - camY,
-    bx: s.bx - camX, by: s.by - camY
-  }));
-
-  // Direction
-  const dx = (typeof dirX === "number") ? dirX : 0;
-  const dy = (typeof dirY === "number") ? dirY : 0;
-  const hasDir = (dx*dx + dy*dy) > 0.0001;
-  const ang = hasDir ? Math.atan2(dy, dx) : 0;
-  const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
-
-  // ------------------------------------------------------------
-  // 1) HARD VISIBILITY MASK (fully opaque where visible)
-  // ------------------------------------------------------------
-  visCtx.save();
-  visCtx.globalCompositeOperation = "source-over";
-  visCtx.globalAlpha = 1;
-  visCtx.clearRect(0,0,canvas.width,canvas.height);
-  visCtx.fillStyle = "rgba(255,255,255,1)";
-
-  // Circle (occluded)
-  if (CIRCLE_LOS_RADIUS > 0) {
-    const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
-    fillFan(visCtx, meX, meY, circlePts);
-  } else {
-    visCtx.beginPath();
-    visCtx.arc(meX, meY, 60, 0, Math.PI*2);
-    visCtx.fill();
-  }
-
-  // Cone (occluded)
-  const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs);
-  fillFan(visCtx, meX, meY, conePts);
-
-  visCtx.restore();
-
-  // ------------------------------------------------------------
-  // 2) BLUR MASK (for edge softness)
-  // ------------------------------------------------------------
-  blurCtx.save();
-  blurCtx.globalCompositeOperation = "source-over";
-  blurCtx.globalAlpha = 1;
-  blurCtx.clearRect(0,0,canvas.width,canvas.height);
-  blurCtx.filter = `blur(${EDGE_BLUR_PX}px)`;
-  blurCtx.drawImage(visCanvas, 0, 0);
-  blurCtx.filter = "none";
-  blurCtx.restore();
-
-  // ------------------------------------------------------------
-  // 3) RING = BLUR - HARD  (ONLY outside the visible region)
-  // ------------------------------------------------------------
-  ringCtx.save();
-  ringCtx.globalCompositeOperation = "source-over";
-  ringCtx.globalAlpha = 1;
-  ringCtx.clearRect(0,0,canvas.width,canvas.height);
-
-  // start with blurred
-  ringCtx.drawImage(blurCanvas, 0, 0);
-
-  // subtract hard -> leaves only outside halo
-  ringCtx.globalCompositeOperation = "destination-out";
-  ringCtx.drawImage(visCanvas, 0, 0);
-
-  ringCtx.restore();
-
-  // ------------------------------------------------------------
-  // 4) BUILD FINAL FOG:
-  //    - Full fog everywhere
-  //    - Punch out HARD visibility (inside = 100% clear)
-  //    - Lighten fog only in the RING (soft edge), without expanding visibility
-  // ------------------------------------------------------------
-  fogCtx.save();
-
-  fogCtx.globalCompositeOperation = "source-over";
-  fogCtx.globalAlpha = 1;
-  fogCtx.clearRect(0,0,canvas.width,canvas.height);
-
-  // Full fog
-  fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
-  fogCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Soften edge OUTSIDE by removing a bit of fog there (ring only)
-  fogCtx.globalCompositeOperation = "destination-out";
-  fogCtx.globalAlpha = EDGE_STRENGTH;
-  fogCtx.drawImage(ringCanvas, 0, 0);
-
-  // Now punch out the hard visibility fully (inside stays perfectly clear)
-  fogCtx.globalAlpha = 1;
-  fogCtx.drawImage(visCanvas, 0, 0);
-
-  fogCtx.restore();
-}
-
-
     // ---------- Rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
+
+    // ============================================================
+    // Fog-of-war + LOS (100% clear inside + soft edge ONLY at border)
+    // - fixes the "thin line to the right" seam
+    // - no tint inside visible region
+    // - soft gradient only at the edge (no leaks)
+    // ============================================================
+    const FOG_ENABLED = true;
+    const FOG_ALPHA = 0.96;      // fog darkness outside visibility (0..1)
+
+    const VISION_LEN = 360;
+    const CONE_ANGLE_DEG = 92;
+
+    const CIRCLE_LOS_RADIUS = 150;
+    const CIRCLE_RAYS = 720;
+
+    // soft edge parameters (requested)
+    const EDGE_BLUR_PX = 15;       // how wide the soft edge feels
+    const EDGE_STRENGTH = 0.85;    // how much fog is reduced at the border (0..1)
+
+    // Offscreen fog output
+    const fogCanvas = document.createElement("canvas");
+    const fogCtx = fogCanvas.getContext("2d", { alpha: true });
+
+    // Offscreen visibility mask (hard)
+    const visCanvas = document.createElement("canvas");
+    const visCtx = visCanvas.getContext("2d", { alpha: true });
+
+    // Offscreen blurred visibility + extracted edge ring
+    const blurCanvas = document.createElement("canvas");
+    const blurCtx = blurCanvas.getContext("2d", { alpha: true });
+
+    const edgeCanvas = document.createElement("canvas");
+    const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
+
+    function resizeFogCanvases() {
+      const w = canvas.width, h = canvas.height;
+      if (fogCanvas.width !== w || fogCanvas.height !== h) {
+        fogCanvas.width = w; fogCanvas.height = h;
+        visCanvas.width = w; visCanvas.height = h;
+        blurCanvas.width = w; blurCanvas.height = h;
+        edgeCanvas.width = w; edgeCanvas.height = h;
+      }
+    }
+
+    function segsFromWalls(walls){
+      const segs = [];
+      if (!Array.isArray(walls)) return segs;
+      for (const w of walls) {
+        const x = w.x, y = w.y, ww = w.w, hh = w.h;
+        segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
+        segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
+        segs.push({ ax:x+ww,  ay:y+hh,  bx:x,     by:y+hh  });
+        segs.push({ ax:x,     ay:y+hh,  bx:x,     by:y     });
+      }
+      return segs;
+    }
+
+    function raySegIntersection(px, py, rx, ry, ax, ay, bx, by){
+      const sx = bx - ax, sy = by - ay;
+      const rxs = rx*sy - ry*sx;
+      if (Math.abs(rxs) < 1e-9) return null;
+
+      const qpx = ax - px;
+      const qpy = ay - py;
+
+      const t = (qpx*sy - qpy*sx) / rxs;
+      const u = (qpx*ry - qpy*rx) / rxs;
+
+      if (t >= 0 && u >= 0 && u <= 1) return { t };
+      return null;
+    }
+
+    function castRayToWalls(px, py, ang, maxLen, segs){
+      const rx = Math.cos(ang);
+      const ry = Math.sin(ang);
+      let bestT = maxLen;
+
+      for (const s of segs) {
+        const hit = raySegIntersection(px, py, rx, ry, s.ax, s.ay, s.bx, s.by);
+        if (hit && hit.t < bestT) bestT = hit.t;
+      }
+
+      return { x: px + rx * bestT, y: py + ry * bestT, t: bestT };
+    }
+
+    function getWallCornerAngles(px, py) {
+      const out = [];
+      const walls = mapData?.walls;
+      if (!Array.isArray(walls)) return out;
+
+      for (const w of walls) {
+        const corners = [
+          { x: w.x, y: w.y },
+          { x: w.x + w.w, y: w.y },
+          { x: w.x + w.w, y: w.y + w.h },
+          { x: w.x, y: w.y + w.h },
+        ];
+        for (const c of corners) {
+          const ang = Math.atan2(c.y - py, c.x - px);
+          out.push(ang - 0.0008, ang, ang + 0.0008);
+        }
+      }
+      return out;
+    }
+
+    function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
+      const angles = [];
+
+      angles.push(baseAng - halfAng);
+      angles.push(baseAng + halfAng);
+
+      for (const a of extraAngles) {
+        if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
+      }
+
+      const samples = 140;
+      for (let i = 1; i < samples; i++) {
+        const t = i / samples;
+        angles.push((baseAng - halfAng) + (2*halfAng)*t);
+      }
+
+      angles.sort((a,b) => a-b);
+
+      const pts = [];
+      for (const a of angles) {
+        const hit = castRayToWalls(px, py, a, maxLen, segs);
+        pts.push({ x: hit.x, y: hit.y });
+      }
+      return pts;
+    }
+
+    // IMPORTANT: seam fix — offset circle angles by half-step
+    function buildCirclePoly(px, py, radius, segs, rays) {
+      const pts = [];
+      for (let i = 0; i < rays; i++) {
+        const a = ((i + 0.5) / rays) * Math.PI * 2; // <-- seam killer
+        const hit = castRayToWalls(px, py, a, radius, segs);
+        pts.push({ x: hit.x, y: hit.y });
+      }
+      return pts;
+    }
+
+    function fillPoly(ctx2, pts) {
+      if (!pts || pts.length < 3) return false;
+      ctx2.beginPath();
+      ctx2.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
+      ctx2.closePath();
+      ctx2.fill();
+      return true;
+    }
+
+    function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
+      if (!FOG_ENABLED) return;
+
+      resizeFogCanvases();
+
+      const meX = meWorldX - camX;
+      const meY = meWorldY - camY;
+
+      // Build wall segments in SCREEN SPACE
+      const worldWalls = mapData?.walls || [];
+      const segsWorld = segsFromWalls(worldWalls);
+      const segs = segsWorld.map(s => ({
+        ax: s.ax - camX, ay: s.ay - camY,
+        bx: s.bx - camX, by: s.by - camY
+      }));
+
+      const dx = (typeof dirX === "number") ? dirX : 0;
+      const dy = (typeof dirY === "number") ? dirY : 0;
+      const hasDir = (dx*dx + dy*dy) > 0.0001;
+      const ang = hasDir ? Math.atan2(dy, dx) : 0;
+      const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
+
+      const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
+
+      // ------------------------------------------------------------
+      // 1) Build HARD visibility mask (white = visible, black = not)
+      // ------------------------------------------------------------
+      visCtx.save();
+      visCtx.globalCompositeOperation = "source-over";
+      visCtx.globalAlpha = 1;
+      visCtx.clearRect(0,0,visCanvas.width, visCanvas.height);
+      visCtx.fillStyle = "rgba(0,0,0,1)";
+      visCtx.fillRect(0,0,visCanvas.width, visCanvas.height);
+
+      visCtx.globalCompositeOperation = "source-over";
+      visCtx.fillStyle = "rgba(255,255,255,1)";
+
+      // Circle LOS (hard)
+      if (CIRCLE_LOS_RADIUS > 0) {
+        const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
+        fillPoly(visCtx, circlePts);
+      } else {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 40, 0, Math.PI*2);
+        visCtx.fill();
+      }
+
+      // Cone LOS (hard)
+      const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
+      const okCone = fillPoly(visCtx, conePts);
+
+      // Safety: always guarantee a tiny clear dot
+      if (!okCone) {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 55, 0, Math.PI*2);
+        visCtx.fill();
+      } else {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 3, 0, Math.PI*2);
+        visCtx.fill();
+      }
+
+      visCtx.restore();
+
+      // ------------------------------------------------------------
+      // 2) Build EDGE RING mask = blur(vis) minus vis
+      //    (only border gets a gradient; inside stays 100% clear)
+      // ------------------------------------------------------------
+      blurCtx.save();
+      blurCtx.globalCompositeOperation = "source-over";
+      blurCtx.globalAlpha = 1;
+      blurCtx.clearRect(0,0,blurCanvas.width, blurCanvas.height);
+
+      // blur the visibility mask
+      blurCtx.filter = `blur(${EDGE_BLUR_PX}px)`;
+      blurCtx.drawImage(visCanvas, 0, 0);
+      blurCtx.filter = "none";
+      blurCtx.restore();
+
+      edgeCtx.save();
+      edgeCtx.globalCompositeOperation = "source-over";
+      edgeCtx.globalAlpha = 1;
+      edgeCtx.clearRect(0,0,edgeCanvas.width, edgeCanvas.height);
+
+      // Start with blurred vis
+      edgeCtx.drawImage(blurCanvas, 0, 0);
+
+      // Subtract the hard vis => leaves only the border ring (gradient)
+      edgeCtx.globalCompositeOperation = "destination-out";
+      edgeCtx.drawImage(visCanvas, 0, 0);
+
+      edgeCtx.restore();
+
+      // ------------------------------------------------------------
+      // 3) Build final FOG image:
+      //    - paint full fog
+      //    - punch out hard visibility fully (100% clear inside)
+      //    - punch out edge ring partially (soft edge only)
+      // ------------------------------------------------------------
+      fogCtx.save();
+      fogCtx.globalCompositeOperation = "source-over";
+      fogCtx.globalAlpha = 1;
+      fogCtx.clearRect(0,0,fogCanvas.width, fogCanvas.height);
+
+      // Paint fog
+      fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
+      fogCtx.fillRect(0,0,fogCanvas.width, fogCanvas.height);
+
+      // Punch out hard visible region completely
+      fogCtx.globalCompositeOperation = "destination-out";
+      fogCtx.globalAlpha = 1;
+      fogCtx.drawImage(visCanvas, 0, 0);
+
+      // Punch out only the edge ring partially (soft gradient at border)
+      fogCtx.globalAlpha = EDGE_STRENGTH;
+      fogCtx.drawImage(edgeCanvas, 0, 0);
+
+      fogCtx.restore();
+    }
 
     function drawWalls(camX, camY){
       if (!mapData?.walls) return;
       for (const w of mapData.walls) {
         const x = w.x - camX;
         const y = w.y - camY;
-        ctx.fillStyle = "rgba(255,255,255,.22)";
+        // Make walls visible *inside* the clear region
+        ctx.fillStyle = "rgba(255,255,255,.14)";
         ctx.fillRect(x, y, w.w, w.h);
-        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.strokeStyle = "rgba(0,0,0,.45)";
         ctx.strokeRect(x, y, w.w, w.h);
       }
     }
@@ -1321,6 +1387,7 @@ function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
       if (Date.now() > bubble.untilMs) { bubble = null; return; }
 
       const text = bubble.text;
+
       const x = meWorldX - camX;
       const y = meWorldY - camY;
 
@@ -1408,26 +1475,24 @@ function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
       drawPickups(camX, camY);
       drawMachines(camX, camY);
 
-      // Other players under fog
+      // Other players (under fog)
       for (const p of lastSnapshot.players) {
         if (p.id === myId) continue;
         drawPlayer(p, camX, camY, false);
       }
 
-      // Speech bubble under fog
+      // Speech bubble (under fog, like world)
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      // Fog
+      // Build + draw fog (fog hides everything under it)
       if (me) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
         renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
-
-        // draw fog (scaled from hi-dpi buffer)
-        ctx.drawImage(fogCanvas, 0, 0, fogCanvas.width, fogCanvas.height, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(fogCanvas, 0, 0);
       }
 
-      // Local player ALWAYS on top
+      // IMPORTANT: draw local player LAST so fog can never cover it
       if (me) drawPlayer(me, camX, camY, true);
     }
 
