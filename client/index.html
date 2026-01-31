@@ -662,11 +662,9 @@
     function isUiBlockingInput() {
       return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
     }
-
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
     }
-
     function sendInput(){
       socket.emit("input", inputState);
     }
@@ -710,9 +708,7 @@
       }
     });
 
-    // -------------------------
     // HOTKEYS: 8 / 9 / 0
-    // -------------------------
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
@@ -806,23 +802,21 @@
       if (p.reason === "wrong_order") {
         showBubble(`No access. Try machine #${p.nextMachineNum}.`, 1700);
       }
-
       if (p.reason === "already_cleared") {
         showBubble(`You have been here. Go to machine #${p.nextMachineNum}.`, 1900);
       }
     });
 
-    // ---------- Upgrade UI (GRID TILES) ----------
+    // ---------- Upgrade UI ----------
     function openUpgradeOffer({ offerId, options }) {
       activeOfferId = offerId;
       el.upgradeMsg.textContent = "";
-      el.upgradeMsg.className = "msg";
+      el.upgradeMsg.className = "msg (";
 
       const opts = Array.isArray(options) ? options : [];
       el.upgradeList.innerHTML = "";
 
       const use4 = opts.length >= 10;
-
       const grid = document.createElement("div");
       grid.className = "upgGrid" + (use4 ? " grid4" : "");
 
@@ -875,13 +869,8 @@
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
     }
-
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
-
-    socket.on("UPGRADE_OFFER", (p) => {
-      if (!p) return;
-      openUpgradeOffer(p);
-    });
+    socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
     function openDropPicker(payload) {
       pendingReplace = {
@@ -939,7 +928,6 @@
       el.dropList.innerHTML = "";
       el.dropMsg.textContent = "";
     }
-
     el.dropCancelBtn.addEventListener("click", closeDropPicker);
 
     socket.on("UPGRADE_RESULT", (p) => {
@@ -997,7 +985,6 @@
       }
 
       const hotkeys = ["8", "9", "0"];
-
       for (let i = 0; i < visualSlots; i++) {
         const u = display[i];
         const slot = document.createElement("div");
@@ -1040,25 +1027,158 @@
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
 
+    function drawWalls(camX, camY){
+      if (!mapData?.walls) return;
+      for (const w of mapData.walls) {
+        const x = w.x - camX;
+        const y = w.y - camY;
+        ctx.fillStyle = "rgba(255,255,255,.12)";
+        ctx.fillRect(x, y, w.w, w.h);
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.strokeRect(x, y, w.w, w.h);
+      }
+    }
+
+    function drawPickups(camX, camY){
+      const list = lastSnapshot?.pickups;
+      if (!Array.isArray(list)) return;
+      for (const pk of list) {
+        if (!pk || pk.type !== "money") continue;
+        const x = pk.x - camX;
+        const y = pk.y - camY;
+
+        const w = 36, h = 24;
+        ctx.fillStyle = "rgba(34, 197, 94, .95)";
+        ctx.fillRect(x - w/2, y - h/2, w, h);
+        ctx.strokeStyle = "rgba(0,0,0,.35)";
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
+        ctx.fillStyle = "rgba(10,10,10,.9)";
+        ctx.font = "16px system-ui";
+        ctx.fillText("$", x - 5, y + 6);
+      }
+    }
+
+    function drawMachines(camX, camY){
+      if (!mapData?.machines || !lastSnapshot) return;
+
+      const me = lastSnapshot.players.find(p => p.id === myId);
+      const mx = me?.x ?? -999999;
+      const myy = me?.y ?? -999999;
+      const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
+
+      for (const m of mapData.machines) {
+        const x = m.x - camX;
+        const y = m.y - camY;
+
+        const dx = m.x - mx;
+        const dy = m.y - myy;
+        const near = (dx*dx + dy*dy) <= r2;
+
+        ctx.fillStyle = "rgba(255, 200, 0, .85)";
+        ctx.fillRect(x - 10, y - 10, 20, 20);
+
+        ctx.lineWidth = near ? 3 : 1;
+        ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
+        ctx.strokeRect(x - 10, y - 10, 20, 20);
+
+        ctx.fillStyle = "rgba(10, 10, 10, .9)";
+        ctx.font = "12px system-ui";
+        ctx.fillText(String(m.num), x - 4, y + 4);
+      }
+      ctx.lineWidth = 1;
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
+
+    function drawSpeechBubble(mePx, mePy, camX, camY) {
+      if (!bubble) return;
+      if (Date.now() > bubble.untilMs) { bubble = null; return; }
+
+      const text = bubble.text;
+      const x = mePx - camX;
+      const y = mePy - camY;
+
+      ctx.save();
+      ctx.font = "13px system-ui";
+      const padX = 10;
+      const textW = Math.min(420, Math.ceil(ctx.measureText(text).width));
+      const boxW = textW + padX * 2;
+      const boxH = 30;
+
+      const bx = Math.round(x - boxW / 2);
+      const by = Math.round(y - 48 - boxH);
+
+      ctx.fillStyle = "rgba(20, 24, 40, .92)";
+      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
+      ctx.lineWidth = 2;
+
+      roundRect(ctx, bx, by, boxW, boxH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x - 9, by + boxH);
+      ctx.lineTo(x + 9, by + boxH);
+      ctx.lineTo(x, by + boxH + 10);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(20, 24, 40, .92)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(230,237,247,.95)";
+      ctx.fillText(text, bx + padX, by + 20);
+
+      ctx.restore();
+      ctx.lineWidth = 1;
+    }
+
+    function drawOnePlayer(p, camX, camY, isMe) {
+      const px = p.x - camX;
+      const py = p.y - camY;
+
+      ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
+      ctx.fillRect(px - 14, py - 14, 28, 28);
+
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(230,237,247,.85)";
+      ctx.font = "12px system-ui";
+      ctx.fillText(p.name, px - 14, py - 20);
+    }
+
     // ===== Fog-of-war with LOS (raycast) =====
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
     const VISION_LEN = 360;
     const VISION_ANGLE_DEG = 92;
-    const NEAR_RADIUS = 70;
+
+    // IMPORTANT: bigger near reveal to prevent "fog over clown" at corners/doorways
+    const NEAR_RADIUS = 92;
 
     const FEATHER_DEG = 12;
     const FEATHER_LEN = 40;
     const FEATHER_STEPS = 6;
     const FEATHER_MAX_REMOVE = 0.55;
 
-    // LOS quality knobs
-    const RAY_COUNT = 110;          // base rays across cone
-    const CORNER_EPS = 0.0007;      // radians
-    const MAX_RAY_LEN = 2000;       // safety cap (bigger than any VISION_LEN+FEATHER)
+    const RAY_COUNT = 110;
+    const CORNER_EPS = 0.0007;
+    const MAX_RAY_LEN = 2000;
 
-    // Offscreen fog layer (prevents "colored cone" problem)
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
@@ -1069,27 +1189,12 @@
       }
     }
 
-    function normalizeAngle(a){
-      while (a <= -Math.PI) a += Math.PI * 2;
-      while (a > Math.PI) a -= Math.PI * 2;
-      return a;
-    }
-
-    function angleDelta(a, b){
-      return normalizeAngle(b - a);
-    }
-
-    function isAngleWithinCone(centerAng, testAng, halfAng){
-      return Math.abs(angleDelta(centerAng, testAng)) <= halfAng + 1e-12;
-    }
-
-    // Ray (P + t*D) intersect Segment (A + u*(B-A)), return {t, x, y} or null
     function raySegmentIntersect(px, py, dx, dy, ax, ay, bx, by){
       const rx = dx, ry = dy;
       const sx = bx - ax, sy = by - ay;
 
       const rxs = (rx * sy) - (ry * sx);
-      if (Math.abs(rxs) < 1e-9) return null; // parallel
+      if (Math.abs(rxs) < 1e-9) return null;
 
       const qpx = ax - px;
       const qpy = ay - py;
@@ -1097,9 +1202,7 @@
       const t = (qpx * sy - qpy * sx) / rxs;
       const u = (qpx * ry - qpy * rx) / rxs;
 
-      if (t >= 0 && u >= 0 && u <= 1) {
-        return { t, x: px + t * rx, y: py + t * ry };
-      }
+      if (t >= 0 && u >= 0 && u <= 1) return { t, x: px + t * rx, y: py + t * ry };
       return null;
     }
 
@@ -1156,6 +1259,18 @@
       return { x: bestX, y: bestY };
     }
 
+    function normalizeAngle(a){
+      while (a <= -Math.PI) a += Math.PI * 2;
+      while (a > Math.PI) a -= Math.PI * 2;
+      return a;
+    }
+    function angleDelta(a, b){
+      return normalizeAngle(b - a);
+    }
+    function isAngleWithinCone(centerAng, testAng, halfAng){
+      return Math.abs(angleDelta(centerAng, testAng)) <= halfAng + 1e-12;
+    }
+
     function buildVisibilityPolygonWorld(px, py, centerAng, halfAng, maxLen, walls){
       const segs = getWallSegments(walls);
       const corners = getWallCorners(walls);
@@ -1181,7 +1296,7 @@
       const uniq = [];
       let lastKey = null;
       for (const a of angles) {
-        const k = Math.round(a * 1000000); // 1e-6 rad bins
+        const k = Math.round(a * 1000000);
         if (k === lastKey) continue;
         lastKey = k;
         uniq.push(a);
@@ -1206,6 +1321,7 @@
       fctx.fill();
     }
 
+    // IMPORTANT: this function draws fog OVER the world, then we re-draw the player after it.
     function renderFogOfWar(mainCtx, meWorldX, meWorldY, dirX, dirY, camX, camY, w, h) {
       if (!FOG_ENABLED) return;
       ensureFogSize();
@@ -1231,16 +1347,18 @@
       const centerAng = hasDir ? Math.atan2(dy, dx) : 0;
 
       const halfBase = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
+      const walls = mapData?.walls || [];
 
       // Near bubble (screen coords)
-      if (NEAR_RADIUS > 0) {
-        fctx.beginPath();
-        fctx.arc(meWorldX - camX, meWorldY - camY, NEAR_RADIUS, 0, Math.PI * 2);
-        fctx.fill();
-      }
+      const meScreenX = meWorldX - camX;
+      const meScreenY = meWorldY - camY;
 
-      // Main LOS polygon (fully clear)
-      const walls = mapData?.walls || [];
+      // Big safety clear
+      fctx.beginPath();
+      fctx.arc(meScreenX, meScreenY, NEAR_RADIUS, 0, Math.PI * 2);
+      fctx.fill();
+
+      // Main LOS polygon
       const mainPoly = buildVisibilityPolygonWorld(meWorldX, meWorldY, centerAng, halfBase, VISION_LEN, walls);
       drawVisibilityPolyCutout(fctx, mainPoly, camX, camY);
 
@@ -1254,7 +1372,6 @@
         if (remove <= 0.001) continue;
 
         fctx.globalAlpha = remove;
-
         const poly = buildVisibilityPolygonWorld(meWorldX, meWorldY, centerAng, halfBase + extraHalf, maxLen, walls);
         drawVisibilityPolyCutout(fctx, poly, camX, camY);
       }
@@ -1267,154 +1384,25 @@
       mainCtx.globalAlpha = 1;
       mainCtx.drawImage(fogCanvas, 0, 0);
       mainCtx.restore();
-    }
 
-    function drawWalls(camX, camY){
-      if (!mapData?.walls) return;
-      for (const w of mapData.walls) {
-        const x = w.x - camX;
-        const y = w.y - camY;
-        ctx.fillStyle = "rgba(255,255,255,.12)";
-        ctx.fillRect(x, y, w.w, w.h);
-        ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.strokeRect(x, y, w.w, w.h);
-      }
-    }
-
-    function drawPickups(camX, camY){
-      const list = lastSnapshot?.pickups;
-      if (!Array.isArray(list)) return;
-
-      for (const pk of list) {
-        if (!pk || pk.type !== "money") continue;
-
-        const x = pk.x - camX;
-        const y = pk.y - camY;
-
-        const w = 36;
-        const h = 24;
-
-        ctx.fillStyle = "rgba(34, 197, 94, .95)";
-        ctx.fillRect(x - w/2, y - h/2, w, h);
-
-        ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.strokeRect(x - w/2, y - h/2, w, h);
-
-        ctx.fillStyle = "rgba(10,10,10,.9)";
-        ctx.font = "16px system-ui";
-        ctx.fillText("$", x - 5, y + 6);
-      }
-    }
-
-    function drawMachines(camX, camY){
-      if (!mapData?.machines || !lastSnapshot) return;
-
-      const me = lastSnapshot.players.find(p => p.id === myId);
-      const mx = me?.x ?? -999999;
-      const myy = me?.y ?? -999999;
-      const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
-
-      for (const m of mapData.machines) {
-        const x = m.x - camX;
-        const y = m.y - camY;
-
-        const dx = m.x - mx;
-        const dy = m.y - myy;
-        const near = (dx*dx + dy*dy) <= r2;
-
-        ctx.fillStyle = "rgba(255, 200, 0, .85)";
-        ctx.fillRect(x - 10, y - 10, 20, 20);
-
-        ctx.lineWidth = near ? 3 : 1;
-        ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
-        ctx.strokeRect(x - 10, y - 10, 20, 20);
-
-        ctx.fillStyle = "rgba(10, 10, 10, .9)";
-        ctx.font = "12px system-ui";
-        ctx.fillText(String(m.num), x - 4, y + 4);
-      }
-
-      ctx.lineWidth = 1;
-    }
-
-    function drawSpeechBubble(mePx, mePy, camX, camY) {
-      if (!bubble) return;
-      if (Date.now() > bubble.untilMs) { bubble = null; return; }
-
-      const text = bubble.text;
-
-      const x = mePx - camX;
-      const y = mePy - camY;
-
-      ctx.save();
-      ctx.font = "13px system-ui";
-      const padX = 10;
-      const textW = Math.min(420, Math.ceil(ctx.measureText(text).width));
-      const boxW = textW + padX * 2;
-      const boxH = 30;
-
-      const bx = Math.round(x - boxW / 2);
-      const by = Math.round(y - 48 - boxH);
-
-      ctx.fillStyle = "rgba(20, 24, 40, .92)";
-      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
-      ctx.lineWidth = 2;
-
-      roundRect(ctx, bx, by, boxW, boxH, 10);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(x - 9, by + boxH);
-      ctx.lineTo(x + 9, by + boxH);
-      ctx.lineTo(x, by + boxH + 10);
-      ctx.closePath();
-      ctx.fillStyle = "rgba(20, 24, 40, .92)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255, 90, 90, .95)";
-      ctx.stroke();
-
-      ctx.fillStyle = "rgba(230,237,247,.95)";
-      ctx.fillText(text, bx + padX, by + 20);
-
-      ctx.restore();
-      ctx.lineWidth = 1;
-    }
-
-    function roundRect(ctx, x, y, w, h, r) {
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x + rr, y);
-      ctx.arcTo(x + w, y, x + w, y + h, rr);
-      ctx.arcTo(x + w, y + h, x, y + h, rr);
-      ctx.arcTo(x, y + h, x, y, rr);
-      ctx.arcTo(x, y, x + w, y, rr);
-      ctx.closePath();
-    }
-
-    // --- NEW: draw one player (used both before fog, and re-draw "me" after fog)
-    function drawOnePlayer(p, camX, camY, isMe) {
-      const px = p.x - camX;
-      const py = p.y - camY;
-
-      ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
-      ctx.fillRect(px - 14, py - 14, 28, 28);
-
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
-      ctx.stroke();
-
-      ctx.fillStyle = "rgba(230,237,247,.85)";
-      ctx.font = "12px system-ui";
-      ctx.fillText(p.name, px - 14, py - 20);
+      // EXTRA GUARANTEE:
+      // If ANY fog pixels still cover the player's exact area (corner cases),
+      // punch a tiny hole on the MAIN canvas too.
+      mainCtx.save();
+      mainCtx.globalCompositeOperation = "destination-out";
+      mainCtx.globalAlpha = 1;
+      mainCtx.fillStyle = "rgba(0,0,0,1)";
+      mainCtx.beginPath();
+      mainCtx.arc(meScreenX, meScreenY, 20, 0, Math.PI * 2);
+      mainCtx.fill();
+      mainCtx.restore();
     }
 
     function draw(){
       if (!lastSnapshot) return;
 
       const me = lastSnapshot.players.find(p => p.id === myId);
+
       const camXraw = me ? (me.x - canvas.width / 2) : 0;
       const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
@@ -1430,13 +1418,10 @@
       drawPickups(camX, camY);
       drawMachines(camX, camY);
 
-      // draw all players (normal)
+      // world players
       for (const p of lastSnapshot.players) {
         drawOnePlayer(p, camX, camY, p.id === myId);
       }
-
-      // (optional) bubble before fog (won't matter; we also re-draw after)
-      if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
       // Fog LAST (LOS)
       if (me) {
@@ -1445,7 +1430,7 @@
         renderFogOfWar(ctx, me.x, me.y, dirX, dirY, camX, camY, canvas.width, canvas.height);
       }
 
-      // --- NEW: keep YOUR player (and bubble) above fog always
+      // Always keep YOUR player and bubble above fog
       if (me) {
         drawOnePlayer(me, camX, camY, true);
         drawSpeechBubble(me.x, me.y, camX, camY);
