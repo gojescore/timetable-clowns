@@ -1121,6 +1121,23 @@
       }
       return out;
     }
+  function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
+  const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
+
+  const outer = [];
+  for (const a of angles) {
+    const hit = castRayToWalls(px, py, a, maxLen, segs);
+    outer.push({ x: hit.x, y: hit.y });
+  }
+  if (outer.length < 2) return false;
+
+  ctx2.beginPath();
+  ctx2.moveTo(px, py);             // ✅ apex at player
+  for (const p of outer) ctx2.lineTo(p.x, p.y);
+  ctx2.closePath();
+  ctx2.fill();
+  return true;
+}
 
     function buildAnglesForCone(baseAng, halfAng, extraAngles = []) {
       const angles = [];
