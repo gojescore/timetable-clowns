@@ -64,14 +64,13 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
-    /* IMPORTANT: avoid CSS scaling seams.
-       We size canvas via JS to DPR and set CSS size explicitly. */
     canvas{
+      width:100%;
+      max-width:900px;
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
       background:#0e1630;
       display:block;
-      image-rendering:auto;
     }
 
     /* Prompt overlay */
@@ -204,7 +203,7 @@
       align-items:center;
     }
 
-    /* Upgrade picker tiles */
+    /* Upgrade picker grid tiles */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -290,7 +289,7 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables). Debug: V (vis), B (edge), F (fog).</p>
+    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables). Debug: V (mask), B (edge ring).</p>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -365,6 +364,7 @@
       <h2>Game started 🎉</h2>
       <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
 
+      <!-- HUD -->
       <div class="hudRow" id="hudRow">
         <div class="hudLeft">
           <span class="hudPill" title="You">
@@ -383,9 +383,9 @@
         </div>
       </div>
 
-      <!-- JS will set CSS size to 900x520 and internal size to DPR -->
-      <canvas id="game"></canvas>
+      <canvas id="game" width="900" height="520"></canvas>
 
+      <!-- Bottom upgrade bar -->
       <div class="upgradeBar" id="upgradeBar">
         <div class="upgradeSlots" id="upgradeSlots"></div>
         <div class="uLegend">
@@ -396,6 +396,7 @@
     </div>
   </div>
 
+  <!-- Prompt overlay -->
   <div class="overlay" id="overlay">
     <div class="modal">
       <h3>Machine</h3>
@@ -409,11 +410,14 @@
     </div>
   </div>
 
+  <!-- Upgrade overlay -->
   <div class="overlay" id="upgradeOverlay">
     <div class="modal">
       <h3>Choose an upgrade</h3>
       <p class="muted" style="margin:.2em 0 .6em">Pick one. (Effects come later.)</p>
+
       <div id="upgradeList"></div>
+
       <div class="actions">
         <button id="upgradeCloseBtn">Close</button>
       </div>
@@ -421,13 +425,16 @@
     </div>
   </div>
 
+  <!-- Drop overlay -->
   <div class="overlay" id="dropOverlay">
     <div class="modal">
       <h3>Backpack full</h3>
       <p class="muted" id="dropText" style="margin:.2em 0 .6em">
         You can only carry 3 consumable upgrades. Choose one to drop.
       </p>
+
       <div id="dropList" class="dropList"></div>
+
       <div class="actions">
         <button id="dropCancelBtn">Cancel</button>
       </div>
@@ -502,7 +509,6 @@
     let pendingReplace = null;
 
     let myServerUpgrades = { permanent: [], slots: [] };
-
     const INTERACT_RADIUS = 60;
 
     let bubble = null;
@@ -582,8 +588,6 @@
 
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
-
-      setupCanvas(); // ensure DPR-correct sizing once game starts
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
@@ -672,6 +676,7 @@
 
       if (used) { e.preventDefault(); sendInput(); }
     }
+
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
 
@@ -750,7 +755,6 @@
       if (!activePromptId) return;
       socket.emit("submitAnswer", { promptId: activePromptId, answer: Number(val) });
     }
-
     el.submitBtn.addEventListener("click", submitPrompt);
     el.cancelBtn.addEventListener("click", closePrompt);
     el.answer.addEventListener("keydown", (e) => {
@@ -857,7 +861,8 @@
       el.dropMsg.className = "msg";
 
       const reqName = pendingReplace.requestedInfo?.name || pendingReplace.requestedInfo?.id || "New upgrade";
-      el.dropText.textContent = `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
+      el.dropText.textContent =
+        `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
 
       el.dropList.innerHTML = "";
 
@@ -939,25 +944,14 @@
       const display = [];
       for (const s of cons) {
         const info = s?.info || {};
-        display.push({
-          kind: "consumable",
-          name: info.name || info.id || s.id,
-          desc: info.desc || "",
-          usesLeft: s.usesLeft,
-        });
+        display.push({ kind: "consumable", name: info.name || info.id || s.id, desc: info.desc || "", usesLeft: s.usesLeft });
       }
       for (const p of perm) {
         const info = p?.info || {};
-        display.push({
-          kind: "permanent",
-          name: info.name || info.id || p.id,
-          desc: info.desc || "",
-          usesLeft: null,
-        });
+        display.push({ kind: "permanent", name: info.name || info.id || p.id, desc: info.desc || "", usesLeft: null });
       }
 
       const hotkeys = ["8", "9", "0"];
-
       for (let i = 0; i < visualSlots; i++) {
         const u = display[i];
         const slot = document.createElement("div");
@@ -996,44 +990,17 @@
       return s.slice(0,6);
     }
 
-    // ============================================================
-    // Canvas setup (DPR correct => fixes 1px seams + blur weirdness)
-    // ============================================================
+    // ---------- Rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
-
-    const VIEW_W = 900;
-    const VIEW_H = 520;
-    let DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-
-    function setupCanvas() {
-      DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-
-      // CSS size (fixed) to avoid layout scaling artifacts
-      canvas.style.width = VIEW_W + "px";
-      canvas.style.height = VIEW_H + "px";
-
-      // internal size
-      canvas.width = Math.round(VIEW_W * DPR);
-      canvas.height = Math.round(VIEW_H * DPR);
-
-      // draw in "CSS pixels" coordinates
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      ctx.imageSmoothingEnabled = true;
-
-      resizeFogCanvases();
-    }
-
-    window.addEventListener("resize", () => {
-      if (!isGameRunning()) return;
-      setupCanvas();
-    });
+    ctx.imageSmoothingEnabled = true;
 
     // ============================================================
-    // Fog-of-war + LOS (hard-clear inside + soft edge at border)
-    // + debug views
+    // Fog-of-war + LOS
+    // Circle + Cone, BUT cone starts at circle perimeter (ring-sector)
+    // Visible region = 100% clear; soft gradient only at border.
     // ============================================================
-    let FOG_ENABLED = true;
+    const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
     const VISION_LEN = 360;
@@ -1042,23 +1009,31 @@
     const CIRCLE_LOS_RADIUS = 150;
     const CIRCLE_RAYS = 720;
 
+    // Soft edge
     const EDGE_BLUR_PX = 15;
     const EDGE_STRENGTH = 0.85;
 
-    // debug toggles
-    let DEBUG_SHOW_VIS = false;
-    let DEBUG_SHOW_EDGE = false;
+    // Debug toggles
+    let DEBUG_SHOW_VIS = false;  // V
+    let DEBUG_SHOW_EDGE = false; // B
 
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
-      if (e.target && ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+      if (isUiBlockingInput()) return;
 
-      const k = e.key.toLowerCase();
-      if (k === "v") { DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS; }
-      if (k === "b") { DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE; }
-      if (k === "f") { FOG_ENABLED = !FOG_ENABLED; }
+      if (e.key.toLowerCase() === "v") {
+        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
+        e.preventDefault();
+        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
+      }
+      if (e.key.toLowerCase() === "b") {
+        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
+        e.preventDefault();
+        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
+      }
     });
 
+    // Offscreen buffers
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
@@ -1072,8 +1047,7 @@
     const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
 
     function resizeFogCanvases() {
-      // use CSS pixel coordinate system for offscreens too
-      const w = VIEW_W, h = VIEW_H;
+      const w = canvas.width, h = canvas.height;
       if (fogCanvas.width !== w || fogCanvas.height !== h) {
         fogCanvas.width = w; fogCanvas.height = h;
         visCanvas.width = w; visCanvas.height = h;
@@ -1120,7 +1094,7 @@
         if (hit && hit.t < bestT) bestT = hit.t;
       }
 
-      return { x: px + rx * bestT, y: py + ry * bestT, t: bestT };
+      return { rx, ry, t: bestT, x: px + rx * bestT, y: py + ry * bestT };
     }
 
     function getWallCornerAngles(px, py) {
@@ -1143,32 +1117,25 @@
       return out;
     }
 
-    function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
+    function buildAnglesForCone(baseAng, halfAng, extraAngles = []) {
       const angles = [];
-      angles.push(baseAng - halfAng);
-      angles.push(baseAng + halfAng);
+      angles.push(baseAng - halfAng, baseAng + halfAng);
 
       for (const a of extraAngles) {
         if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
       }
 
-      const samples = 140;
+      const samples = 160;
       for (let i = 1; i < samples; i++) {
         const t = i / samples;
         angles.push((baseAng - halfAng) + (2*halfAng)*t);
       }
 
       angles.sort((a,b) => a-b);
-
-      const pts = [];
-      for (const a of angles) {
-        const hit = castRayToWalls(px, py, a, maxLen, segs);
-        pts.push({ x: hit.x, y: hit.y });
-      }
-      return pts;
+      return angles;
     }
 
-    // seam fix: half-step
+    // Seam fix: circle angles offset by half-step
     function buildCirclePoly(px, py, radius, segs, rays) {
       const pts = [];
       for (let i = 0; i < rays; i++) {
@@ -1179,13 +1146,39 @@
       return pts;
     }
 
-    // IMPORTANT FIX: fill as a fan from center (prevents self-intersection holes)
-    function fillFan(ctx2, cx, cy, pts) {
-      if (!pts || pts.length < 2) return false;
+    function fillPoly(ctx2, pts) {
+      if (!pts || pts.length < 3) return false;
       ctx2.beginPath();
-      ctx2.moveTo(cx, cy);
-      ctx2.lineTo(pts[0].x, pts[0].y);
+      ctx2.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
+      ctx2.closePath();
+      ctx2.fill();
+      return true;
+    }
+
+    // Cone strip: outer boundary at ray hits, inner boundary at circle radius (or wall if closer than circle)
+    function fillConeStrip(ctx2, px, py, baseAng, halfAng, maxLen, innerRadius, segs, extraAngles) {
+      const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
+
+      const outer = [];
+      const inner = [];
+
+      for (const a of angles) {
+        const hit = castRayToWalls(px, py, a, maxLen, segs);
+        outer.push({ x: hit.x, y: hit.y });
+
+        const innerT = Math.min(innerRadius, hit.t);
+        inner.push({ x: px + hit.rx * innerT, y: py + hit.ry * innerT });
+      }
+
+      if (outer.length < 3) return false;
+
+      ctx2.beginPath();
+      ctx2.moveTo(outer[0].x, outer[0].y);
+      for (let i = 1; i < outer.length; i++) ctx2.lineTo(outer[i].x, outer[i].y);
+
+      for (let i = inner.length - 1; i >= 0; i--) ctx2.lineTo(inner[i].x, inner[i].y);
+
       ctx2.closePath();
       ctx2.fill();
       return true;
@@ -1196,9 +1189,13 @@
 
       resizeFogCanvases();
 
+      const VIEW_W = canvas.width;
+      const VIEW_H = canvas.height;
+
       const meX = meWorldX - camX;
       const meY = meWorldY - camY;
 
+      // Build wall segments in SCREEN SPACE
       const worldWalls = mapData?.walls || [];
       const segsWorld = segsFromWalls(worldWalls);
       const segs = segsWorld.map(s => ({
@@ -1214,7 +1211,8 @@
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // 1) Hard visibility mask
+      // 1) HARD visibility mask
+      visCtx.save();
       visCtx.globalCompositeOperation = "source-over";
       visCtx.globalAlpha = 1;
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
@@ -1223,45 +1221,66 @@
 
       visCtx.fillStyle = "rgba(255,255,255,1)";
 
-      // Circle (fan fill)
+      // (A) circle
       if (CIRCLE_LOS_RADIUS > 0) {
         const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
-        fillFan(visCtx, meX, meY, circlePts);
+        fillPoly(visCtx, circlePts);
       } else {
         visCtx.beginPath();
         visCtx.arc(meX, meY, 40, 0, Math.PI*2);
         visCtx.fill();
       }
 
-      // Cone (fan fill)
-      const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
-      const okCone = fillFan(visCtx, meX, meY, conePts);
+      // (B) cone strip starts at circle boundary
+      const innerR = Math.max(0, CIRCLE_LOS_RADIUS);
+      const okCone = fillConeStrip(
+        visCtx,
+        meX, meY,
+        ang, half,
+        VISION_LEN,
+        innerR,
+        segs,
+        cornerAngles
+      );
 
-      // always keep a tiny dot
-      visCtx.beginPath();
-      visCtx.arc(meX, meY, okCone ? 3 : 55, 0, Math.PI*2);
-      visCtx.fill();
+      // Safety: guarantee a tiny visible dot
+      if (!okCone) {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 55, 0, Math.PI*2);
+        visCtx.fill();
+      } else {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 3, 0, Math.PI*2);
+        visCtx.fill();
+      }
 
-      // 2) edge ring = blur(vis) - vis
+      visCtx.restore();
+
+      // 2) EDGE ring = blur(vis) - vis (only border gets gradient)
+      blurCtx.save();
       blurCtx.globalCompositeOperation = "source-over";
       blurCtx.globalAlpha = 1;
       blurCtx.clearRect(0,0,VIEW_W,VIEW_H);
       blurCtx.filter = `blur(${EDGE_BLUR_PX}px)`;
       blurCtx.drawImage(visCanvas, 0, 0);
       blurCtx.filter = "none";
+      blurCtx.restore();
 
+      edgeCtx.save();
       edgeCtx.globalCompositeOperation = "source-over";
       edgeCtx.globalAlpha = 1;
       edgeCtx.clearRect(0,0,VIEW_W,VIEW_H);
       edgeCtx.drawImage(blurCanvas, 0, 0);
-
       edgeCtx.globalCompositeOperation = "destination-out";
       edgeCtx.drawImage(visCanvas, 0, 0);
+      edgeCtx.restore();
 
-      // 3) final fog
+      // 3) Final fog: full fog, punch out vis fully, punch out edge partially
+      fogCtx.save();
       fogCtx.globalCompositeOperation = "source-over";
       fogCtx.globalAlpha = 1;
       fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
+
       fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
@@ -1272,20 +1291,7 @@
       fogCtx.globalAlpha = EDGE_STRENGTH;
       fogCtx.drawImage(edgeCanvas, 0, 0);
 
-      fogCtx.globalAlpha = 1;
-      fogCtx.globalCompositeOperation = "source-over";
-    }
-
-    // ---------- Rendering ----------
-    function roundRect(ctx, x, y, w, h, r) {
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x + rr, y);
-      ctx.arcTo(x + w, y, x + w, y + h, rr);
-      ctx.arcTo(x + w, y + h, x, y + h, rr);
-      ctx.arcTo(x, y + h, x, y, rr);
-      ctx.arcTo(x, y, x + w, y, rr);
-      ctx.closePath();
+      fogCtx.restore();
     }
 
     function drawWalls(camX, camY){
@@ -1306,14 +1312,12 @@
 
       for (const pk of list) {
         if (!pk || pk.type !== "money") continue;
-
         const x = pk.x - camX;
         const y = pk.y - camY;
 
         const w = 36, h = 24;
         ctx.fillStyle = "rgba(34, 197, 94, .95)";
         ctx.fillRect(x - w/2, y - h/2, w, h);
-
         ctx.strokeStyle = "rgba(0,0,0,.35)";
         ctx.strokeRect(x - w/2, y - h/2, w, h);
 
@@ -1350,6 +1354,7 @@
         ctx.font = "12px system-ui";
         ctx.fillText(String(m.num), x - 4, y + 4);
       }
+
       ctx.lineWidth = 1;
     }
 
@@ -1396,6 +1401,17 @@
       ctx.lineWidth = 1;
     }
 
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
+
     function drawPlayer(p, camX, camY, isMe){
       const px = p.x - camX;
       const py = p.y - camY;
@@ -1419,17 +1435,14 @@
 
       const me = lastSnapshot.players.find(p => p.id === myId);
 
-      // camera in CSS pixels, then SNAP to int pixels to kill seams
-      let camXraw = me ? (me.x - VIEW_W / 2) : 0;
-      let camYraw = me ? (me.y - VIEW_H / 2) : 0;
+      const camXraw = me ? (me.x - canvas.width / 2) : 0;
+      const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
-      let camX = Math.max(0, Math.min(world.w - VIEW_W, camXraw));
-      let camY = Math.max(0, Math.min(world.h - VIEW_H, camYraw));
+      // IMPORTANT: round to whole pixels to prevent fog seams/lines
+      const camX = Math.round(Math.max(0, Math.min(world.w - canvas.width, camXraw)));
+      const camY = Math.round(Math.max(0, Math.min(world.h - canvas.height, camYraw)));
 
-      camX = camX | 0; // integer snap
-      camY = camY | 0;
-
-      ctx.clearRect(0,0,VIEW_W,VIEW_H);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
 
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
@@ -1445,25 +1458,35 @@
 
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      if (me && FOG_ENABLED) {
+      if (me) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
-        renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
-        ctx.drawImage(fogCanvas, 0, 0);
-      }
 
-      // debug overlays (draw on top of fog)
-      if (DEBUG_SHOW_VIS) {
-        ctx.save();
-        ctx.globalAlpha = 0.85;
-        ctx.drawImage(visCanvas, 0, 0);
-        ctx.restore();
-      }
-      if (DEBUG_SHOW_EDGE) {
-        ctx.save();
-        ctx.globalAlpha = 0.85;
-        ctx.drawImage(edgeCanvas, 0, 0);
-        ctx.restore();
+        renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
+
+        // Debug overlays first (so you can see them)
+        if (DEBUG_SHOW_VIS) {
+          ctx.save();
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = "source-over";
+          ctx.drawImage(visCanvas, 0, 0);
+          ctx.restore();
+        } else if (DEBUG_SHOW_EDGE) {
+          // Make edge ring visible: cyan masked by edge alpha
+          const VIEW_W = canvas.width, VIEW_H = canvas.height;
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = "rgba(0,255,255,1)";
+          ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+          ctx.globalCompositeOperation = "destination-in";
+          ctx.globalAlpha = 1;
+          ctx.drawImage(edgeCanvas, 0, 0);
+          ctx.restore();
+        } else {
+          // Normal fog draw
+          ctx.drawImage(fogCanvas, 0, 0);
+        }
       }
 
       if (me) drawPlayer(me, camX, camY, true);
