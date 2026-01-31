@@ -1112,7 +1112,7 @@ function castRayToWalls(px, py, ang, maxLen, segs){
 function buildCirclePoly(px, py, radius, segs, rays) {
   const pts = [];
   for (let i = 0; i < rays; i++) {
-    const a = (i / rays) * Math.PI * 2;
+    const a = ((i + 0.5) / rays) * Math.PI * 2;
     pts.push(castRayToWalls(px, py, a, radius, segs));
   }
   return pts;
