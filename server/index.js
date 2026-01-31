@@ -176,20 +176,39 @@ function snapshotForGame(game) {
     time: Date.now(),
     world,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
-    players: [...game.players.values()].map((p) => ({
-      id: p.id,
-      name: p.name,
-      teamId: p.teamId,
-      x: p.x,
-      y: p.y,
-      dirX: p.dirX,
-      dirY: p.dirY,
-      nextMachineNum: p.nextMachineNum,
-      money: typeof p.money === "number" ? p.money : 0,
+    players: [...game.players.values()].map((p) => {
+      const up = p.upgrades || { permanent: [], slots: [] };
 
-      // upgrades snapshot
-      upgrades: p.upgrades || { permanent: [], slots: [] },
-    })),
+      // ✅ include info so client can render names/tooltips without drifting
+      const permanent = Array.isArray(up.permanent)
+        ? up.permanent.map((id) => ({
+            id,
+            info: upgrades.getUpgradeInfo(id),
+          }))
+        : [];
+
+      const slots = Array.isArray(up.slots)
+        ? up.slots.map((s) => ({
+            id: s.id,
+            usesLeft: s.usesLeft,
+            info: upgrades.getUpgradeInfo(s.id),
+          }))
+        : [];
+
+      return {
+        id: p.id,
+        name: p.name,
+        teamId: p.teamId,
+        x: p.x,
+        y: p.y,
+        dirX: p.dirX,
+        dirY: p.dirY,
+        nextMachineNum: p.nextMachineNum,
+        money: typeof p.money === "number" ? p.money : 0,
+
+        upgrades: { permanent, slots },
+      };
+    }),
   };
 }
 
@@ -711,7 +730,7 @@ io.on("connection", (socket) => {
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen, // { id, name, kind, desc, ... } (or null)
+      chosen,
       upgrades: p.upgrades,
     });
   });
