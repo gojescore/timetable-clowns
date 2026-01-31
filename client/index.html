@@ -586,29 +586,6 @@
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
-    // ---------- LOS wall segments cache ----------
-    let wallSegments = []; // [{x1,y1,x2,y2}]
-    function rebuildWallSegments() {
-      wallSegments = [];
-      if (!mapData?.walls || !Array.isArray(mapData.walls)) return;
-
-      for (const r of mapData.walls) {
-        const x = Number(r.x), y = Number(r.y), w = Number(r.w), h = Number(r.h);
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue;
-        if (w <= 0 || h <= 0) continue;
-
-        const x1 = x,     y1 = y;
-        const x2 = x + w, y2 = y;
-        const x3 = x + w, y3 = y + h;
-        const x4 = x,     y4 = y + h;
-
-        wallSegments.push({ x1, y1, x2, y2 });
-        wallSegments.push({ x1: x2, y1: y2, x2: x3, y2: y3 });
-        wallSegments.push({ x1: x3, y1: y3, x2: x4, y2: y4 });
-        wallSegments.push({ x1: x4, y1: y4, x2: x1, y2: y1 });
-      }
-    }
-
     socket.on("GAME_STARTED", (payload = {}) => {
       el.lobby.classList.add("hidden");
       el.running.classList.remove("hidden");
@@ -616,9 +593,6 @@
 
       mapData = payload.map || null;
       if (mapData?.world) world = mapData.world;
-
-      rebuildWallSegments();
-
       el.runningHint.textContent =
         `Move: WASD / Arrow keys. Interact: E near a machine. Map: ${mapData?.name || mapData?.id || "?"}`;
 
@@ -909,6 +883,7 @@
       openUpgradeOffer(p);
     });
 
+    // -------- Drop overlay --------
     function openDropPicker(payload) {
       pendingReplace = {
         offerId: activeOfferId,
@@ -1063,231 +1038,235 @@
     }
 
     // ============================================================
-    // Fog-of-war + LOS (walls block vision)
-    // - Fog drawn on an offscreen canvas, then composited on top
-    // - Then we re-draw ONLY the local player on top (fixes "fog in front")
+    // Fog-of-war + LOS (OFFSCREEN MASK so fog cannot "sit on" player)
     // ============================================================
     const FOG_ENABLED = true;
-    const FOG_ALPHA = 0.96;
+    const FOG_ALPHA = 0.96; // blackness
 
-    const VISION_LEN = 420;
-    const VISION_ANGLE_DEG = 92;
-    const NEAR_RADIUS = 78;
+    const VISION_LEN = 360;
+    const CONE_ANGLE_DEG = 92;
 
-    const FEATHER_BLUR_PX = 12;
-    const FEATHER_ALPHA = 0.35;
+    // full circle LOS (no seeing around corners)
+    const CIRCLE_LOS_RADIUS = 150;
+    const CIRCLE_RAYS = 180; // 2 degrees each
 
-    const RAY_CORNER_EPS = 0.0006; // radians
-    const MAX_RAYS = 1200;         // safety
+    // feather at cone edges
+    const FEATHER_DEG = 12;
+    const FEATHER_STEPS = 6;
+    const FEATHER_MAX_REMOVE = 0.55;
 
+    // offscreen fog mask
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
-    function ensureFogSize(w, h) {
-      if (fogCanvas.width !== w) fogCanvas.width = w;
-      if (fogCanvas.height !== h) fogCanvas.height = h;
+    function resizeFog() {
+      if (fogCanvas.width !== canvas.width || fogCanvas.height !== canvas.height) {
+        fogCanvas.width = canvas.width;
+        fogCanvas.height = canvas.height;
+      }
     }
 
-    function angleNorm(a) {
-      while (a <= -Math.PI) a += Math.PI * 2;
-      while (a > Math.PI) a -= Math.PI * 2;
-      return a;
+    function segsFromWalls(walls){
+      const segs = [];
+      if (!Array.isArray(walls)) return segs;
+      for (const w of walls) {
+        const x = w.x, y = w.y, ww = w.w, hh = w.h;
+        // four edges
+        segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
+        segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
+        segs.push({ ax:x+ww,  ay:y+hh,  bx:x,     by:y+hh  });
+        segs.push({ ax:x,     ay:y+hh,  bx:x,     by:y     });
+      }
+      return segs;
     }
 
-    function raySegIntersect(px, py, rx, ry, x1, y1, x2, y2) {
-      // Ray: P + tR, t>=0
-      // Seg: A + u(B-A), u in [0,1]
-      const sx = x2 - x1;
-      const sy = y2 - y1;
+    function raySegIntersection(px, py, rx, ry, ax, ay, bx, by){
+      // Ray: P + t*R, t>=0
+      // Segment: A + u*(B-A), u in [0,1]
+      const sx = bx - ax, sy = by - ay;
 
-      const denom = rx * sy - ry * sx;
-      if (Math.abs(denom) < 1e-9) return null;
+      const rxs = rx*sy - ry*sx;
+      if (Math.abs(rxs) < 1e-9) return null; // parallel
 
-      const qpx = x1 - px;
-      const qpy = y1 - py;
+      const qpx = ax - px;
+      const qpy = ay - py;
 
-      const t = (qpx * sy - qpy * sx) / denom;
-      const u = (qpx * ry - qpy * rx) / denom;
+      const t = (qpx*sy - qpy*sx) / rxs;
+      const u = (qpx*ry - qpy*rx) / rxs;
 
       if (t >= 0 && u >= 0 && u <= 1) {
-        return { t, ix: px + t * rx, iy: py + t * ry };
+        return { t };
       }
       return null;
     }
 
-    function castRayWorld(px, py, ang, maxLen) {
+    function castRayToWalls(px, py, ang, maxLen, segs){
       const rx = Math.cos(ang);
       const ry = Math.sin(ang);
 
       let bestT = maxLen;
-      let bestX = px + rx * maxLen;
-      let bestY = py + ry * maxLen;
 
-      // world border acts like a wall (so LOS doesn't leak outside)
-      const borders = [
-        { x1: 0, y1: 0, x2: world.w, y2: 0 },
-        { x1: world.w, y1: 0, x2: world.w, y2: world.h },
-        { x1: world.w, y1: world.h, x2: 0, y2: world.h },
-        { x1: 0, y1: world.h, x2: 0, y2: 0 },
-      ];
+      // also clip to world bounds (optional, but helps)
+      // We'll rely on fog canvas size; walls already constrain typical.
 
-      const checkSeg = (s) => {
-        const hit = raySegIntersect(px, py, rx, ry, s.x1, s.y1, s.x2, s.y2);
-        if (!hit) return;
-        if (hit.t < bestT) {
-          bestT = hit.t;
-          bestX = hit.ix;
-          bestY = hit.iy;
-        }
-      };
+      for (const s of segs) {
+        const hit = raySegIntersection(px, py, rx, ry, s.ax, s.ay, s.bx, s.by);
+        if (hit && hit.t < bestT) bestT = hit.t;
+      }
 
-      for (const s of borders) checkSeg(s);
-      for (const s of wallSegments) checkSeg(s);
-
-      return { x: bestX, y: bestY, t: bestT, ang };
+      return { x: px + rx * bestT, y: py + ry * bestT, t: bestT };
     }
 
-    function buildLosPolygon(meWorldX, meWorldY, dirX, dirY) {
+    function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
+      const angles = [];
+
+      // cone boundaries
+      angles.push(baseAng - halfAng);
+      angles.push(baseAng + halfAng);
+
+      // extra rays (wall corners inside cone)
+      for (const a of extraAngles) {
+        if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
+      }
+
+      // also sample a few evenly to avoid gaps
+      const samples = 36;
+      for (let i = 1; i < samples; i++) {
+        const t = i / samples;
+        angles.push((baseAng - halfAng) + (2*halfAng)*t);
+      }
+
+      angles.sort((a,b) => a-b);
+
+      const pts = [];
+      for (const a of angles) {
+        const hit = castRayToWalls(px, py, a, maxLen, segs);
+        pts.push({ x: hit.x, y: hit.y });
+      }
+      return pts;
+    }
+
+    function buildCirclePoly(px, py, radius, segs, rays) {
+      const pts = [];
+      for (let i = 0; i < rays; i++) {
+        const a = (i / rays) * Math.PI * 2;
+        const hit = castRayToWalls(px, py, a, radius, segs);
+        pts.push({ x: hit.x, y: hit.y });
+      }
+      return pts;
+    }
+
+    function drawPoly(ctx, pts) {
+      if (!pts || pts.length < 3) return false;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.fill();
+      return true;
+    }
+
+    function getWallCornerAngles(px, py, segWalls) {
+      // Use mapData.walls rectangles, but we need corners; easiest re-walk mapData.walls.
+      const out = [];
+      const walls = mapData?.walls;
+      if (!Array.isArray(walls)) return out;
+      for (const w of walls) {
+        const corners = [
+          { x: w.x, y: w.y },
+          { x: w.x + w.w, y: w.y },
+          { x: w.x + w.w, y: w.y + w.h },
+          { x: w.x, y: w.y + w.h },
+        ];
+        for (const c of corners) {
+          const ang = Math.atan2(c.y - py, c.x - px);
+          // small eps angles to avoid "missing" around edges
+          out.push(ang - 0.0008, ang, ang + 0.0008);
+        }
+      }
+      return out;
+    }
+
+    function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
+      if (!FOG_ENABLED) return;
+
+      resizeFog();
+      fogCtx.save();
+
+      // Clear old mask
+      fogCtx.globalCompositeOperation = "source-over";
+      fogCtx.globalAlpha = 1;
+      fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+
+      // 1) Paint fog
+      fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
+      fogCtx.fillRect(0, 0, fogCanvas.width, fogCanvas.height);
+
+      // 2) Punch out visible region
+      fogCtx.globalCompositeOperation = "destination-out";
+      fogCtx.fillStyle = "rgba(0,0,0,1)";
+      fogCtx.globalAlpha = 1;
+
+      const meX = meWorldX - camX;
+      const meY = meWorldY - camY;
+
       const dx = (typeof dirX === "number") ? dirX : 0;
       const dy = (typeof dirY === "number") ? dirY : 0;
       const hasDir = (dx*dx + dy*dy) > 0.0001;
-      const facing = hasDir ? Math.atan2(dy, dx) : 0;
 
-      const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
-      const aMin = facing - half;
-      const aMax = facing + half;
+      const ang = hasDir ? Math.atan2(dy, dx) : 0;
+      const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
 
-      const angles = [];
+      // Build wall segments in SCREEN SPACE (world coords minus cam)
+      const worldWalls = mapData?.walls || [];
+      const segsWorld = segsFromWalls(worldWalls);
 
-      // Add arc endpoints
-      angles.push(aMin, aMax);
+      // Convert segment coords to screen-space by subtracting cam
+      const segs = segsWorld.map(s => ({
+        ax: s.ax - camX, ay: s.ay - camY,
+        bx: s.bx - camX, by: s.by - camY
+      }));
 
-      // Add angles to wall corners that are within the cone (±eps)
-      if (mapData?.walls && Array.isArray(mapData.walls)) {
-        for (const r of mapData.walls) {
-          const x = Number(r.x), y = Number(r.y), w = Number(r.w), h = Number(r.h);
-          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue;
-          if (w <= 0 || h <= 0) continue;
+      // Add wall corner angles (screen-space) to improve accuracy
+      const cornerAngles = getWallCornerAngles(meWorldX, meWorldY)
+        .map(a => a); // still world-angle; OK because angles don’t change with cam
 
-          const corners = [
-            { x: x,     y: y },
-            { x: x + w, y: y },
-            { x: x + w, y: y + h },
-            { x: x,     y: y + h },
-          ];
-
-          for (const c of corners) {
-            const ang = Math.atan2(c.y - meWorldY, c.x - meWorldX);
-            // Check if within cone (with wrap-safe compare)
-            const rel = angleNorm(ang - facing);
-            if (rel >= -half - 0.02 && rel <= half + 0.02) {
-              angles.push(ang - RAY_CORNER_EPS, ang, ang + RAY_CORNER_EPS);
-            }
-          }
-        }
-      }
-
-      // Add some uniform rays so the edge is smooth even with few corners
-      const uniform = 60;
-      for (let i = 0; i <= uniform; i++) {
-        const t = i / uniform;
-        angles.push(aMin + (aMax - aMin) * t);
-      }
-
-      // Dedup-ish and clamp count
-      const uniq = [];
-      const seen = new Set();
-      for (const a of angles) {
-        const k = Math.round(a * 100000).toString();
-        if (seen.has(k)) continue;
-        seen.add(k);
-        uniq.push(a);
-        if (uniq.length >= MAX_RAYS) break;
-      }
-
-      // Cast rays
-      const pts = [];
-      for (const a of uniq) {
-        // hard-limit rays to the cone range
-        const rel = angleNorm(a - facing);
-        if (rel < -half - 1e-6 || rel > half + 1e-6) continue;
-
-        const hit = castRayWorld(meWorldX, meWorldY, a, VISION_LEN);
-        pts.push(hit);
-      }
-
-      // Sort by angle around center
-      pts.sort((p1, p2) => p1.ang - p2.ang);
-
-      return { pts, facing, half };
-    }
-
-    function drawPolygonPath(ctx, mePx, mePy, ptsWorld, camX, camY) {
-      if (!ptsWorld.length) return;
-      ctx.beginPath();
-      ctx.moveTo(mePx, mePy);
-      for (const p of ptsWorld) {
-        ctx.lineTo(p.x - camX, p.y - camY);
-      }
-      ctx.closePath();
-    }
-
-    function renderFogLOS(mainCtx, meWorldX, meWorldY, mePx, mePy, dirX, dirY, camX, camY, w, h) {
-      if (!FOG_ENABLED) return;
-
-      ensureFogSize(w, h);
-
-      // clear
-      fogCtx.clearRect(0, 0, w, h);
-
-      // full fog
-      fogCtx.globalCompositeOperation = "source-over";
-      fogCtx.globalAlpha = 1;
-      fogCtx.filter = "none";
-      fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
-      fogCtx.fillRect(0, 0, w, h);
-
-      // LOS polygon (occluded by walls)
-      const los = buildLosPolygon(meWorldX, meWorldY, dirX, dirY);
-
-      // Punch out (fully transparent)
-      fogCtx.globalCompositeOperation = "destination-out";
-      fogCtx.globalAlpha = 1;
-      fogCtx.filter = "none";
-      fogCtx.fillStyle = "rgba(0,0,0,1)";
-
-      // near circle (always visible around player)
-      if (NEAR_RADIUS > 0) {
+      // (A) Circle LOS around player
+      if (CIRCLE_LOS_RADIUS > 0) {
+        const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
+        drawPoly(fogCtx, circlePts);
+      } else {
+        // fallback small circle
         fogCtx.beginPath();
-        fogCtx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
+        fogCtx.arc(meX, meY, 40, 0, Math.PI*2);
         fogCtx.fill();
       }
 
-      // cone/LOS
-      drawPolygonPath(fogCtx, mePx, mePy, los.pts, camX, camY);
-      fogCtx.fill();
+      // (B) Cone LOS forward
+      const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
+      const okPoly = drawPoly(fogCtx, conePts);
 
-      // Feather: a soft blur around the revealed area
-      fogCtx.globalAlpha = FEATHER_ALPHA;
-      fogCtx.filter = `blur(${FEATHER_BLUR_PX}px)`;
-      if (NEAR_RADIUS > 0) {
+      // If cone collapses (rare): fallback to a small clear circle so player never gets "fogged"
+      if (!okPoly) {
         fogCtx.beginPath();
-        fogCtx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
+        fogCtx.arc(meX, meY, 55, 0, Math.PI*2);
         fogCtx.fill();
       }
-      drawPolygonPath(fogCtx, mePx, mePy, los.pts, camX, camY);
-      fogCtx.fill();
 
-      fogCtx.filter = "none";
-      fogCtx.globalAlpha = 1;
-      fogCtx.globalCompositeOperation = "source-over";
+      // (C) Feather at cone edges (partial punch-out)
+      for (let i = 1; i <= FEATHER_STEPS; i++) {
+        const t = i / FEATHER_STEPS;
+        const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
+        const remove = FEATHER_MAX_REMOVE * (1 - t);
+        if (remove <= 0.001) continue;
 
-      // Composite fog onto main
-      mainCtx.save();
-      mainCtx.globalCompositeOperation = "source-over";
-      mainCtx.globalAlpha = 1;
-      mainCtx.drawImage(fogCanvas, 0, 0);
-      mainCtx.restore();
+        fogCtx.globalAlpha = remove;
+
+        const featherPts = buildConePoly(meX, meY, ang, half + extraHalf, VISION_LEN + 30*t, segs, cornerAngles);
+        drawPoly(fogCtx, featherPts);
+      }
+
+      fogCtx.restore();
     }
 
     // ---------- Rendering ----------
@@ -1362,14 +1341,14 @@
       ctx.lineWidth = 1;
     }
 
-    function drawSpeechBubble(mePx, mePy, camX, camY) {
+    function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
       if (!bubble) return;
       if (Date.now() > bubble.untilMs) { bubble = null; return; }
 
       const text = bubble.text;
 
-      const x = mePx - camX;
-      const y = mePy - camY;
+      const x = meWorldX - camX;
+      const y = meWorldY - camY;
 
       ctx.save();
       ctx.font = "13px system-ui";
@@ -1417,7 +1396,10 @@
       ctx.closePath();
     }
 
-    function drawPlayerAt(px, py, p, isMe){
+    function drawPlayer(p, camX, camY, isMe){
+      const px = p.x - camX;
+      const py = p.y - camY;
+
       ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
       ctx.fillRect(px - 14, py - 14, 28, 28);
 
@@ -1447,38 +1429,30 @@
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
+      // World first
       drawWalls(camX, camY);
       drawPickups(camX, camY);
       drawMachines(camX, camY);
 
-      // draw everyone
+      // Other players (under fog)
       for (const p of lastSnapshot.players) {
-        const px = p.x - camX;
-        const py = p.y - camY;
-        drawPlayerAt(px, py, p, p.id === myId);
+        if (p.id === myId) continue;
+        drawPlayer(p, camX, camY, false);
       }
 
-      // speech (world-layer)
+      // Speech bubble (under fog, like world)
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      // Fog LAST (must hide everything)
+      // Build + draw fog mask (fog hides everything above)
       if (me) {
-        const mePx = me.x - camX;
-        const mePy = me.y - camY;
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
-
-        renderFogLOS(ctx, me.x, me.y, mePx, mePy, dirX, dirY, camX, camY, canvas.width, canvas.height);
-
-        // IMPORTANT FIX: ensure local player is ALWAYS on top of fog
-        // (prevents “fog in front of player” in tight rooms / overlaps)
-        drawPlayerAt(mePx, mePy, me, true);
-
-        // speech bubble on top too (so it never gets clipped by fog)
-        if (bubble && Date.now() <= bubble.untilMs) {
-          drawSpeechBubble(me.x, me.y, camX, camY);
-        }
+        renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
+        ctx.drawImage(fogCanvas, 0, 0);
       }
+
+      // IMPORTANT: draw local player LAST so fog can never cover it
+      if (me) drawPlayer(me, camX, camY, true);
     }
 
     function loop(){
