@@ -1048,12 +1048,16 @@
 
     // full circle LOS (no seeing around corners)
     const CIRCLE_LOS_RADIUS = 150;
-    const CIRCLE_RAYS = 720; // 2 degrees each
+    const CIRCLE_RAYS = 720; // 0.5 degrees each
 
     // feather at cone edges
     const FEATHER_DEG = 12;
     const FEATHER_STEPS = 6;
     const FEATHER_MAX_REMOVE = 0.55;
+
+    // extra softness around circle edge (reduces "polygon stepping")
+    const SOFT_EDGE_ALPHA = 0.18;
+    const SOFT_EDGE_EXTRA = 18;
 
     // offscreen fog mask
     const fogCanvas = document.createElement("canvas");
@@ -1069,8 +1073,14 @@
     function segsFromWalls(walls){
       const segs = [];
       if (!Array.isArray(walls)) return segs;
+
+      const pad = 2; // LOS padding to avoid corner artifacts
       for (const w of walls) {
-        const x = w.x, y = w.y, ww = w.w, hh = w.h;
+        const x = w.x - pad;
+        const y = w.y - pad;
+        const ww = w.w + pad*2;
+        const hh = w.h + pad*2;
+
         // four edges
         segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
         segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
@@ -1106,9 +1116,6 @@
 
       let bestT = maxLen;
 
-      // also clip to world bounds (optional, but helps)
-      // We'll rely on fog canvas size; walls already constrain typical.
-
       for (const s of segs) {
         const hit = raySegIntersection(px, py, rx, ry, s.ax, s.ay, s.bx, s.by);
         if (hit && hit.t < bestT) bestT = hit.t;
@@ -1119,7 +1126,7 @@
 
     function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
       const angles = [];
-  
+
       // cone boundaries
       angles.push(baseAng - halfAng);
       angles.push(baseAng + halfAng);
@@ -1166,11 +1173,11 @@
       return true;
     }
 
-    function getWallCornerAngles(px, py, segWalls) {
-      // Use mapData.walls rectangles, but we need corners; easiest re-walk mapData.walls.
+    function getWallCornerAngles(px, py) {
       const out = [];
       const walls = mapData?.walls;
       if (!Array.isArray(walls)) return out;
+
       for (const w of walls) {
         const corners = [
           { x: w.x, y: w.y },
@@ -1180,7 +1187,6 @@
         ];
         for (const c of corners) {
           const ang = Math.atan2(c.y - py, c.x - px);
-          // small eps angles to avoid "missing" around edges
           out.push(ang - 0.0008, ang, ang + 0.0008);
         }
       }
@@ -1217,26 +1223,22 @@
       const ang = hasDir ? Math.atan2(dy, dx) : 0;
       const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
 
-      // Build wall segments in SCREEN SPACE (world coords minus cam)
+      // Build wall segments in SCREEN SPACE
       const worldWalls = mapData?.walls || [];
       const segsWorld = segsFromWalls(worldWalls);
-
-      // Convert segment coords to screen-space by subtracting cam
       const segs = segsWorld.map(s => ({
         ax: s.ax - camX, ay: s.ay - camY,
         bx: s.bx - camX, by: s.by - camY
       }));
 
-      // Add wall corner angles (screen-space) to improve accuracy
-      const cornerAngles = getWallCornerAngles(meWorldX, meWorldY)
-        .map(a => a); // still world-angle; OK because angles don’t change with cam
+      // Add wall corner angles (world angles; cam does not matter for angles)
+      const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
       // (A) Circle LOS around player
       if (CIRCLE_LOS_RADIUS > 0) {
         const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
         drawPoly(fogCtx, circlePts);
       } else {
-        // fallback small circle
         fogCtx.beginPath();
         fogCtx.arc(meX, meY, 40, 0, Math.PI*2);
         fogCtx.fill();
@@ -1246,7 +1248,7 @@
       const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
       const okPoly = drawPoly(fogCtx, conePts);
 
-      // If cone collapses (rare): fallback to a small clear circle so player never gets "fogged"
+      // If cone collapses (rare): fallback to a small clear circle
       if (!okPoly) {
         fogCtx.beginPath();
         fogCtx.arc(meX, meY, 55, 0, Math.PI*2);
@@ -1261,10 +1263,16 @@
         if (remove <= 0.001) continue;
 
         fogCtx.globalAlpha = remove;
-
         const featherPts = buildConePoly(meX, meY, ang, half + extraHalf, VISION_LEN + 30*t, segs, cornerAngles);
         drawPoly(fogCtx, featherPts);
       }
+
+      // (D) Soft edge around the player visibility (reduces stepping)
+      fogCtx.globalAlpha = SOFT_EDGE_ALPHA;
+      fogCtx.beginPath();
+      fogCtx.arc(meX, meY, CIRCLE_LOS_RADIUS + SOFT_EDGE_EXTRA, 0, Math.PI * 2);
+      fogCtx.fill();
+      fogCtx.globalAlpha = 1;
 
       fogCtx.restore();
     }
