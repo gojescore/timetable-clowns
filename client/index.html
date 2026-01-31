@@ -997,8 +997,9 @@
 
     // ============================================================
     // Fog-of-war + LOS
-    // Circle + Cone, cone legs start at the circle's widest diameter endpoints.
-    // Visible region = 100% clear; soft gradient only at border.
+    // Circle + Cone:
+    // - Circle is full LOS.
+    // - Cone is a STRIP that starts on the circle perimeter ALONG THE CONE EDGES.
     // ============================================================
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
@@ -1006,8 +1007,8 @@
     const VISION_LEN = 360;
     const CONE_ANGLE_DEG = 92;
 
-    const CIRCLE_LOS_RADIUS = 110;
-    const CONE_START_OVERLAP = 3; // tiny overlap into circle (0–5 is typical)
+    const CIRCLE_LOS_RADIUS = 110;     // you changed this to 110
+    const CONE_START_OVERLAP = 3;      // start a tiny bit inside circle to avoid seam
     const CIRCLE_RAYS = 720;
 
     // Soft edge
@@ -1017,6 +1018,9 @@
     // Debug toggles
     let DEBUG_SHOW_VIS = false;  // V
     let DEBUG_SHOW_EDGE = false; // B
+
+    // Remember last facing angle so it doesn't snap when dir becomes (0,0)
+    let lastFacingAng = 0;
 
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
@@ -1157,31 +1161,31 @@
       return true;
     }
 
-    // Cone polygon whose legs start at the circle's widest diameter endpoints (perpendicular to facing).
-    function fillConeFromCircleDiameterEndpoints(ctx2, px, py, baseAng, halfAng, maxLen, circleR, overlapPx, segs, extraAngles) {
-      const rBase = Math.max(0, circleR - (overlapPx || 0));
-
-      // Endpoints of the diameter perpendicular to facing:
-      const leftHit  = castRayToWalls(px, py, baseAng + Math.PI/2, rBase, segs);
-      const rightHit = castRayToWalls(px, py, baseAng - Math.PI/2, rBase, segs);
-
-      const leftBase  = { x: leftHit.x,  y: leftHit.y };
-      const rightBase = { x: rightHit.x, y: rightHit.y };
-
+    // ✅ The correct cone strip:
+    // Outer edge = wall hits out to VISION_LEN
+    // Inner edge = same rays, but starting at circle perimeter (minus tiny overlap)
+    function fillConeStrip(ctx2, px, py, baseAng, halfAng, maxLen, circleR, overlapPx, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
 
       const outer = [];
+      const inner = [];
+
+      const innerR = Math.max(0, (circleR || 0) - (overlapPx || 0));
+
       for (const a of angles) {
         const hit = castRayToWalls(px, py, a, maxLen, segs);
         outer.push({ x: hit.x, y: hit.y });
+
+        const tInner = Math.min(innerR, hit.t); // if a wall is closer than the circle, start at the wall
+        inner.push({ x: px + hit.rx * tInner, y: py + hit.ry * tInner });
       }
 
-      if (outer.length < 2) return false;
+      if (outer.length < 3) return false;
 
       ctx2.beginPath();
-      ctx2.moveTo(leftBase.x, leftBase.y);
-      for (const p of outer) ctx2.lineTo(p.x, p.y);
-      ctx2.lineTo(rightBase.x, rightBase.y);
+      ctx2.moveTo(outer[0].x, outer[0].y);
+      for (let i = 1; i < outer.length; i++) ctx2.lineTo(outer[i].x, outer[i].y);
+      for (let i = inner.length - 1; i >= 0; i--) ctx2.lineTo(inner[i].x, inner[i].y);
       ctx2.closePath();
       ctx2.fill();
       return true;
@@ -1208,8 +1212,11 @@
 
       const dx = (typeof dirX === "number") ? dirX : 0;
       const dy = (typeof dirY === "number") ? dirY : 0;
+
       const hasDir = (dx*dx + dy*dy) > 0.0001;
-      const ang = hasDir ? Math.atan2(dy, dx) : 0;
+      if (hasDir) lastFacingAng = Math.atan2(dy, dx);
+
+      const ang = lastFacingAng;
       const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
@@ -1234,8 +1241,8 @@
         visCtx.fill();
       }
 
-      // (B) cone legs start at the widest points of the circle
-      const okCone = fillConeFromCircleDiameterEndpoints(
+      // (B) cone strip starts on circle perimeter ALONG cone edges ✅
+      const okCone = fillConeStrip(
         visCtx,
         meX, meY,
         ang, half,
