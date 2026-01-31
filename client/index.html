@@ -251,6 +251,31 @@
       font-weight:800;
       color:rgba(230,237,247,.9);
     }
+
+    /* Drop picker list */
+    .dropList{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-top:10px;
+    }
+    .dropBtn{
+      text-align:left;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0e1630;
+      color:var(--ink);
+      cursor:pointer;
+    }
+    .dropBtn:hover{
+      border-color: rgba(255,255,255,.22);
+    }
+    .dropMeta{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:4px;
+    }
   </style>
 </head>
 <body>
@@ -392,6 +417,23 @@
     </div>
   </div>
 
+  <!-- Drop overlay (NEW) -->
+  <div class="overlay" id="dropOverlay">
+    <div class="modal">
+      <h3>Backpack full</h3>
+      <p class="muted" id="dropText" style="margin:.2em 0 .6em">
+        You can only carry 3 consumable upgrades. Choose one to drop.
+      </p>
+
+      <div id="dropList" class="dropList"></div>
+
+      <div class="actions">
+        <button id="dropCancelBtn">Cancel</button>
+      </div>
+      <div class="msg" id="dropMsg"></div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
@@ -441,6 +483,13 @@
       upgradeList: document.getElementById("upgradeList"),
       upgradeCloseBtn: document.getElementById("upgradeCloseBtn"),
       upgradeMsg: document.getElementById("upgradeMsg"),
+
+      // drop (NEW)
+      dropOverlay: document.getElementById("dropOverlay"),
+      dropList: document.getElementById("dropList"),
+      dropCancelBtn: document.getElementById("dropCancelBtn"),
+      dropMsg: document.getElementById("dropMsg"),
+      dropText: document.getElementById("dropText"),
     };
 
     let myId = null;
@@ -457,8 +506,11 @@
     // upgrade offer state
     let activeOfferId = null;
 
-    // last "me" upgrades from snapshot
-    let meUpgrades = { permanent: [], slots: [] };
+    // NEW: when slots are full, remember what we tried to pick
+    let pendingReplace = null; // { offerId, upgradeId, requestedInfo, slotsPayload }
+
+    // local UI cache of picked upgrades (until server sends it in snapshot later)
+    const myUpgrades = [];
 
     // Machine highlight radius (must match server)
     const INTERACT_RADIUS = 60;
@@ -540,8 +592,6 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
-      // reset local upgrade snapshot cache
-      meUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
 
@@ -554,10 +604,6 @@
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
-
-        // NEW: render upgrade bar from server truth
-        meUpgrades = me.upgrades || { permanent: [], slots: [] };
-        renderUpgradeBar();
       }
     });
 
@@ -603,7 +649,7 @@
     const inputState = { up:false, down:false, left:false, right:false };
 
     function isUiBlockingInput() {
-      return !!activePromptId || !!activeOfferId;
+      return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
     }
 
     function isGameRunning() {
@@ -618,7 +664,7 @@
       // do nothing while in lobby/start, so arrow keys work normally there
       if (!isGameRunning()) return;
 
-      // If prompt/upgrade open, ignore movement keys
+      // If prompt/upgrade/drop open, ignore movement keys
       if (isUiBlockingInput()) return;
 
       // if typing in an input/select/textarea, do not hijack arrows/WASD
@@ -736,6 +782,7 @@
         const tile = document.createElement("button");
         tile.type = "button";
         tile.className = "upgTile";
+        tile.title = opt.desc || ""; // hover tooltip
 
         const name = document.createElement("div");
         name.className = "upgName";
@@ -788,12 +835,100 @@
       openUpgradeOffer(p);
     });
 
+    // -------- Drop overlay (NEW) --------
+    function openDropPicker(payload) {
+      // payload: { requested, slots:[{id,usesLeft,info}] }
+      pendingReplace = {
+        offerId: activeOfferId,
+        upgradeId: payload?.requested?.id || null,
+        requestedInfo: payload?.requested || null,
+        slotsPayload: Array.isArray(payload?.slots) ? payload.slots : [],
+      };
+
+      el.dropMsg.textContent = "";
+      el.dropMsg.className = "msg";
+
+      const reqName = pendingReplace.requestedInfo?.name || pendingReplace.requestedInfo?.id || "New upgrade";
+      el.dropText.textContent =
+        `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
+
+      el.dropList.innerHTML = "";
+
+      for (const s of pendingReplace.slotsPayload) {
+        const info = s.info || {};
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "dropBtn";
+        btn.title = info.desc || "";
+
+        const label = document.createElement("div");
+        label.style.fontWeight = "900";
+        label.textContent = info.name || info.id || s.id;
+
+        const meta = document.createElement("div");
+        meta.className = "dropMeta";
+        meta.textContent = `uses left: ${s.usesLeft}`;
+
+        btn.appendChild(label);
+        btn.appendChild(meta);
+
+        btn.addEventListener("click", () => {
+          if (!pendingReplace || !pendingReplace.upgradeId) return;
+          socket.emit("chooseUpgradeReplace", {
+            offerId: pendingReplace.offerId,
+            upgradeId: pendingReplace.upgradeId,
+            dropId: s.id,
+          });
+        });
+
+        el.dropList.appendChild(btn);
+      }
+
+      el.dropOverlay.classList.add("show");
+    }
+
+    function closeDropPicker() {
+      pendingReplace = null;
+      el.dropOverlay.classList.remove("show");
+      el.dropList.innerHTML = "";
+      el.dropMsg.textContent = "";
+    }
+
+    el.dropCancelBtn.addEventListener("click", closeDropPicker);
+
     socket.on("UPGRADE_RESULT", (p) => {
       if (!p) return;
+
+      // NEW: slots full flow
+      if (!p.ok && p.reason === "slots_full") {
+        el.upgradeMsg.textContent = "Backpack full — choose one to drop.";
+        el.upgradeMsg.className = "msg bad";
+        openDropPicker(p);
+        return;
+      }
 
       if (p.ok) {
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
+
+        // Visual-only scaffold for now:
+        if (p.chosen && p.chosen.id) {
+          myUpgrades.push({
+            id: p.chosen.id,
+            name: p.chosen.name || p.chosen.id,
+            kind: p.chosen.kind || "",
+            hotkey: null,
+            desc: p.chosen.desc || ""
+          });
+        } else {
+          myUpgrades.push({ id: "picked", name: "NEW", kind: "", hotkey: null, desc: "" });
+        }
+
+        renderUpgradeBar();
+
+        // Close drop picker if it was open
+        closeDropPicker();
+
         setTimeout(closeUpgradeOffer, 450);
       } else {
         el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
@@ -801,38 +936,29 @@
       }
     });
 
-    // NEW: bar from snapshot
     function renderUpgradeBar() {
-      const slots = 6;
-
-      const permanent = Array.isArray(meUpgrades?.permanent) ? meUpgrades.permanent : [];
-      const nonperm = Array.isArray(meUpgrades?.slots) ? meUpgrades.slots : [];
-
-      // Fill order: permanents first, then non-perm slots
-      const items = [];
-      for (const id of permanent) items.push({ id, kind: "permanent" });
-      for (const s of nonperm) items.push({ id: s?.id, kind: "consumable", usesLeft: s?.usesLeft });
+      const slots = 6; // visual slots (rules later)
 
       el.upgradeSlots.innerHTML = "";
       for (let i = 0; i < slots; i++) {
-        const u = items[i];
+        const u = myUpgrades[i];
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
+        slot.title = u?.desc ? u.desc : ""; // hover tooltip on carried upgrades
+
+        if (u?.hotkey != null) {
+          const hk = document.createElement("div");
+          hk.className = "uHotkey";
+          hk.textContent = String(u.hotkey);
+          slot.appendChild(hk);
+        }
 
         const txt = document.createElement("div");
         txt.className = "uTxt";
-
-        if (u && u.id) {
-          const base = shortName(u.id);
-          txt.textContent = u.kind === "consumable" && Number.isFinite(u.usesLeft)
-            ? `${base}\n${u.usesLeft}`
-            : base;
-        } else {
-          txt.textContent = "";
-        }
-
+        txt.textContent = u ? shortName(u.name) : "";
         slot.appendChild(txt);
+
         el.upgradeSlots.appendChild(slot);
       }
     }
@@ -841,7 +967,7 @@
       const s = String(name || "").trim();
       if (!s) return "";
       if (s.length <= 6) return s;
-      const parts = s.split(/[_\s]+/);
+      const parts = s.split(/\s+/);
       if (parts.length >= 2) return (parts[0].slice(0,3) + parts[1].slice(0,3));
       return s.slice(0,6);
     }
