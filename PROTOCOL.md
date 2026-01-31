@@ -22,47 +22,84 @@ A silly top-down multiplayer game for practicing times tables.
 
 ---
 
-## 2) Current rules (must be enforced)
+## 2) Core gameplay rules (must be enforced)
 ### Machines + progression
-- Machine interaction key: E (near machine)
+- Machine interaction key: **E** (near machine)
 - Each player has their own progression:
-  - `nextMachineNum` starts at 1
-  - Can only interact with machine `nextMachineNum`
+  - `nextMachineNum` starts at **1**
+  - Player may only interact with machine `nextMachineNum`
   - On correct answer:
     - machine is marked cleared for that player
-    - `nextMachineNum` increments up to 10
+    - `nextMachineNum` increments up to **10**
   - On wrong order:
-    - interaction denied + "No access" bubble message to player
+    - interaction denied
+    - client shows a speech bubble message
 
 ### Timetable prompt
 - Host chooses `tableBase` (1–10)
-- If base is 4 and player interacts with machine 6:
-  - prompt is `4 × 6`
-  - correct answer is 24
+- Example:
+  - base = 4
+  - machine = 6
+  - prompt: `4 × 6`
+  - correct answer = `24`
 
 ---
 
-## 3) Economy rules (current)
+## 3) Economy rules (current, implemented)
 ### Money
 - Start money per player: **100**
 - Wrong answer penalty: **-100**
-- Money cannot go below **0** (floor at 0)
+- Money floor: **0** (cannot go negative)
 
-### Money pickups (roads/spaces only)
+### Money pickups
 - After a correct answer:
-  - spawn money pickup(s) **on roads/spaces**
-  - pickups must NOT spawn inside rooms or inside walls
-- Pickups are collected automatically when a player is close enough
-- Pickups have a TTL (despawn after time)
-
-### Upgrade cost (later)
-- Using a non-permanent upgrade costs money (default planned: 100)
-- Permanent upgrades cost TBD
-- A player can hold at most 3 non-permanent upgrades (includes "nose") (later)
+  - server spawns money pickup(s)
+- Pickups:
+  - must spawn **only on roads/spaces**
+  - must NOT spawn inside:
+    - rooms
+    - walls
+- Pickups:
+  - are collected automatically when player is close enough
+  - increase player money by a fixed amount
+  - despawn after TTL if not collected
+- Pickups are removed:
+  - when collected
+  - or when TTL expires
+  - NOT over time otherwise
 
 ---
 
-## 4) Respawn rules (later)
+## 4) Upgrade system (partially implemented)
+### Upgrade categories
+- **Permanent upgrades**
+  - unlimited
+  - stackable
+- **Consumable / non-permanent upgrades**
+  - stored in slots
+  - limited capacity
+
+### Slot rules
+- Max consumable slots: **3**
+- If player tries to take a new consumable while full:
+  - player is warned
+  - player must choose one existing consumable to drop
+  - only then can the new upgrade be taken
+
+### Upgrade offers
+- After each correct answer:
+  - server offers **all upgrades**
+- Client displays upgrades in a grid
+- Hovering an upgrade shows its description
+- Picking an upgrade:
+  - permanent → added immediately
+  - consumable:
+    - added if space
+    - otherwise triggers drop-selection flow
+
+---
+
+## 5) Respawn rules (later)
 - Players start with 1 life
 - When killed:
   - respawn at last correctly answered machine
@@ -70,50 +107,56 @@ A silly top-down multiplayer game for practicing times tables.
 
 ---
 
-## 5) Fog of war (later)
-- Players see a cone in front of them
-- Cone width and distance are upgradeable
-- Fade from visible to black at edges
+## 6) Fog of war (later)
+- Vision cone in facing direction
+- Cone width + length upgradeable
+- Smooth fade at edges
 
 ---
 
-## 6) Repo structure (target)
-This is the intended structure; we implement gradually.
+## 7) Repo structure (target / mostly achieved)
 
 timetable-clowns/
+- PROTOCOL.md
+- STATE_OF_THE_GAME.md
 - server/
   - index.js                     # express + socket.io + game loop
   - economy.js                   # money spawns + pickups
+  - upgrades/
+    - definitions.js             # upgrade data
+    - apply.js                   # rules for taking/dropping upgrades
   - shared/
-    - constants.js               # balance: costs, limits, amounts
+    - constants.js               # balance numbers
   - maps/
     - index.js                   # map registry + buildDerived()
     - map01.js                   # map data (rooms, walls, roadAreas)
 - client/
-  - index.html                   # UI + canvas rendering + prompt overlay + HUD
+  - index.html                   # UI + canvas rendering + HUD + overlays
 
 ---
 
-## 7) IMPORTANT implementation constraints
-- **One thing at a time**.
-- **No refactors unless explicitly requested.**
-- Keep changes minimal and beginner-safe.
-- Always specify **exact file path** when telling what to edit.
-- Prefer data-driven balance via `server/shared/constants.js`.
+## 8) IMPORTANT implementation constraints
+- **One thing at a time**
+- **No refactors unless explicitly requested**
+- Keep changes minimal and beginner-safe
+- Always specify **exact file paths**
+- Prefer balance via `server/shared/constants.js`
 
 ---
 
-## 8) Networking protocol (Socket.IO events)
+## 9) Networking protocol (Socket.IO)
 
 ### Client → Server
 - `hello` { name }
 - `createGame` { tableBase, teamCount, inputMode, mapChoice }
 - `joinGame` { gameCode }
-- `assignTeam` { playerId, teamId }  (host only)
-- `startGame`                         (host only)
+- `assignTeam` { playerId, teamId }
+- `startGame`
 - `input` { up, down, left, right }
 - `tryInteract`
 - `submitAnswer` { promptId, answer }
+- `chooseUpgrade` { offerId, upgradeId }
+- `chooseUpgradeReplace` { offerId, upgradeId, dropId }
 
 ### Server → Client
 - `WELCOME` { playerId }
@@ -126,16 +169,17 @@ timetable-clowns/
 - `STATE_SNAPSHOT` { time, world, pickups, players }
 - `MATH_PROMPT` { promptId, base, machineNum }
 - `ANSWER_RESULT` { ok, correct? }
-- `INTERACT_DENIED` { reason:"wrong_order", nextMachineNum, tried }
+- `INTERACT_DENIED` { reason, nextMachineNum, tried }
+- `UPGRADE_OFFER` { offerId, options }
+- `UPGRADE_RESULT` { ok, chosen?, upgrades?, dropped? }
 - `GAME_ENDED` { reason }
 
 ---
 
-## 9) Definition of “roads/spaces”
-“Roads/spaces” are the corridors outside rooms.
-We model them using `roadAreas: [{x,y,w,h}, ...]` on the map data.
+## 10) Definition of “roads/spaces”
+- Roads/spaces = corridors outside rooms
+- Defined via `roadAreas: [{x,y,w,h}]` in map data
 
 IMPORTANT:
-- `maps/index.js` uses `structuredClone`, so **functions in map files do not survive**
-- Therefore runtime helpers like `map.isRoad(x,y)` must be attached in `buildDerived()`.
-
+- `structuredClone()` removes functions
+- Runtime helpers (e.g. `map.isRoad(x,y)`) **must be attached in `buildDerived()`**
