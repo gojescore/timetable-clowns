@@ -1292,15 +1292,17 @@ function fillConeStripFromDiameter(ctx2, px, py, baseAng, halfAng, maxLen, circl
 
       // (B) cone strip starts at circle boundary
       const innerR = Math.max(0, CIRCLE_LOS_RADIUS);
-      const okCone = fillConeStrip(
-        visCtx,
-        meX, meY,
-        ang, half,
-        VISION_LEN,
-        innerR,
-        segs,
-        cornerAngles
-      );
+const okCone = fillConeStripFromDiameter(
+  visCtx,
+  meX, meY,
+  ang, half,
+  VISION_LEN,
+  CIRCLE_LOS_RADIUS,
+  CONE_START_OVERLAP,
+  segs,
+  cornerAngles
+);
+
 
       // Safety: guarantee a tiny visible dot
       if (!okCone) {
