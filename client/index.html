@@ -1036,28 +1036,29 @@
       return s.slice(0,6);
     }
 
-    // ===== Fog-of-war =====
+    // ---------- Rendering ----------
+    const canvas = el.canvas;
+    const ctx = canvas.getContext("2d", { alpha: true });
+
+    // ===== Fog-of-war with LOS (raycast) =====
     const FOG_ENABLED = true;
-    const FOG_ALPHA = 0.96;     // darkness of fog outside vision
+    const FOG_ALPHA = 0.96;
 
-    const VISION_LEN = 360;     // cone length
-    const VISION_ANGLE_DEG = 92;// cone width
-    const NEAR_RADIUS = 70;     // small full-vision circle around player
+    const VISION_LEN = 360;
+    const VISION_ANGLE_DEG = 92;
+    const NEAR_RADIUS = 70;
 
-    // Feather = small degrees on each side that fade to fog
     const FEATHER_DEG = 12;
     const FEATHER_LEN = 40;
     const FEATHER_STEPS = 6;
     const FEATHER_MAX_REMOVE = 0.55;
 
-    function renderConePath(ctx, cx, cy, len, ang, halfAngle){
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, len, ang - halfAngle, ang + halfAngle);
-      ctx.closePath();
-    }
+    // LOS quality knobs
+    const RAY_COUNT = 110;          // base rays across cone
+    const CORNER_EPS = 0.0007;      // radians
+    const MAX_RAY_LEN = 2000;       // safety cap (bigger than any VISION_LEN+FEATHER)
 
-    // --- Offscreen fog layer (prevents "colored cone" problem) ---
+    // Offscreen fog layer (prevents "colored cone" problem)
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
@@ -1068,73 +1069,220 @@
       }
     }
 
-    function renderFogOfWar(mainCtx, mePx, mePy, dirX, dirY, w, h) {
-      if (!FOG_ENABLED) return;
+    function normalizeAngle(a){
+      // -> (-PI, PI]
+      while (a <= -Math.PI) a += Math.PI * 2;
+      while (a > Math.PI) a -= Math.PI * 2;
+      return a;
+    }
 
+    function angleDelta(a, b){
+      // smallest signed delta from a to b
+      return normalizeAngle(b - a);
+    }
+
+    function isAngleWithinCone(centerAng, testAng, halfAng){
+      return Math.abs(angleDelta(centerAng, testAng)) <= halfAng + 1e-12;
+    }
+
+    // Ray (P + t*D) intersect Segment (A + u*(B-A)), return {t, x, y} or null
+    function raySegmentIntersect(px, py, dx, dy, ax, ay, bx, by){
+      const rx = dx, ry = dy;
+      const sx = bx - ax, sy = by - ay;
+
+      const rxs = (rx * sy) - (ry * sx);
+      if (Math.abs(rxs) < 1e-9) return null; // parallel
+
+      const qpx = ax - px;
+      const qpy = ay - py;
+
+      const t = (qpx * sy - qpy * sx) / rxs;
+      const u = (qpx * ry - qpy * rx) / rxs;
+
+      if (t >= 0 && u >= 0 && u <= 1) {
+        return { t, x: px + t * rx, y: py + t * ry };
+      }
+      return null;
+    }
+
+    function getWallSegments(walls){
+      // Build segments each call (simple + safe). Walls count is small.
+      const segs = [];
+      if (!Array.isArray(walls)) return segs;
+
+      for (const w of walls) {
+        const x1 = w.x, y1 = w.y;
+        const x2 = w.x + w.w, y2 = w.y + w.h;
+
+        // 4 edges
+        segs.push({ ax:x1, ay:y1, bx:x2, by:y1 });
+        segs.push({ ax:x2, ay:y1, bx:x2, by:y2 });
+        segs.push({ ax:x2, ay:y2, bx:x1, by:y2 });
+        segs.push({ ax:x1, ay:y2, bx:x1, by:y1 });
+      }
+      return segs;
+    }
+
+    function getWallCorners(walls){
+      const pts = [];
+      if (!Array.isArray(walls)) return pts;
+      for (const w of walls) {
+        const x1 = w.x, y1 = w.y;
+        const x2 = w.x + w.w, y2 = w.y + w.h;
+        pts.push({x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2});
+      }
+      return pts;
+    }
+
+    function castRayToWalls(px, py, ang, maxLen, segs){
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+
+      let bestT = maxLen;
+      let bestX = px + dx * maxLen;
+      let bestY = py + dy * maxLen;
+
+      const hardCap = Math.min(MAX_RAY_LEN, maxLen);
+      bestT = hardCap;
+      bestX = px + dx * hardCap;
+      bestY = py + dy * hardCap;
+
+      for (const s of segs) {
+        const hit = raySegmentIntersect(px, py, dx, dy, s.ax, s.ay, s.bx, s.by);
+        if (!hit) continue;
+        if (hit.t < 0) continue;
+        if (hit.t < bestT) {
+          bestT = hit.t;
+          bestX = hit.x;
+          bestY = hit.y;
+        }
+      }
+
+      // clamp to desired maxLen (in case hardCap differed)
+      if (bestT > maxLen) {
+        bestX = px + dx * maxLen;
+        bestY = py + dy * maxLen;
+      }
+      return { x: bestX, y: bestY };
+    }
+
+    function buildVisibilityPolygonWorld(px, py, centerAng, halfAng, maxLen, walls){
+      const segs = getWallSegments(walls);
+      const corners = getWallCorners(walls);
+
+      // 1) base evenly spaced angles
+      const angles = [];
+      const start = centerAng - halfAng;
+      const end = centerAng + halfAng;
+
+      for (let i = 0; i <= RAY_COUNT; i++) {
+        const t = i / RAY_COUNT;
+        angles.push(start + (end - start) * t);
+      }
+
+      // 2) add corner angles (+/- eps) to hug corners and avoid leaks
+      for (const c of corners) {
+        const a = Math.atan2(c.y - py, c.x - px);
+        if (!isAngleWithinCone(centerAng, a, halfAng)) continue;
+        angles.push(a - CORNER_EPS);
+        angles.push(a);
+        angles.push(a + CORNER_EPS);
+      }
+
+      // 3) sort + de-dupe lightly (rounded key)
+      angles.sort((a,b)=>a-b);
+      const uniq = [];
+      let lastKey = null;
+      for (const a of angles) {
+        const k = Math.round(a * 1000000); // 1e-6 rad bins
+        if (k === lastKey) continue;
+        lastKey = k;
+        uniq.push(a);
+      }
+
+      // 4) cast rays
+      const pts = [];
+      for (const a of uniq) {
+        const p = castRayToWalls(px, py, a, maxLen, segs);
+        pts.push({ a, x: p.x, y: p.y });
+      }
+      return pts;
+    }
+
+    function drawVisibilityPolyCutout(fctx, ptsWorld, camX, camY){
+      if (!ptsWorld || ptsWorld.length < 3) return;
+      fctx.beginPath();
+      fctx.moveTo(ptsWorld[0].x - camX, ptsWorld[0].y - camY);
+      for (let i = 1; i < ptsWorld.length; i++) {
+        fctx.lineTo(ptsWorld[i].x - camX, ptsWorld[i].y - camY);
+      }
+      fctx.closePath();
+      fctx.fill();
+    }
+
+    function renderFogOfWar(mainCtx, meWorldX, meWorldY, dirX, dirY, camX, camY, w, h) {
+      if (!FOG_ENABLED) return;
       ensureFogSize();
 
       const ctx = fogCtx;
       ctx.save();
       ctx.clearRect(0, 0, w, h);
 
-      const dx = (typeof dirX === "number") ? dirX : 0;
-      const dy = (typeof dirY === "number") ? dirY : 0;
-      const hasDir = (dx*dx + dy*dy) > 0.0001;
-
-      const ang = hasDir ? Math.atan2(dy, dx) : 0;
-      const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
-
-      // 1) Draw fog on fog-layer
+      // Fog fill
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
       ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       ctx.fillRect(0, 0, w, h);
 
-      // 2) Punch out visibility on fog-layer
+      // Cutout
       ctx.globalCompositeOperation = "destination-out";
       ctx.fillStyle = "rgba(0,0,0,1)";
       ctx.globalAlpha = 1;
 
-      // near bubble (fully transparent)
+      const dx = (typeof dirX === "number") ? dirX : 0;
+      const dy = (typeof dirY === "number") ? dirY : 0;
+      const hasDir = (dx*dx + dy*dy) > 0.0001;
+      const centerAng = hasDir ? Math.atan2(dy, dx) : 0;
+
+      // Note: build in WORLD coordinates, then draw cutout in SCREEN via (world - cam)
+      const halfBase = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
+
+      // Near bubble (screen coords)
       if (NEAR_RADIUS > 0) {
         ctx.beginPath();
-        ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
+        ctx.arc(meWorldX - camX, meWorldY - camY, NEAR_RADIUS, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // main cone (fully transparent)
-      renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
-      ctx.fill();
+      // Main LOS polygon (fully clear)
+      const walls = mapData?.walls || [];
+      const mainPoly = buildVisibilityPolygonWorld(meWorldX, meWorldY, centerAng, halfBase, VISION_LEN, walls);
+      drawVisibilityPolyCutout(ctx, mainPoly, camX, camY);
 
-      // feather (partial transparency)
+      // Feather rings (partial clear)
       for (let i = 1; i <= FEATHER_STEPS; i++) {
         const t = i / FEATHER_STEPS;
         const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
-        const len = VISION_LEN + FEATHER_LEN * t;
+        const maxLen = VISION_LEN + FEATHER_LEN * t;
 
         const remove = FEATHER_MAX_REMOVE * (1 - t);
         if (remove <= 0.001) continue;
 
         ctx.globalAlpha = remove;
-        renderConePath(ctx, mePx, mePy, len, ang, half + extraHalf);
-        ctx.fill();
+
+        const poly = buildVisibilityPolygonWorld(meWorldX, meWorldY, centerAng, halfBase + extraHalf, maxLen, walls);
+        drawVisibilityPolyCutout(ctx, poly, camX, camY);
       }
 
       ctx.restore();
 
-      // 3) Draw fog-layer on top of world
+      // Draw fog layer on top of world
       mainCtx.save();
       mainCtx.globalCompositeOperation = "source-over";
       mainCtx.globalAlpha = 1;
       mainCtx.drawImage(fogCanvas, 0, 0);
       mainCtx.restore();
     }
-
-    // ---------- Rendering ----------
-    const canvas = el.canvas;
-
-    // alpha enabled is fine, but fog is now separate anyway
-    const ctx = canvas.getContext("2d", { alpha: true });
 
     function drawWalls(camX, camY){
       if (!mapData?.walls) return;
@@ -1298,13 +1446,11 @@
 
       if (me) drawSpeechBubble(me.x, me.y, camX, camY);
 
-      // Fog LAST (must hide everything)
+      // Fog LAST (now LOS-blocked by walls)
       if (me) {
-        const mePx = me.x - camX;
-        const mePy = me.y - camY;
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
-        renderFogOfWar(ctx, mePx, mePy, dirX, dirY, canvas.width, canvas.height);
+        renderFogOfWar(ctx, me.x, me.y, dirX, dirY, camX, camY, canvas.width, canvas.height);
       }
     }
 
