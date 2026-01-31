@@ -364,7 +364,6 @@
       <h2>Game started 🎉</h2>
       <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
 
-      <!-- HUD -->
       <div class="hudRow" id="hudRow">
         <div class="hudLeft">
           <span class="hudPill" title="You">
@@ -385,7 +384,6 @@
 
       <canvas id="game" width="900" height="520"></canvas>
 
-      <!-- Bottom upgrade bar -->
       <div class="upgradeBar" id="upgradeBar">
         <div class="upgradeSlots" id="upgradeSlots"></div>
         <div class="uLegend">
@@ -396,7 +394,6 @@
     </div>
   </div>
 
-  <!-- Prompt overlay -->
   <div class="overlay" id="overlay">
     <div class="modal">
       <h3>Machine</h3>
@@ -410,14 +407,11 @@
     </div>
   </div>
 
-  <!-- Upgrade overlay -->
   <div class="overlay" id="upgradeOverlay">
     <div class="modal">
       <h3>Choose an upgrade</h3>
       <p class="muted" style="margin:.2em 0 .6em">Pick one. (Effects come later.)</p>
-
       <div id="upgradeList"></div>
-
       <div class="actions">
         <button id="upgradeCloseBtn">Close</button>
       </div>
@@ -425,16 +419,13 @@
     </div>
   </div>
 
-  <!-- Drop overlay -->
   <div class="overlay" id="dropOverlay">
     <div class="modal">
       <h3>Backpack full</h3>
       <p class="muted" id="dropText" style="margin:.2em 0 .6em">
         You can only carry 3 consumable upgrades. Choose one to drop.
       </p>
-
       <div id="dropList" class="dropList"></div>
-
       <div class="actions">
         <button id="dropCancelBtn">Cancel</button>
       </div>
@@ -997,8 +988,9 @@
 
     // ============================================================
     // Fog-of-war + LOS (CONE ONLY)
-    // - Cone mask is white on visCanvas.
-    // - Final fog uses destination-out with partial alpha = see-through.
+    // - Outside cone: fog
+    // - Inside cone: TOTALLY CLEAR (full punch-out)
+    // - Stops at walls (raycasts)
     // ============================================================
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
@@ -1006,10 +998,7 @@
     const VISION_LEN = 360;
     const CONE_ANGLE_DEG = 92;
 
-    // See-through strength
-    const CONE_SEETHROUGH = 1.0; // 0..1 (1 = fully clear)
-
-    // Soft edge
+    // Soft edge (optional)
     const EDGE_BLUR_PX = 15;
     const EDGE_STRENGTH = 0.85;
 
@@ -1138,6 +1127,7 @@
       return angles;
     }
 
+    // Cone polygon with apex at player (cone only, no circle)
     function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
 
@@ -1149,7 +1139,7 @@
       if (outer.length < 2) return false;
 
       ctx2.beginPath();
-      ctx2.moveTo(px, py); // apex at player
+      ctx2.moveTo(px, py);
       for (const p of outer) ctx2.lineTo(p.x, p.y);
       ctx2.closePath();
       ctx2.fill();
@@ -1167,7 +1157,7 @@
       const meX = meWorldX - camX;
       const meY = meWorldY - camY;
 
-      // Build wall segments in SCREEN SPACE
+      // Wall segs in SCREEN space
       const worldWalls = mapData?.walls || [];
       const segsWorld = segsFromWalls(worldWalls);
       const segs = segsWorld.map(s => ({
@@ -1175,18 +1165,19 @@
         bx: s.bx - camX, by: s.by - camY
       }));
 
+      // Facing
       const dx = (typeof dirX === "number") ? dirX : 0;
       const dy = (typeof dirY === "number") ? dirY : 0;
-
       const hasDir = (dx*dx + dy*dy) > 0.0001;
       if (hasDir) lastFacingAng = Math.atan2(dy, dx);
 
       const ang = lastFacingAng;
       const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
 
+      // IMPORTANT: corner angles must be computed in WORLD space (you already did that)
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // 1) HARD visibility mask (white = visible region)
+      // 1) Build visibility mask (white = visible)
       visCtx.save();
       visCtx.globalCompositeOperation = "source-over";
       visCtx.globalAlpha = 1;
@@ -1196,25 +1187,24 @@
       visCtx.fillStyle = "rgba(0,0,0,1)";
       visCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
-      // white cone
+      // visible area
       visCtx.fillStyle = "rgba(255,255,255,1)";
-      const okCone = fillConeFromPlayerApex(
-        visCtx,
-        meX, meY,
-        ang, half,
-        VISION_LEN,
-        segs,
-        cornerAngles
-      );
+      const okCone = fillConeFromPlayerApex(visCtx, meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
 
-      // Safety: guarantee a tiny visible dot
-      visCtx.beginPath();
-      visCtx.arc(meX, meY, okCone ? 3 : 55, 0, Math.PI*2);
-      visCtx.fill();
+      // Safety: always at least a tiny visible dot
+      if (!okCone) {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 40, 0, Math.PI*2);
+        visCtx.fill();
+      } else {
+        visCtx.beginPath();
+        visCtx.arc(meX, meY, 2, 0, Math.PI*2);
+        visCtx.fill();
+      }
 
       visCtx.restore();
 
-      // 2) EDGE ring = blur(vis) - vis (only border gets gradient)
+      // 2) Edge ring (optional pretty border)
       blurCtx.save();
       blurCtx.globalCompositeOperation = "source-over";
       blurCtx.globalAlpha = 1;
@@ -1233,29 +1223,22 @@
       edgeCtx.drawImage(visCanvas, 0, 0);
       edgeCtx.restore();
 
-      // 3) Final fog: draw full fog, then remove fog partially where the cone is
+      // 3) Final fog: fill fog, then CUT OUT the visible cone COMPLETELY
       fogCtx.save();
       fogCtx.globalCompositeOperation = "source-over";
       fogCtx.globalAlpha = 1;
       fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
-      // full fog
       fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
-      // OPTIONAL: fully clear a small area around the player (nice feel)
+      // FULL CLEAR inside cone
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.globalAlpha = 1;
-      fogCtx.beginPath();
-      fogCtx.arc(meX, meY, 18, 0, Math.PI * 2);
-      fogCtx.fill();
-
-      // See-through cone: remove only part of the fog
-      fogCtx.globalAlpha = CONE_SEETHROUGH;
       fogCtx.drawImage(visCanvas, 0, 0);
 
-      // Edge ring (scaled to match cone strength)
-      fogCtx.globalAlpha = EDGE_STRENGTH * CONE_SEETHROUGH;
+      // Soft edge only (still subtracts fog, does NOT darken cone)
+      fogCtx.globalAlpha = EDGE_STRENGTH;
       fogCtx.drawImage(edgeCanvas, 0, 0);
 
       fogCtx.restore();
@@ -1405,7 +1388,7 @@
       const camXraw = me ? (me.x - canvas.width / 2) : 0;
       const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
-      // IMPORTANT: round to whole pixels to prevent fog seams/lines
+      // Round to prevent fog seams
       const camX = Math.round(Math.max(0, Math.min(world.w - canvas.width, camXraw)));
       const camY = Math.round(Math.max(0, Math.min(world.h - canvas.height, camYraw)));
 
