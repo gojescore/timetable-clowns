@@ -1157,6 +1157,64 @@
       return true;
     }
 
+    // Intersect ray with the "diameter line" (a chord) through the circle.
+// The diameter line is perpendicular to facing direction and passes through player (circle center).
+// Line equation: (X - C)·F = 0, where F is facing unit vector.
+function innerT_onDiameter(px, py, rx, ry, cx, cy, fx, fy) {
+  const denom = (rx*fx + ry*fy);
+  if (Math.abs(denom) < 1e-9) return null; // ray parallel to diameter line
+  const num = ((cx - px)*fx + (cy - py)*fy);
+  return num / denom;
+}
+
+// Cone strip where inner edge is on the diameter chord (not the circle perimeter).
+function fillConeStripFromDiameter(ctx2, px, py, baseAng, halfAng, maxLen, circleR, overlapPx, segs, extraAngles) {
+  const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
+
+  // facing unit vector
+  const fx = Math.cos(baseAng);
+  const fy = Math.sin(baseAng);
+
+  const outer = [];
+  const inner = [];
+
+  for (const a of angles) {
+    const hit = castRayToWalls(px, py, a, maxLen, segs);
+    outer.push({ x: hit.x, y: hit.y });
+
+    const rx = hit.rx, ry = hit.ry;
+
+    // t where ray hits the diameter line
+    let tInner = innerT_onDiameter(px, py, rx, ry, px, py, fx, fy);
+
+    // clamp inside circle, and allow overlap (start slightly inside circle)
+    const maxInner = Math.max(0, circleR - overlapPx);
+
+    if (tInner === null || tInner < 0) {
+      tInner = maxInner;
+    } else {
+      tInner = Math.min(tInner, maxInner);
+    }
+
+    // if wall is closer, start at wall to avoid weird backfill
+    tInner = Math.min(tInner, hit.t);
+
+    inner.push({ x: px + rx * tInner, y: py + ry * tInner });
+  }
+
+  if (outer.length < 3) return false;
+
+  ctx2.beginPath();
+  ctx2.moveTo(outer[0].x, outer[0].y);
+  for (let i = 1; i < outer.length; i++) ctx2.lineTo(outer[i].x, outer[i].y);
+  for (let i = inner.length - 1; i >= 0; i--) ctx2.lineTo(inner[i].x, inner[i].y);
+  ctx2.closePath();
+  ctx2.fill();
+  return true;
+}
+
+
+    
     // Cone strip: outer boundary at ray hits, inner boundary at circle radius (or wall if closer than circle)
     function fillConeStrip(ctx2, px, py, baseAng, halfAng, maxLen, innerRadius, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
