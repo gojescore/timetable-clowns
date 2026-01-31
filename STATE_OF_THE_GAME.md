@@ -3,20 +3,24 @@
 When starting a NEW chat thread, paste:
 1) this file (STATE_OF_THE_GAME.md)
 2) PROTOCOL.md
-3) the one file we are editing right now
+3) the file currently being edited
 
 ---
 
 ## Current folder structure (actual)
+
 timetable-clowns/
-- PROTOCOL.md                    (created now)
-- STATE_OF_THE_GAME.md           (created now)
+- PROTOCOL.md
+- STATE_OF_THE_GAME.md
 - server/
   - index.js
   - package.json
-  - economy.js                   (added)
+  - economy.js
+  - upgrades/
+    - definitions.js
+    - apply.js
   - shared/
-    - constants.js               (added)
+    - constants.js
   - maps/
     - index.js
     - map01.js
@@ -26,113 +30,113 @@ timetable-clowns/
 ---
 
 ## What works right now (implemented)
+
 ### Lobby / multiplayer
-- Host / guest
-- Game code join
+- Host / guest flow
+- Join via game code
 - Host assigns teams
-- Start game works (requires >= 2 players and all have teamId)
+- Game start validation:
+  - >= 2 players
+  - all players have teamId
 
 ### Map
-- map01: 10 rooms, each room has >= 2 openings
-- server/maps/index.js creates derived walls from room openings (perimeter walls with gaps)
-- machines are flattened to `map.machines`
+- `map01` with:
+  - 10 rooms
+  - each room has ≥ 2 openings
+- `maps/index.js`:
+  - builds perimeter walls with gaps
+  - flattens machines to `map.machines`
+  - attaches runtime helpers (`isRoad`)
 
 ### Movement + collisions
-- Server-authoritative movement with tick loop
-- Collides with walls and machines (AABB)
-- Client renders world + players + walls + machines
+- Server-authoritative tick loop
+- Axis-normalized movement
+- Collision with:
+  - walls
+  - machines
+- Client renders:
+  - world
+  - walls
+  - players
+  - machines
 
 ### Machine interaction (ordered)
-- Press E near machine to open prompt
-- Must do machine numbers in order (nextMachineNum)
-- Wrong order emits INTERACT_DENIED (client shows speech bubble)
+- Press **E** near machine
+- Must interact in numeric order
+- Wrong order:
+  - server emits `INTERACT_DENIED`
+  - client shows speech bubble
 
 ### Times-table prompt
-- Server sends MATH_PROMPT { base, machineNum }
-- Client shows overlay and submits answer
-
-### Economy (money + pickups) ✅
-Server:
-- Each player starts with money=100
-- Wrong answer: -100 money (floor 0)
-- Correct answer: spawns money pickup(s) on roads/spaces only
-- Server collects pickups when player close enough
-- Snapshot includes `pickups` and each player’s `money`
-
-Client:
-- HUD shows YOUR money
-- Pickups are rendered as small green rectangles with `$` inside
+- Server sends `MATH_PROMPT`
+- Client shows modal
+- Answer validated server-side
 
 ---
 
-## Key files and what they do
-### server/index.js
-- game creation/join
-- tick loop movement
-- machine prompt flow
-- hooks into economy:
-  - on correct -> economy.awardCorrectAnswer()
-  - on wrong -> economy.penalizeWrongAnswer()
-  - each tick -> economy.tryCollectPickups()
-- includes pickups + money in STATE_SNAPSHOT
+## Economy (fully implemented) ✅
+### Server
+- Start money: **100**
+- Wrong answer: **-100** (floored at 0)
+- Correct answer:
+  - spawns money pickups
+- Pickups:
+  - spawn only on roads
+  - never inside rooms or walls
+  - collected by proximity
+  - removed on collect or TTL expiry
 
-### server/economy.js
-- spawn pickups on roads (using derived map.isRoad)
-- pickup TTL cleanup
-- pickup collection
+### Client
+- HUD shows **your money**
+- Pickups rendered as green `$` rectangles (2× size)
 
-### server/shared/constants.js
-- tweakable numbers:
-  - start money
-  - penalty amount
-  - pickup amount
-  - pickup radius
-  - pickup TTL
-  - spawn tries
+---
 
-### server/maps/map01.js
-- map data: rooms, walls, spawns
-- roadAreas (rectangles representing corridors)
+## Upgrade system (implemented scaffold) ✅
+### Server
+- Upgrade definitions exist
+- After correct answer:
+  - server sends `UPGRADE_OFFER`
+- Rules:
+  - unlimited permanent upgrades
+  - max **3** consumable upgrades
+  - full slots trigger replace flow
+- Replace flow:
+  - server sends list of carried upgrades
+  - client chooses which to drop
+  - server applies replacement
 
-### server/maps/index.js
-- builds derived map using structuredClone + room walls
-- IMPORTANT: adds `derived.isRoad(x,y)` at runtime (functions in map files don’t survive clone)
-
-### client/index.html
-- start/lobby/running screens
-- canvas renderer
-- prompt overlay UI
-- HUD (money)
-- draws pickups (green rectangle with `$`)
+### Client
+- Upgrade grid overlay
+- Hover shows description
+- Bottom upgrade bar
+- Drop-selection overlay when full
 
 ---
 
 ## Known constraints / gotchas
-- structuredClone() removes functions from map objects.
-  - Therefore map helpers must be attached in buildDerived().
-
-- Client currently renders machines from GAME_STARTED payload (mapData).
-  - Pickups come from STATE_SNAPSHOT (lastSnapshot.pickups).
-
----
-
-## Next ONE task (selected)
-Money system is implemented. Next task should be ONE of:
-- Upgrade system scaffold (definitions + server state + UI selection stub)
-- HUD expansion (life + upgrade bar placeholders)
-- Combat/shooting scaffold (server bullets + client render)
-- Fog-of-war cone rendering (client-only first)
-
-(Choose ONE per iteration.)
+- `structuredClone()` removes functions
+- All map helpers must be re-attached at runtime
+- Client uses:
+  - map data from `GAME_STARTED`
+  - pickups + players from `STATE_SNAPSHOT`
 
 ---
 
-## How to quickly verify everything
-1) Run server
-2) Open two browser tabs
-3) Host game in tab1, guest joins in tab2
-4) Assign teams, start game
-5) Move to machine 1, press E, answer correctly
-6) Green `$` pickup should appear on road and be collectible
-7) Money should increase in HUD when collected
-8) Wrong answer should reduce money by 100 (floored at 0)
+## Current visual placeholders
+- Players = rectangles
+- Machines = yellow squares
+- Pickups = green `$`
+- Upgrade icons = text only
+
+(Images / sprites are planned **later**, after gameplay locks.)
+
+---
+
+## Next ONE task (to choose)
+- Sprite / image system (players, machines, pickups)
+- Combat/shooting scaffold
+- Fog-of-war cone rendering
+- Life + respawn logic
+
+⚠️ Rule: **only one system per iteration**
