@@ -184,6 +184,14 @@
       left:6px;
       font-size:11px;
       font-weight:900;
+      opacity:.85;
+    }
+    .uSlot .uUses{
+      position:absolute;
+      bottom:4px;
+      right:6px;
+      font-size:11px;
+      font-weight:900;
       opacity:.8;
     }
     .uLegend{
@@ -281,7 +289,7 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E).</p>
+    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables).</p>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -382,7 +390,7 @@
         <div class="upgradeSlots" id="upgradeSlots"></div>
         <div class="uLegend">
           <span>Upgrades</span>
-          <span class="muted">Hotkeys (later): 8 / 9 / 0</span>
+          <span class="muted">Use consumables: 8 / 9 / 0</span>
         </div>
       </div>
     </div>
@@ -417,7 +425,7 @@
     </div>
   </div>
 
-  <!-- Drop overlay (NEW) -->
+  <!-- Drop overlay -->
   <div class="overlay" id="dropOverlay">
     <div class="modal">
       <h3>Backpack full</h3>
@@ -484,7 +492,7 @@
       upgradeCloseBtn: document.getElementById("upgradeCloseBtn"),
       upgradeMsg: document.getElementById("upgradeMsg"),
 
-      // drop (NEW)
+      // drop
       dropOverlay: document.getElementById("dropOverlay"),
       dropList: document.getElementById("dropList"),
       dropCancelBtn: document.getElementById("dropCancelBtn"),
@@ -506,10 +514,10 @@
     // upgrade offer state
     let activeOfferId = null;
 
-    // NEW: when slots are full, remember what we tried to pick
-    let pendingReplace = null; // { offerId, upgradeId, requestedInfo, slotsPayload }
+    // when slots are full, remember what we tried to pick
+    let pendingReplace = null;
 
-    // ✅ Server-truth upgrades for rendering
+    // server-truth upgrades for rendering
     let myServerUpgrades = { permanent: [], slots: [] };
 
     // Machine highlight radius (must match server)
@@ -588,11 +596,9 @@
       el.runningHint.textContent =
         `Move: WASD / Arrow keys. Interact: E near a machine. Map: ${mapData?.name || mapData?.id || "?"}`;
 
-      // reset HUD until we get a snapshot
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
-      // reset local rendering state
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
@@ -607,7 +613,6 @@
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
 
-        // ✅ server truth
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
@@ -667,13 +672,9 @@
     }
 
     function setKey(e, isDown){
-      // do nothing while in lobby/start, so arrow keys work normally there
       if (!isGameRunning()) return;
-
-      // If prompt/upgrade/drop open, ignore movement keys
       if (isUiBlockingInput()) return;
 
-      // if typing in an input/select/textarea, do not hijack arrows/WASD
       const t = e.target;
       const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
       const isForm = (tag === "input" || tag === "textarea" || tag === "select");
@@ -706,6 +707,52 @@
 
       if (e.key.toLowerCase() === "e") {
         socket.emit("tryInteract");
+      }
+    });
+
+    // -------------------------
+    // HOTKEYS: 8 / 9 / 0
+    // -------------------------
+    window.addEventListener("keydown", (e) => {
+      if (!isGameRunning()) return;
+      if (isUiBlockingInput()) return;
+
+      const t = e.target;
+      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
+      if (isForm) return;
+
+      // e.key is "8"/"9"/"0"
+      if (e.key === "8" || e.key === "9" || e.key === "0") {
+        e.preventDefault();
+
+        const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
+        socket.emit("useUpgradeSlot", { slotIndex });
+      }
+    });
+
+    socket.on("UPGRADE_USED", (p) => {
+      if (!p) return;
+
+      if (!p.ok) {
+        if (p.reason === "empty_slot") showBubble("No upgrade in that slot.", 1200);
+        else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
+        else if (p.reason === "prompt_open") showBubble("Finish the machine first.", 1400);
+        else showBubble("Cannot use right now.", 1200);
+        return;
+      }
+
+      // Update immediately if server sent upgrades
+      if (p.upgrades) {
+        myServerUpgrades = p.upgrades;
+        renderUpgradeBar();
+      }
+
+      const name = p.used?.name || p.used?.id || "Upgrade";
+      showBubble(`Used: ${name}`, 1300);
+      if (p.removed) {
+        const rName = p.removed?.name || p.removed?.id || "Upgrade";
+        setTimeout(() => showBubble(`Ran out: ${rName}`, 1400), 350);
       }
     });
 
@@ -756,7 +803,6 @@
       }
     });
 
-    // Speech bubble when wrong order / already cleared
     socket.on("INTERACT_DENIED", (p) => {
       if (!p) return;
 
@@ -778,7 +824,6 @@
       const opts = Array.isArray(options) ? options : [];
       el.upgradeList.innerHTML = "";
 
-      // 4x4 when many options, otherwise 3x3
       const use4 = opts.length >= 10;
 
       const grid = document.createElement("div");
@@ -788,7 +833,7 @@
         const tile = document.createElement("button");
         tile.type = "button";
         tile.className = "upgTile";
-        tile.title = opt.desc || ""; // hover tooltip
+        tile.title = opt.desc || "";
 
         const name = document.createElement("div");
         name.className = "upgName";
@@ -841,9 +886,8 @@
       openUpgradeOffer(p);
     });
 
-    // -------- Drop overlay (NEW) --------
+    // -------- Drop overlay --------
     function openDropPicker(payload) {
-      // payload: { requested, slots:[{id,usesLeft,info}] }
       pendingReplace = {
         offerId: activeOfferId,
         upgradeId: payload?.requested?.id || null,
@@ -905,7 +949,6 @@
     socket.on("UPGRADE_RESULT", (p) => {
       if (!p) return;
 
-      // slots full flow
       if (!p.ok && p.reason === "slots_full") {
         el.upgradeMsg.textContent = "Backpack full — choose one to drop.";
         el.upgradeMsg.className = "msg bad";
@@ -917,17 +960,12 @@
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
 
-        // ✅ update immediately if server included upgrades
         if (p.upgrades) {
-          // server sends raw structure; snapshot sends enriched structure
-          // we accept either, and snapshot will overwrite with enriched info shortly
-          myServerUpgrades = p.upgrades;
+          myServerUpgrades = p.upgrades; // snapshot will enrich shortly
           renderUpgradeBar();
         }
 
-        // Close drop picker if it was open
         closeDropPicker();
-
         setTimeout(closeUpgradeOffer, 450);
       } else {
         el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
@@ -939,32 +977,34 @@
       const visualSlots = 6;
       el.upgradeSlots.innerHTML = "";
 
-      // Snapshot structure (preferred) after server/index.js fix:
-      // upgrades: { permanent:[{id,info}], slots:[{id,usesLeft,info}] }
       const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
       const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
+      // display order: consumables first, then permanent
       const display = [];
 
-      // Show consumables first (these are the "backpack" ones)
       for (const s of cons) {
         const info = s?.info || {};
         display.push({
+          kind: "consumable",
           name: info.name || info.id || s.id,
           desc: info.desc || "",
-          usesLeft: s.usesLeft
+          usesLeft: s.usesLeft,
         });
       }
 
-      // Then permanent (stacking)
       for (const p of perm) {
         const info = p?.info || {};
         display.push({
+          kind: "permanent",
           name: info.name || info.id || p.id,
           desc: info.desc || "",
-          usesLeft: null
+          usesLeft: null,
         });
       }
+
+      // Only the first 3 slots (consumables) get hotkeys 8/9/0
+      const hotkeys = ["8", "9", "0"];
 
       for (let i = 0; i < visualSlots; i++) {
         const u = display[i];
@@ -973,18 +1013,27 @@
         slot.className = "uSlot";
         slot.title = u?.desc ? u.desc : "";
 
-        const txt = document.createElement("div");
-        txt.className = "uTxt";
-
-        if (u) {
-          // if it has usesLeft (consumable), show tiny hint like "3x"
-          const short = shortName(u.name);
-          txt.textContent = u.usesLeft != null ? `${short}` : short;
-        } else {
-          txt.textContent = "";
+        // Hotkey label for consumable slots 0..2
+        if (i < 3) {
+          const hk = document.createElement("div");
+          hk.className = "uHotkey";
+          hk.textContent = hotkeys[i];
+          slot.appendChild(hk);
         }
 
+        // Uses left indicator for consumables
+        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) {
+          const uses = document.createElement("div");
+          uses.className = "uUses";
+          uses.textContent = String(u.usesLeft);
+          slot.appendChild(uses);
+        }
+
+        const txt = document.createElement("div");
+        txt.className = "uTxt";
+        txt.textContent = u ? shortName(u.name) : "";
         slot.appendChild(txt);
+
         el.upgradeSlots.appendChild(slot);
       }
     }
@@ -1014,7 +1063,6 @@
       }
     }
 
-    // Money pickups rendering (GREEN rectangle with $) — 2× size
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -1025,8 +1073,8 @@
         const x = pk.x - camX;
         const y = pk.y - camY;
 
-        const w = 36; // 2× (was 18)
-        const h = 24; // 2× (was 12)
+        const w = 36;
+        const h = 24;
 
         ctx.fillStyle = "rgba(34, 197, 94, .95)";
         ctx.fillRect(x - w/2, y - h/2, w, h);
@@ -1045,7 +1093,7 @@
 
       const me = lastSnapshot.players.find(p => p.id === myId);
       const mx = me?.x ?? -999999;
-      const my = me?.y ?? -999999;
+      const myy = me?.y ?? -999999;
       const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
 
       for (const m of mapData.machines) {
@@ -1053,7 +1101,7 @@
         const y = m.y - camY;
 
         const dx = m.x - mx;
-        const dy = m.y - my;
+        const dy = m.y - myy;
         const near = (dx*dx + dy*dy) <= r2;
 
         ctx.fillStyle = "rgba(255, 200, 0, .85)";
