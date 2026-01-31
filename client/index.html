@@ -996,10 +996,9 @@
     ctx.imageSmoothingEnabled = true;
 
     // ============================================================
-    // Fog-of-war + LOS
-    // Circle + Cone:
-    // - Circle is full LOS.
-    // - Cone is a STRIP that starts on the circle perimeter ALONG THE CONE EDGES.
+    // Fog-of-war + LOS (CONE ONLY)
+    // - Cone mask is white on visCanvas.
+    // - Final fog uses destination-out with partial alpha = see-through.
     // ============================================================
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
@@ -1007,9 +1006,8 @@
     const VISION_LEN = 360;
     const CONE_ANGLE_DEG = 92;
 
-    const CIRCLE_LOS_RADIUS = 110;     // you changed this to 110
-    const CONE_START_OVERLAP = 3;      // start a tiny bit inside circle to avoid seam
-    const CIRCLE_RAYS = 720;
+    // See-through strength
+    const CONE_SEETHROUGH = 0.65; // 0..1 (1 = fully clear)
 
     // Soft edge
     const EDGE_BLUR_PX = 15;
@@ -1121,23 +1119,6 @@
       }
       return out;
     }
-  function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
-  const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
-
-  const outer = [];
-  for (const a of angles) {
-    const hit = castRayToWalls(px, py, a, maxLen, segs);
-    outer.push({ x: hit.x, y: hit.y });
-  }
-  if (outer.length < 2) return false;
-
-  ctx2.beginPath();
-  ctx2.moveTo(px, py);             // ✅ apex at player
-  for (const p of outer) ctx2.lineTo(p.x, p.y);
-  ctx2.closePath();
-  ctx2.fill();
-  return true;
-}
 
     function buildAnglesForCone(baseAng, halfAng, extraAngles = []) {
       const angles = [];
@@ -1157,52 +1138,19 @@
       return angles;
     }
 
-    // Seam fix: circle angles offset by half-step
-    function buildCirclePoly(px, py, radius, segs, rays) {
-      const pts = [];
-      for (let i = 0; i < rays; i++) {
-        const a = ((i + 0.5) / rays) * Math.PI * 2;
-        const hit = castRayToWalls(px, py, a, radius, segs);
-        pts.push({ x: hit.x, y: hit.y });
-      }
-      return pts;
-    }
-
-    function fillPoly(ctx2, pts) {
-      if (!pts || pts.length < 3) return false;
-      ctx2.beginPath();
-      ctx2.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
-      ctx2.closePath();
-      ctx2.fill();
-      return true;
-    }
-
-    // ✅ The correct cone strip:
-    // Outer edge = wall hits out to VISION_LEN
-    // Inner edge = same rays, but starting at circle perimeter (minus tiny overlap)
-    function fillConeStrip(ctx2, px, py, baseAng, halfAng, maxLen, circleR, overlapPx, segs, extraAngles) {
+    function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
 
       const outer = [];
-      const inner = [];
-
-      const innerR = Math.max(0, (circleR || 0) - (overlapPx || 0));
-
       for (const a of angles) {
         const hit = castRayToWalls(px, py, a, maxLen, segs);
         outer.push({ x: hit.x, y: hit.y });
-
-        const tInner = Math.min(innerR, hit.t); // if a wall is closer than the circle, start at the wall
-        inner.push({ x: px + hit.rx * tInner, y: py + hit.ry * tInner });
       }
-
-      if (outer.length < 3) return false;
+      if (outer.length < 2) return false;
 
       ctx2.beginPath();
-      ctx2.moveTo(outer[0].x, outer[0].y);
-      for (let i = 1; i < outer.length; i++) ctx2.lineTo(outer[i].x, outer[i].y);
-      for (let i = inner.length - 1; i >= 0; i--) ctx2.lineTo(inner[i].x, inner[i].y);
+      ctx2.moveTo(px, py); // apex at player
+      for (const p of outer) ctx2.lineTo(p.x, p.y);
       ctx2.closePath();
       ctx2.fill();
       return true;
@@ -1238,49 +1186,31 @@
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // 1) HARD visibility mask
+      // 1) HARD visibility mask (white = visible region)
       visCtx.save();
       visCtx.globalCompositeOperation = "source-over";
       visCtx.globalAlpha = 1;
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
+
+      // black background
       visCtx.fillStyle = "rgba(0,0,0,1)";
       visCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
+      // white cone
       visCtx.fillStyle = "rgba(255,255,255,1)";
-
-      // (A) circle
-// No circle. Cone only.
-const okCone = fillConeFromPlayerApex(
-  visCtx,
-  meX, meY,
-  ang, half,
-  VISION_LEN,
-  segs,
-  cornerAngles
-);
-
-// Safety: guarantee a tiny visible dot
-if (!okCone) {
-  visCtx.beginPath();
-  visCtx.arc(meX, meY, 55, 0, Math.PI*2);
-  visCtx.fill();
-} else {
-  visCtx.beginPath();
-  visCtx.arc(meX, meY, 3, 0, Math.PI*2);
-  visCtx.fill();
-}
-
+      const okCone = fillConeFromPlayerApex(
+        visCtx,
+        meX, meY,
+        ang, half,
+        VISION_LEN,
+        segs,
+        cornerAngles
+      );
 
       // Safety: guarantee a tiny visible dot
-      if (!okCone) {
-        visCtx.beginPath();
-        visCtx.arc(meX, meY, 55, 0, Math.PI*2);
-        visCtx.fill();
-      } else {
-        visCtx.beginPath();
-        visCtx.arc(meX, meY, 3, 0, Math.PI*2);
-        visCtx.fill();
-      }
+      visCtx.beginPath();
+      visCtx.arc(meX, meY, okCone ? 3 : 55, 0, Math.PI*2);
+      visCtx.fill();
 
       visCtx.restore();
 
@@ -1303,20 +1233,29 @@ if (!okCone) {
       edgeCtx.drawImage(visCanvas, 0, 0);
       edgeCtx.restore();
 
-      // 3) Final fog: full fog, punch out vis fully, punch out edge partially
+      // 3) Final fog: draw full fog, then remove fog partially where the cone is
       fogCtx.save();
       fogCtx.globalCompositeOperation = "source-over";
       fogCtx.globalAlpha = 1;
       fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
+      // full fog
       fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
+      // OPTIONAL: fully clear a small area around the player (nice feel)
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.globalAlpha = 1;
+      fogCtx.beginPath();
+      fogCtx.arc(meX, meY, 18, 0, Math.PI * 2);
+      fogCtx.fill();
+
+      // See-through cone: remove only part of the fog
+      fogCtx.globalAlpha = CONE_SEETHROUGH;
       fogCtx.drawImage(visCanvas, 0, 0);
 
-      fogCtx.globalAlpha = EDGE_STRENGTH;
+      // Edge ring (scaled to match cone strength)
+      fogCtx.globalAlpha = EDGE_STRENGTH * CONE_SEETHROUGH;
       fogCtx.drawImage(edgeCanvas, 0, 0);
 
       fogCtx.restore();
@@ -1492,7 +1431,6 @@ if (!okCone) {
 
         renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
 
-        // Debug overlays first (so you can see them)
         if (DEBUG_SHOW_VIS) {
           ctx.save();
           ctx.globalAlpha = 1;
@@ -1500,7 +1438,6 @@ if (!okCone) {
           ctx.drawImage(visCanvas, 0, 0);
           ctx.restore();
         } else if (DEBUG_SHOW_EDGE) {
-          // Make edge ring visible: cyan masked by edge alpha
           const VIEW_W = canvas.width, VIEW_H = canvas.height;
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
@@ -1512,7 +1449,6 @@ if (!okCone) {
           ctx.drawImage(edgeCanvas, 0, 0);
           ctx.restore();
         } else {
-          // Normal fog draw
           ctx.drawImage(fogCanvas, 0, 0);
         }
       }
