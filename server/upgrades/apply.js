@@ -3,9 +3,11 @@
 
 const { UPGRADES, getUpgradeById } = require("./definitions");
 
-// Optional constants import (prevents crash if file isn't there)
+// Optional constants import (keeps your structure, but prevents crash if file isn't there)
 let C = { MAX_NONPERM_SLOTS: 3 };
 try {
+  // if you have this file, it will be used
+  // (your original code referenced it)
   C = require("../shared/constants");
 } catch (_) {
   // fallback stays at 3
@@ -15,7 +17,7 @@ function ensureUpgradeState(player) {
   if (!player.upgrades) {
     player.upgrades = {
       permanent: [], // array of ids
-      slots: [],     // array of { id, usesLeft }
+      slots: [], // array of { id, usesLeft }
     };
   }
   if (!Array.isArray(player.upgrades.permanent)) player.upgrades.permanent = [];
@@ -34,18 +36,11 @@ function buildOfferOptions() {
   }));
 }
 
-// Used by server/index.js to send client `chosen` and for tooltips in UI
 function getUpgradeInfo(id) {
   const u = getUpgradeById(id);
   if (!u) return null;
-  return {
-    id: u.id,
-    name: u.name,
-    kind: u.kind,
-    desc: u.desc || "",
-    maxUses: u.maxUses ?? null,
-    useCost: u.useCost ?? null,
-  };
+  // ✅ include desc so client tooltips work (drop list + bar + hover)
+  return { id: u.id, name: u.name, kind: u.kind, desc: u.desc || "" };
 }
 
 function canTakeUpgrade(player, upgrade) {
@@ -62,7 +57,7 @@ function canTakeUpgrade(player, upgrade) {
   // consumable / non-permanent
   const existing = player.upgrades.slots.find((s) => s.id === upgrade.id);
   if (existing) {
-    // refresh uses if they take same upgrade again
+    // For now: refresh to maxUses if they take same upgrade again
     return { ok: true, mode: "refresh_existing" };
   }
 
