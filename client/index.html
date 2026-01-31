@@ -169,7 +169,6 @@
       place-items:center;
       position:relative;
       box-shadow:0 0 0 2px rgba(0,0,0,.10) inset;
-      overflow:hidden;
     }
     .uSlot .uTxt{
       font-weight:900;
@@ -186,15 +185,6 @@
       font-size:11px;
       font-weight:900;
       opacity:.8;
-    }
-    .uSlot .uBadge{
-      position:absolute;
-      bottom:4px;
-      right:6px;
-      font-size:11px;
-      font-weight:900;
-      opacity:.85;
-      color:rgba(230,237,247,.9);
     }
     .uLegend{
       color:var(--muted);
@@ -227,7 +217,6 @@
       flex-direction:column;
       justify-content:space-between;
       transition: transform .06s ease, border-color .06s ease;
-      text-align:left;
     }
     .upgTile:hover{
       transform: translateY(-1px);
@@ -468,8 +457,8 @@
     // upgrade offer state
     let activeOfferId = null;
 
-    // NEW: authoritative upgrades for ME (from server snapshot / UPGRADE_RESULT)
-    let myUpgradeState = { permanent: [], slots: [] };
+    // local UI cache of picked upgrades (until server sends it in snapshot later)
+    const myUpgrades = [];
 
     // Machine highlight radius (must match server)
     const INTERACT_RADIUS = 60;
@@ -551,8 +540,6 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
-      // reset upgrades UI (authoritative state comes via snapshot)
-      myUpgradeState = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
 
@@ -565,12 +552,6 @@
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
-
-        // NEW: authoritative upgrades from server snapshot
-        if (me.upgrades) {
-          myUpgradeState = normalizeUpgradeState(me.upgrades);
-          renderUpgradeBar();
-        }
       }
     });
 
@@ -808,12 +789,19 @@
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
 
-        // NEW: if server returns upgrades, apply immediately; otherwise snapshot will catch up
-        if (p.upgrades) {
-          myUpgradeState = normalizeUpgradeState(p.upgrades);
-          renderUpgradeBar();
+        // Visual-only scaffold for now:
+        if (p.chosen && p.chosen.id) {
+          myUpgrades.push({
+            id: p.chosen.id,
+            name: p.chosen.name || p.chosen.id,
+            kind: p.chosen.kind || "",
+            hotkey: null
+          });
+        } else {
+          myUpgrades.push({ id: "picked", name: "NEW", kind: "", hotkey: null });
         }
 
+        renderUpgradeBar();
         setTimeout(closeUpgradeOffer, 450);
       } else {
         el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
@@ -821,48 +809,27 @@
       }
     });
 
-    // ---------- Upgrade bar rendering (authoritative) ----------
-    function normalizeUpgradeState(u) {
-      const permanent = Array.isArray(u?.permanent) ? u.permanent.slice() : [];
-      const slots = Array.isArray(u?.slots) ? u.slots.map(s => ({
-        id: String(s?.id || ""),
-        usesLeft: Number.isFinite(s?.usesLeft) ? s.usesLeft : null
-      })) : [];
-      return { permanent, slots };
-    }
-
     function renderUpgradeBar() {
-      const slotsCount = 6; // visual slots
+      const slots = 6; // visual slots (rules later)
+
       el.upgradeSlots.innerHTML = "";
-
-      // flatten into display items: permanents first, then consumables
-      const items = [];
-      for (const id of (myUpgradeState.permanent || [])) {
-        if (!id) continue;
-        items.push({ kind: "permanent", id, usesLeft: null });
-      }
-      for (const s of (myUpgradeState.slots || [])) {
-        if (!s || !s.id) continue;
-        items.push({ kind: "consumable", id: s.id, usesLeft: s.usesLeft });
-      }
-
-      for (let i = 0; i < slotsCount; i++) {
-        const it = items[i];
+      for (let i = 0; i < slots; i++) {
+        const u = myUpgrades[i];
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
 
+        if (u?.hotkey != null) {
+          const hk = document.createElement("div");
+          hk.className = "uHotkey";
+          hk.textContent = String(u.hotkey);
+          slot.appendChild(hk);
+        }
+
         const txt = document.createElement("div");
         txt.className = "uTxt";
-        txt.textContent = it ? shortName(it.id) : "";
+        txt.textContent = u ? shortName(u.name) : "";
         slot.appendChild(txt);
-
-        if (it && it.kind === "consumable" && it.usesLeft != null) {
-          const badge = document.createElement("div");
-          badge.className = "uBadge";
-          badge.textContent = String(it.usesLeft);
-          slot.appendChild(badge);
-        }
 
         el.upgradeSlots.appendChild(slot);
       }
@@ -871,17 +838,10 @@
     function shortName(name){
       const s = String(name || "").trim();
       if (!s) return "";
-      // nice short ids: "xl_shoes" -> "XL"
-      const pretty = s.replace(/_/g, " ");
-      const parts = pretty.split(/\s+/).filter(Boolean);
-      if (parts.length >= 2) {
-        // first letters
-        const a = parts[0].slice(0,1).toUpperCase();
-        const b = parts[1].slice(0,1).toUpperCase();
-        return (a + b);
-      }
-      if (pretty.length <= 6) return pretty.toUpperCase();
-      return pretty.slice(0,6).toUpperCase();
+      if (s.length <= 6) return s;
+      const parts = s.split(/\s+/);
+      if (parts.length >= 2) return (parts[0].slice(0,3) + parts[1].slice(0,3));
+      return s.slice(0,6);
     }
 
     // ---------- Rendering ----------
@@ -900,7 +860,7 @@
       }
     }
 
-    // Money pickups rendering (green rectangle with $)
+    // Money pickups rendering (GREEN rectangle with $) — 2× size
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -911,8 +871,8 @@
         const x = pk.x - camX;
         const y = pk.y - camY;
 
-        const w = 18;
-        const h = 12;
+        const w = 36; // 2× (was 18)
+        const h = 24; // 2× (was 12)
 
         ctx.fillStyle = "rgba(34, 197, 94, .95)";
         ctx.fillRect(x - w/2, y - h/2, w, h);
@@ -921,8 +881,8 @@
         ctx.strokeRect(x - w/2, y - h/2, w, h);
 
         ctx.fillStyle = "rgba(10,10,10,.9)";
-        ctx.font = "10px system-ui";
-        ctx.fillText("$", x - 3, y + 4);
+        ctx.font = "16px system-ui";
+        ctx.fillText("$", x - 5, y + 6);
       }
     }
 
