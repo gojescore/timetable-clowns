@@ -1048,20 +1048,24 @@
 
     // full circle LOS (no seeing around corners)
     const CIRCLE_LOS_RADIUS = 150;
-    const CIRCLE_RAYS = 720; // 0.5 degrees each
+    const CIRCLE_RAYS = 720; // 0.5 deg each
 
     // feather at cone edges
     const FEATHER_DEG = 12;
     const FEATHER_STEPS = 6;
     const FEATHER_MAX_REMOVE = 0.55;
 
-    // extra softness around circle edge (reduces "polygon stepping")
-    const SOFT_EDGE_ALPHA = 0.18;
-    const SOFT_EDGE_EXTRA = 18;
+    // OUTSIDE-ONLY soft edge (no tint inside)
+    const SOFT_EDGE_PX = 26;     // width of softness ring outside
+    const SOFT_EDGE_STEPS = 8;   // 6–12
 
     // offscreen fog mask
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
+
+    // ---------- Rendering ----------
+    const canvas = el.canvas;
+    const ctx = canvas.getContext("2d", { alpha: true });
 
     function resizeFog() {
       if (fogCanvas.width !== canvas.width || fogCanvas.height !== canvas.height) {
@@ -1073,14 +1077,8 @@
     function segsFromWalls(walls){
       const segs = [];
       if (!Array.isArray(walls)) return segs;
-
-      const pad = 2; // LOS padding to avoid corner artifacts
       for (const w of walls) {
-        const x = w.x - pad;
-        const y = w.y - pad;
-        const ww = w.w + pad*2;
-        const hh = w.h + pad*2;
-
+        const x = w.x, y = w.y, ww = w.w, hh = w.h;
         // four edges
         segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
         segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
@@ -1127,20 +1125,17 @@
     function buildConePoly(px, py, baseAng, halfAng, maxLen, segs, extraAngles = []) {
       const angles = [];
 
-      // cone boundaries
       angles.push(baseAng - halfAng);
       angles.push(baseAng + halfAng);
 
-      // extra rays (wall corners inside cone)
       for (const a of extraAngles) {
         if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
       }
 
-      // also sample a few evenly to avoid gaps
       const samples = 120;
       for (let i = 1; i < samples; i++) {
-        const t = i / samples;
-        angles.push((baseAng - halfAng) + (2*halfAng)*t);
+        const tt = i / samples;
+        angles.push((baseAng - halfAng) + (2*halfAng)*tt);
       }
 
       angles.sort((a,b) => a-b);
@@ -1163,13 +1158,13 @@
       return pts;
     }
 
-    function drawPoly(ctx, pts) {
+    function drawPoly(ctx2, pts) {
       if (!pts || pts.length < 3) return false;
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.closePath();
-      ctx.fill();
+      ctx2.beginPath();
+      ctx2.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
+      ctx2.closePath();
+      ctx2.fill();
       return true;
     }
 
@@ -1177,7 +1172,6 @@
       const out = [];
       const walls = mapData?.walls;
       if (!Array.isArray(walls)) return out;
-
       for (const w of walls) {
         const corners = [
           { x: w.x, y: w.y },
@@ -1191,6 +1185,23 @@
         }
       }
       return out;
+    }
+
+    // OUTSIDE-ONLY soft edge: clears fog just outside the hard radius (no tint inside)
+    function softenCircleEdge(ctx2, cx, cy, radius, softPx, steps) {
+      if (softPx <= 0 || steps <= 0) return;
+
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;              // 0..1
+        const r = radius + softPx * t;    // OUTSIDE ONLY
+        const a = (1 - t) * 0.22;         // strength; tweak 0.12..0.28
+
+        ctx2.globalAlpha = a;
+        ctx2.beginPath();
+        ctx2.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx2.fill();
+      }
+      ctx2.globalAlpha = 1;
     }
 
     function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
@@ -1234,17 +1245,20 @@
       // Add wall corner angles (world angles; cam does not matter for angles)
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // (A) Circle LOS around player
+      // (A) Circle LOS around player (HARD CLEAR)
       if (CIRCLE_LOS_RADIUS > 0) {
         const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
         drawPoly(fogCtx, circlePts);
+
+        // OUTSIDE-ONLY soft edge (no tint inside)
+        softenCircleEdge(fogCtx, meX, meY, CIRCLE_LOS_RADIUS, SOFT_EDGE_PX, SOFT_EDGE_STEPS);
       } else {
         fogCtx.beginPath();
         fogCtx.arc(meX, meY, 40, 0, Math.PI*2);
         fogCtx.fill();
       }
 
-      // (B) Cone LOS forward
+      // (B) Cone LOS forward (HARD CLEAR)
       const conePts = buildConePoly(meX, meY, ang, half, VISION_LEN, segs, cornerAngles);
       const okPoly = drawPoly(fogCtx, conePts);
 
@@ -1267,19 +1281,9 @@
         drawPoly(fogCtx, featherPts);
       }
 
-      // (D) Soft edge around the player visibility (reduces stepping)
-      fogCtx.globalAlpha = SOFT_EDGE_ALPHA;
-      fogCtx.beginPath();
-      fogCtx.arc(meX, meY, CIRCLE_LOS_RADIUS + SOFT_EDGE_EXTRA, 0, Math.PI * 2);
-      fogCtx.fill();
       fogCtx.globalAlpha = 1;
-
       fogCtx.restore();
     }
-
-    // ---------- Rendering ----------
-    const canvas = el.canvas;
-    const ctx = canvas.getContext("2d", { alpha: true });
 
     function drawWalls(camX, camY){
       if (!mapData?.walls) return;
@@ -1393,15 +1397,15 @@
       ctx.lineWidth = 1;
     }
 
-    function roundRect(ctx, x, y, w, h, r) {
+    function roundRect(ctx2, x, y, w, h, r) {
       const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x + rr, y);
-      ctx.arcTo(x + w, y, x + w, y + h, rr);
-      ctx.arcTo(x + w, y + h, x, y + h, rr);
-      ctx.arcTo(x, y + h, x, y, rr);
-      ctx.arcTo(x, y, x + w, y, rr);
-      ctx.closePath();
+      ctx2.beginPath();
+      ctx2.moveTo(x + rr, y);
+      ctx2.arcTo(x + w, y, x + w, y + h, rr);
+      ctx2.arcTo(x + w, y + h, x, y + h, rr);
+      ctx2.arcTo(x, y + h, x, y, rr);
+      ctx2.arcTo(x, y, x + w, y, rr);
+      ctx2.closePath();
     }
 
     function drawPlayer(p, camX, camY, isMe){
