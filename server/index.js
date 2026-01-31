@@ -39,37 +39,6 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 // --------------------
 // In-memory game store
 // --------------------
-/**
- * games[gameCode] = {
- *   code,
- *   hostPlayerId,
- *   phase: "lobby" | "running",
- *   settings: { tableBase, teamCount, inputMode, mapChoice },
- *   map: { id, name, world:{w,h}, walls:[], machines:[] } | null,
- *   players: Map(playerId -> Player),
- *   pickups: Array<{id,type,x,y,amount,createdAt}>
- * }
- *
- * Player = {
- *   id, name, socketId, teamId,
- *   x, y, dirX, dirY,
- *   input: {up,down,left,right},
- *
- *   pendingPrompt: null | { id, machineId, machineNum, base, correct },
- *   lastCorrectMachineId: null | string,
- *
- *   // progress rules
- *   nextMachineNum: 1..10,
- *   clearedMachines: Set(machineId),
- *
- *   // economy
- *   money: number,
- *
- *   // upgrades scaffold
- *   upgrades: { permanent: string[], slots: Array<{id:string, usesLeft:number}> },
- *   pendingUpgradeOffer: null | { id: string, options: string[] }
- * }
- */
 const games = Object.create(null);
 
 // --------------------
@@ -179,7 +148,7 @@ function snapshotForGame(game) {
     players: [...game.players.values()].map((p) => {
       const up = p.upgrades || { permanent: [], slots: [] };
 
-      // ✅ include info so client can render names/tooltips without drifting
+      // include info so client can render names/tooltips without drifting
       const permanent = Array.isArray(up.permanent)
         ? up.permanent.map((id) => ({
             id,
@@ -205,7 +174,6 @@ function snapshotForGame(game) {
         dirY: p.dirY,
         nextMachineNum: p.nextMachineNum,
         money: typeof p.money === "number" ? p.money : 0,
-
         upgrades: { permanent, slots },
       };
     }),
@@ -724,7 +692,6 @@ io.on("connection", (socket) => {
     // consume offer
     p.pendingUpgradeOffer = null;
 
-    // include `chosen` the client expects
     const chosen = upgrades.getUpgradeInfo(upgradeId);
 
     socket.emit("UPGRADE_RESULT", {
@@ -735,7 +702,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  // NEW: replace flow when slots are full
+  // replace flow when slots are full
   socket.on("chooseUpgradeReplace", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -776,7 +743,7 @@ io.on("connection", (socket) => {
     // Drop it
     p.upgrades.slots.splice(idx, 1);
 
-    // Now apply the upgrade (should succeed unless something is weird)
+    // Now apply the upgrade
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
 
     // If it STILL fails, do not consume offer
@@ -796,6 +763,76 @@ io.on("connection", (socket) => {
       chosen,
       upgrades: p.upgrades,
       dropped: upgrades.getUpgradeInfo(dropId),
+    });
+  });
+
+  // -------------------------
+  // HOTKEY USE: 8 / 9 / 0
+  // -------------------------
+  socket.on("useUpgradeSlot", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    // block using while a math prompt is open (server-side safety)
+    if (p.pendingPrompt) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "prompt_open" });
+      return;
+    }
+
+    // block using while they have an upgrade offer pending (so they don't spam state)
+    if (p.pendingUpgradeOffer) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "offer_open" });
+      return;
+    }
+
+    upgrades.ensureUpgradeState(p);
+
+    const slotIndex = Number(payload.slotIndex);
+    if (!Number.isFinite(slotIndex) || slotIndex < 0 || slotIndex > 2) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "bad_slot_index" });
+      return;
+    }
+
+    const slots = p.upgrades.slots;
+    if (!Array.isArray(slots) || slotIndex >= slots.length) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "empty_slot" });
+      return;
+    }
+
+    const s = slots[slotIndex];
+    if (!s || !s.id) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "empty_slot" });
+      return;
+    }
+
+    if (!Number.isFinite(s.usesLeft) || s.usesLeft <= 0) {
+      // clean it if broken
+      slots.splice(slotIndex, 1);
+      socket.emit("UPGRADE_USED", { ok: false, reason: "no_uses_left" });
+      return;
+    }
+
+    // consume one use
+    s.usesLeft -= 1;
+
+    let removed = null;
+    if (s.usesLeft <= 0) {
+      removed = s.id;
+      slots.splice(slotIndex, 1);
+    }
+
+    // NOTE: effects come later. Right now this is just authoritative decrement.
+    socket.emit("UPGRADE_USED", {
+      ok: true,
+      used: upgrades.getUpgradeInfo(s.id),
+      removed: removed ? upgrades.getUpgradeInfo(removed) : null,
+      upgrades: p.upgrades,
     });
   });
 
