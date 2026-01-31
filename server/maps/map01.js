@@ -11,12 +11,13 @@ module.exports = {
   name: "Training Hall (10 rooms)",
   world: { w: 2400, h: 1600 },
 
-  spawns: [
-    { x: 140, y: 140 },
-    { x: 2260, y: 140 },
-    { x: 140, y: 1460 },
-    { x: 2260, y: 1460 },
-  ],
+spawns: [
+  { x: 220, y: 220 },
+  { x: 2180, y: 220 },
+  { x: 220, y: 1380 },
+  { x: 2180, y: 1380 },
+],
+
 
   // 10 rooms, each:
   // - exactly 1 machine
