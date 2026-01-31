@@ -1249,26 +1249,27 @@
       visCtx.fillStyle = "rgba(255,255,255,1)";
 
       // (A) circle
-      if (CIRCLE_LOS_RADIUS > 0) {
-        const circlePts = buildCirclePoly(meX, meY, CIRCLE_LOS_RADIUS, segs, CIRCLE_RAYS);
-        fillPoly(visCtx, circlePts);
-      } else {
-        visCtx.beginPath();
-        visCtx.arc(meX, meY, 40, 0, Math.PI*2);
-        visCtx.fill();
-      }
+// No circle. Cone only.
+const okCone = fillConeFromPlayerApex(
+  visCtx,
+  meX, meY,
+  ang, half,
+  VISION_LEN,
+  segs,
+  cornerAngles
+);
 
-      // (B) cone strip starts on circle perimeter ALONG cone edges ✅
-      const okCone = fillConeStrip(
-        visCtx,
-        meX, meY,
-        ang, half,
-        VISION_LEN,
-        CIRCLE_LOS_RADIUS,
-        CONE_START_OVERLAP,
-        segs,
-        cornerAngles
-      );
+// Safety: guarantee a tiny visible dot
+if (!okCone) {
+  visCtx.beginPath();
+  visCtx.arc(meX, meY, 55, 0, Math.PI*2);
+  visCtx.fill();
+} else {
+  visCtx.beginPath();
+  visCtx.arc(meX, meY, 3, 0, Math.PI*2);
+  visCtx.fill();
+}
+
 
       // Safety: guarantee a tiny visible dot
       if (!okCone) {
