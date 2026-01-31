@@ -509,8 +509,8 @@
     // NEW: when slots are full, remember what we tried to pick
     let pendingReplace = null; // { offerId, upgradeId, requestedInfo, slotsPayload }
 
-    // local UI cache of picked upgrades (until server sends it in snapshot later)
-    const myUpgrades = [];
+    // ✅ Server-truth upgrades for rendering
+    let myServerUpgrades = { permanent: [], slots: [] };
 
     // Machine highlight radius (must match server)
     const INTERACT_RADIUS = 60;
@@ -592,6 +592,8 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
+      // reset local rendering state
+      myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
 
@@ -604,6 +606,10 @@
         el.hudName.textContent = me.name || "?";
         el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+
+        // ✅ server truth
+        myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
+        renderUpgradeBar();
       }
     });
 
@@ -899,7 +905,7 @@
     socket.on("UPGRADE_RESULT", (p) => {
       if (!p) return;
 
-      // NEW: slots full flow
+      // slots full flow
       if (!p.ok && p.reason === "slots_full") {
         el.upgradeMsg.textContent = "Backpack full — choose one to drop.";
         el.upgradeMsg.className = "msg bad";
@@ -911,20 +917,13 @@
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
 
-        // Visual-only scaffold for now:
-        if (p.chosen && p.chosen.id) {
-          myUpgrades.push({
-            id: p.chosen.id,
-            name: p.chosen.name || p.chosen.id,
-            kind: p.chosen.kind || "",
-            hotkey: null,
-            desc: p.chosen.desc || ""
-          });
-        } else {
-          myUpgrades.push({ id: "picked", name: "NEW", kind: "", hotkey: null, desc: "" });
+        // ✅ update immediately if server included upgrades
+        if (p.upgrades) {
+          // server sends raw structure; snapshot sends enriched structure
+          // we accept either, and snapshot will overwrite with enriched info shortly
+          myServerUpgrades = p.upgrades;
+          renderUpgradeBar();
         }
-
-        renderUpgradeBar();
 
         // Close drop picker if it was open
         closeDropPicker();
@@ -937,28 +936,55 @@
     });
 
     function renderUpgradeBar() {
-      const slots = 6; // visual slots (rules later)
-
+      const visualSlots = 6;
       el.upgradeSlots.innerHTML = "";
-      for (let i = 0; i < slots; i++) {
-        const u = myUpgrades[i];
+
+      // Snapshot structure (preferred) after server/index.js fix:
+      // upgrades: { permanent:[{id,info}], slots:[{id,usesLeft,info}] }
+      const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
+      const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
+
+      const display = [];
+
+      // Show consumables first (these are the "backpack" ones)
+      for (const s of cons) {
+        const info = s?.info || {};
+        display.push({
+          name: info.name || info.id || s.id,
+          desc: info.desc || "",
+          usesLeft: s.usesLeft
+        });
+      }
+
+      // Then permanent (stacking)
+      for (const p of perm) {
+        const info = p?.info || {};
+        display.push({
+          name: info.name || info.id || p.id,
+          desc: info.desc || "",
+          usesLeft: null
+        });
+      }
+
+      for (let i = 0; i < visualSlots; i++) {
+        const u = display[i];
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
-        slot.title = u?.desc ? u.desc : ""; // hover tooltip on carried upgrades
-
-        if (u?.hotkey != null) {
-          const hk = document.createElement("div");
-          hk.className = "uHotkey";
-          hk.textContent = String(u.hotkey);
-          slot.appendChild(hk);
-        }
+        slot.title = u?.desc ? u.desc : "";
 
         const txt = document.createElement("div");
         txt.className = "uTxt";
-        txt.textContent = u ? shortName(u.name) : "";
-        slot.appendChild(txt);
 
+        if (u) {
+          // if it has usesLeft (consumable), show tiny hint like "3x"
+          const short = shortName(u.name);
+          txt.textContent = u.usesLeft != null ? `${short}` : short;
+        } else {
+          txt.textContent = "";
+        }
+
+        slot.appendChild(txt);
         el.upgradeSlots.appendChild(slot);
       }
     }
