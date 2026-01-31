@@ -9,8 +9,6 @@ const { pickMap } = require("./maps");
 // --------------------
 const economy = require("./economy");
 const upgrades = require("./upgrades/apply");
-// ✅ needed for `chosen` payload
-const { getUpgradeById } = require("./upgrades/definitions");
 
 // --------------------
 // Config
@@ -298,7 +296,7 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
     }
 
-    // economy: pickup collection (NO TTL)
+    // economy: pickup collection
     economy.tryCollectPickups(game);
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -681,6 +679,24 @@ io.on("connection", (socket) => {
     }
 
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
+
+    // If consumable slots are full, DO NOT consume the offer.
+    // Instead, tell the client to pick a slot to drop.
+    if (!res.ok && res.reason === "slots_full") {
+      const slots = (p.upgrades?.slots || []).map((s) => ({
+        id: s.id,
+        usesLeft: s.usesLeft,
+        info: upgrades.getUpgradeInfo(s.id),
+      }));
+      socket.emit("UPGRADE_RESULT", {
+        ok: false,
+        reason: "slots_full",
+        requested: upgrades.getUpgradeInfo(upgradeId),
+        slots,
+      });
+      return;
+    }
+
     if (!res.ok) {
       socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
       return;
@@ -689,24 +705,78 @@ io.on("connection", (socket) => {
     // consume offer
     p.pendingUpgradeOffer = null;
 
-    // ✅ PROTOCOL FIX: include `chosen` the client expects
-    const info = getUpgradeById(upgradeId);
-    const chosen = info
-      ? {
-          id: info.id,
-          name: info.name,
-          kind: info.kind,
-          desc: info.desc || "",
-          maxUses: Number.isFinite(info.maxUses) ? info.maxUses : null,
-          useCost: Number.isFinite(info.useCost) ? info.useCost : null,
-        }
-      : null;
+    // include `chosen` the client expects
+    const chosen = upgrades.getUpgradeInfo(upgradeId);
 
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen, // { id, name, kind, ... } (or null)
+      chosen, // { id, name, kind, desc, ... } (or null)
       upgrades: p.upgrades,
+    });
+  });
+
+  // NEW: replace flow when slots are full
+  socket.on("chooseUpgradeReplace", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    const offer = p.pendingUpgradeOffer;
+    if (!offer) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
+      return;
+    }
+
+    const offerId = String(payload.offerId || "");
+    if (offerId !== offer.id) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+      return;
+    }
+
+    const upgradeId = String(payload.upgradeId || "");
+    if (!offer.options.includes(upgradeId)) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "not_in_offer" });
+      return;
+    }
+
+    const dropId = String(payload.dropId || "");
+    upgrades.ensureUpgradeState(p);
+
+    const idx = p.upgrades.slots.findIndex((s) => s.id === dropId);
+    if (idx < 0) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_drop_id" });
+      return;
+    }
+
+    // Drop it
+    p.upgrades.slots.splice(idx, 1);
+
+    // Now apply the upgrade (should succeed unless something is weird)
+    const res = upgrades.applyUpgradeSelection(p, upgradeId);
+
+    // If it STILL fails, do not consume offer
+    if (!res.ok) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
+      return;
+    }
+
+    // consume offer
+    p.pendingUpgradeOffer = null;
+
+    const chosen = upgrades.getUpgradeInfo(upgradeId);
+
+    socket.emit("UPGRADE_RESULT", {
+      ok: true,
+      applied: res.applied,
+      chosen,
+      upgrades: p.upgrades,
+      dropped: upgrades.getUpgradeInfo(dropId),
     });
   });
 
