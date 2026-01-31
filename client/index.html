@@ -1038,12 +1038,13 @@
 
     // ===== Fog-of-war =====
     const FOG_ENABLED = true;
-    const FOG_ALPHA = 0.96;
+    const FOG_ALPHA = 0.96;     // darkness of fog outside vision
 
-    const VISION_LEN = 360;
-    const VISION_ANGLE_DEG = 92;
-    const NEAR_RADIUS = 70;
+    const VISION_LEN = 360;     // cone length
+    const VISION_ANGLE_DEG = 92;// cone width
+    const NEAR_RADIUS = 70;     // small full-vision circle around player
 
+    // Feather = small degrees on each side that fade to fog
     const FEATHER_DEG = 12;
     const FEATHER_LEN = 40;
     const FEATHER_STEPS = 6;
@@ -1056,8 +1057,25 @@
       ctx.closePath();
     }
 
-    function renderFogOfWar(ctx, mePx, mePy, dirX, dirY, w, h) {
+    // --- Offscreen fog layer (prevents "colored cone" problem) ---
+    const fogCanvas = document.createElement("canvas");
+    const fogCtx = fogCanvas.getContext("2d", { alpha: true });
+
+    function ensureFogSize() {
+      if (fogCanvas.width !== canvas.width || fogCanvas.height !== canvas.height) {
+        fogCanvas.width = canvas.width;
+        fogCanvas.height = canvas.height;
+      }
+    }
+
+    function renderFogOfWar(mainCtx, mePx, mePy, dirX, dirY, w, h) {
       if (!FOG_ENABLED) return;
+
+      ensureFogSize();
+
+      const ctx = fogCtx;
+      ctx.save();
+      ctx.clearRect(0, 0, w, h);
 
       const dx = (typeof dirX === "number") ? dirX : 0;
       const dy = (typeof dirY === "number") ? dirY : 0;
@@ -1066,29 +1084,29 @@
       const ang = hasDir ? Math.atan2(dy, dx) : 0;
       const half = (VISION_ANGLE_DEG * Math.PI / 180) / 2;
 
-      ctx.save();
-
-      // Fog
+      // 1) Draw fog on fog-layer
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
       ctx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       ctx.fillRect(0, 0, w, h);
 
-      // Punch out (FULL strength)
+      // 2) Punch out visibility on fog-layer
       ctx.globalCompositeOperation = "destination-out";
-      ctx.fillStyle = "rgba(0,0,0,1)"; // <-- critical
+      ctx.fillStyle = "rgba(0,0,0,1)";
       ctx.globalAlpha = 1;
 
+      // near bubble (fully transparent)
       if (NEAR_RADIUS > 0) {
         ctx.beginPath();
         ctx.arc(mePx, mePy, NEAR_RADIUS, 0, Math.PI * 2);
         ctx.fill();
       }
 
+      // main cone (fully transparent)
       renderConePath(ctx, mePx, mePy, VISION_LEN, ang, half);
       ctx.fill();
 
-      // Feather (partial punch out)
+      // feather (partial transparency)
       for (let i = 1; i <= FEATHER_STEPS; i++) {
         const t = i / FEATHER_STEPS;
         const extraHalf = ((FEATHER_DEG * Math.PI / 180) / 2) * t;
@@ -1103,12 +1121,19 @@
       }
 
       ctx.restore();
+
+      // 3) Draw fog-layer on top of world
+      mainCtx.save();
+      mainCtx.globalCompositeOperation = "source-over";
+      mainCtx.globalAlpha = 1;
+      mainCtx.drawImage(fogCanvas, 0, 0);
+      mainCtx.restore();
     }
 
     // ---------- Rendering ----------
     const canvas = el.canvas;
 
-    // IMPORTANT: force alpha-enabled canvas context
+    // alpha enabled is fine, but fog is now separate anyway
     const ctx = canvas.getContext("2d", { alpha: true });
 
     function drawWalls(camX, camY){
