@@ -4,11 +4,11 @@
 
 const PICKUP_TYPE_MONEY = "money";
 const MONEY_PICKUP_AMOUNT = 25;   // tweak as desired
-const MONEY_PICKUP_RADIUS = 18;   // collection radius
+const MONEY_PICKUP_RADIUS = 28;   // collection radius
 
 // Treat pickup as having a small "body" so it won't spawn inside walls/machines.
-const MONEY_PICKUP_HALF_W = 9;
-const MONEY_PICKUP_HALF_H = 6;
+const MONEY_PICKUP_HALF_W = 18;
+const MONEY_PICKUP_HALF_H = 12;
 
 function ensurePlayerEconomy(player) {
   if (!player) return;
