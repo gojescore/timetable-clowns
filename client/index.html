@@ -1436,25 +1436,61 @@
       }
     }
 
-    // ✅ money pickups (draw AFTER fog so they are visible through fog)
+    // ===== NEW: test visibility (inside cone) by sampling visCtx alpha =====
+    function isVisibleInCone(screenX, screenY){
+      // If fog isn't enabled, treat as visible.
+      if (!FOG_ENABLED) return true;
+
+      // visCanvas matches the main canvas size.
+      const x = Math.floor(screenX);
+      const y = Math.floor(screenY);
+      if (x < 0 || y < 0 || x >= visCanvas.width || y >= visCanvas.height) return false;
+
+      // Alpha channel tells us if this pixel is in the visible mask.
+      const a = visCtx.getImageData(x, y, 1, 1).data[3];
+      return a > 10;
+    }
+
+    // ✅ money pickups (visible through fog, but dim+glow when UNDER fog)
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
 
       for (const pk of list) {
         if (!pk || pk.type !== "money") continue;
-        const x = pk.x - camX;
-        const y = pk.y - camY;
+
+        const sx = pk.x - camX;
+        const sy = pk.y - camY;
+
+        const visible = isVisibleInCone(sx, sy);
 
         const w = 36, h = 24;
-        ctx.fillStyle = "rgba(34, 197, 94, .95)";
-        ctx.fillRect(x - w/2, y - h/2, w, h);
+
+        ctx.save();
+
+        if (!visible) {
+          // Under fog: slightly dimmed + subtle glow
+          ctx.globalAlpha = 0.70;
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = "rgba(34, 197, 94, .55)";
+        } else {
+          // In vision: normal
+          ctx.globalAlpha = 0.95;
+          ctx.shadowBlur = 0;
+        }
+
+        ctx.fillStyle = "rgba(34, 197, 94, 1)";
+        ctx.fillRect(sx - w/2, sy - h/2, w, h);
+
+        ctx.shadowBlur = 0;
         ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.strokeRect(x - w/2, y - h/2, w, h);
+        ctx.strokeRect(sx - w/2, sy - h/2, w, h);
 
         ctx.fillStyle = "rgba(10,10,10,.9)";
         ctx.font = "16px system-ui";
-        ctx.fillText("$", x - 5, y + 6);
+        ctx.fillText("$", sx - 5, sy + 6);
+
+        ctx.restore();
       }
     }
 
@@ -1626,7 +1662,7 @@
         }
       }
 
-      // ✅ money AFTER fog so it is visible through fog
+      // ✅ money AFTER fog (but dim+glow when outside cone)
       drawPickups(camX, camY);
 
       if (me) drawPlayer(me, camX, camY, true);
