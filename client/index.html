@@ -24,7 +24,9 @@
       background:var(--bg);
       color:var(--ink);
     }
-    .wrap{max-width:980px;margin:0 auto;padding:18px}
+
+    /* Make the app use more width */
+    .wrap{max-width:none;margin:0 auto;padding:18px}
     h1,h2,h3{margin:.2em 0 .4em}
     .card{
       background:var(--panel);
@@ -45,6 +47,7 @@
     }
     button{cursor:pointer}
     button.primary{ background:var(--accent); border-color:var(--accent); }
+    button.danger{ background:rgba(239,68,68,.18); border-color:rgba(239,68,68,.45); }
     .muted{color:var(--muted)}
     .hidden{display:none}
     .pill{
@@ -64,9 +67,11 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
+    /* Canvas should be almost full window size */
     canvas{
       width:100%;
-      max-width:900px;
+      height: calc(100vh - 260px);
+      min-height: 520px;
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
       background:#0e1630;
@@ -210,9 +215,7 @@
       grid-template-columns:repeat(3, minmax(0, 1fr));
       margin-top:10px;
     }
-    .upgGrid.grid4{
-      grid-template-columns:repeat(4, minmax(0, 1fr));
-    }
+    .upgGrid.grid4{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
     .upgTile{
       aspect-ratio: 1 / 1;
       border-radius:14px;
@@ -226,47 +229,15 @@
       justify-content:space-between;
       transition: transform .06s ease, border-color .06s ease;
     }
-    .upgTile:hover{
-      transform: translateY(-1px);
-      border-color: rgba(255,255,255,.22);
-    }
-    .upgName{
-      font-weight:900;
-      font-size:14px;
-      line-height:1.1;
-    }
-    .upgKind{
-      font-size:12px;
-      color:var(--muted);
-      margin-top:6px;
-    }
-    .upgFoot{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:8px;
-      margin-top:10px;
-    }
-    .upgTag{
-      font-size:12px;
-      padding:3px 8px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      color:var(--muted);
-    }
-    .upgPick{
-      font-size:12px;
-      font-weight:800;
-      color:rgba(230,237,247,.9);
-    }
+    .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
+    .upgName{ font-weight:900; font-size:14px; line-height:1.1; }
+    .upgKind{ font-size:12px; color:var(--muted); margin-top:6px; }
+    .upgFoot{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:10px; }
+    .upgTag{ font-size:12px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+    .upgPick{ font-size:12px; font-weight:800; color:rgba(230,237,247,.9); }
 
     /* Drop picker list */
-    .dropList{
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      margin-top:10px;
-    }
+    .dropList{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
     .dropBtn{
       text-align:left;
       padding:10px 12px;
@@ -276,14 +247,8 @@
       color:var(--ink);
       cursor:pointer;
     }
-    .dropBtn:hover{
-      border-color: rgba(255,255,255,.22);
-    }
-    .dropMeta{
-      font-size:12px;
-      color:var(--muted);
-      margin-top:4px;
-    }
+    .dropBtn:hover{ border-color: rgba(255,255,255,.22); }
+    .dropMeta{ font-size:12px; color:var(--muted); margin-top:4px; }
   </style>
 </head>
 <body>
@@ -356,6 +321,10 @@
           <div class="muted">Host</div>
           <button id="startGame" class="primary">Start game</button>
         </div>
+        <div>
+          <div class="muted">Navigation</div>
+          <button id="leaveLobby" class="danger" title="Safe: reload page">Leave / Back</button>
+        </div>
       </div>
 
       <h3>Players</h3>
@@ -364,8 +333,15 @@
     </div>
 
     <div class="card hidden" id="runningCard">
-      <h2>Game started 🎉</h2>
-      <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space.</p>
+      <div class="row" style="align-items:center;justify-content:space-between">
+        <div>
+          <h2 style="margin:0">Game started 🎉</h2>
+          <p class="muted" id="runningHint" style="margin:.2em 0 0">Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space.</p>
+        </div>
+        <div>
+          <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
+        </div>
+      </div>
 
       <!-- HUD -->
       <div class="hudRow" id="hudRow">
@@ -463,6 +439,7 @@
     const socket = io();
 
     const el = {
+      start: document.getElementById("startCard"),
       name: document.getElementById("name"),
       role: document.getElementById("role"),
       joinCode: document.getElementById("joinCode"),
@@ -485,6 +462,9 @@
       startGame: document.getElementById("startGame"),
       lobbyHint: document.getElementById("lobbyHint"),
       runningHint: document.getElementById("runningHint"),
+
+      leaveLobby: document.getElementById("leaveLobby"),
+      leaveGame: document.getElementById("leaveGame"),
 
       hudName: document.getElementById("hudName"),
       hudTeam: document.getElementById("hudTeam"),
@@ -518,6 +498,10 @@
       respawnMsg: document.getElementById("respawnMsg"),
     };
 
+    // Safe navigation: reload to cleanly disconnect + return
+    el.leaveLobby.addEventListener("click", () => location.reload());
+    el.leaveGame.addEventListener("click", () => location.reload());
+
     let myId = null;
     let isHost = false;
 
@@ -531,7 +515,7 @@
     let activeOfferId = null;
     let pendingReplace = null;
 
-    let activeRespawn = null; // { options: [...] }
+    let activeRespawn = null;
 
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
@@ -557,7 +541,6 @@
     }
     el.mode.addEventListener("change", updateHostModeUI);
 
-    // initial UI
     updateRoleUI();
     updateHostModeUI();
 
@@ -594,12 +577,14 @@
 
     socket.on("GAME_CREATED", ({ gameCode }) => {
       el.gameCode.textContent = gameCode;
+      el.start.classList.add("hidden");
       el.lobby.classList.remove("hidden");
       el.hostControls.style.display = "block";
     });
 
     socket.on("JOIN_SUCCESS", ({ gameCode, players, teams, settings: s }) => {
       el.gameCode.textContent = gameCode;
+      el.start.classList.add("hidden");
       el.lobby.classList.remove("hidden");
       el.hostControls.style.display = isHost ? "block" : "none";
 
@@ -669,7 +654,6 @@
         const li = document.createElement("li");
         li.textContent = `${p.name} (team: ${p.teamId ?? "—"})`;
 
-        // Only show team assignment if TEAMS mode and host
         if (isHost && (settings?.mode === "teams")) {
           const teamCount = settings?.teamCount ?? 2;
 
@@ -1136,9 +1120,7 @@
     const ctx = canvas.getContext("2d", { alpha: true });
     ctx.imageSmoothingEnabled = true;
 
-    // ============================================================
-    // Fog-of-war + LOS (CONE ONLY, walls block visibility)
-    // ============================================================
+    // Fog-of-war + LOS
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
@@ -1417,7 +1399,7 @@
       ctx.restore();
     }
 
-    // ✅ bullets (draw BEFORE fog so they are hidden outside cone)
+    // bullets BEFORE fog so fog hides them outside cone
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
@@ -1436,61 +1418,25 @@
       }
     }
 
-    // ===== NEW: test visibility (inside cone) by sampling visCtx alpha =====
-    function isVisibleInCone(screenX, screenY){
-      // If fog isn't enabled, treat as visible.
-      if (!FOG_ENABLED) return true;
-
-      // visCanvas matches the main canvas size.
-      const x = Math.floor(screenX);
-      const y = Math.floor(screenY);
-      if (x < 0 || y < 0 || x >= visCanvas.width || y >= visCanvas.height) return false;
-
-      // Alpha channel tells us if this pixel is in the visible mask.
-      const a = visCtx.getImageData(x, y, 1, 1).data[3];
-      return a > 10;
-    }
-
-    // ✅ money pickups (visible through fog, but dim+glow when UNDER fog)
+    // money AFTER fog so it is visible through fog
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
 
       for (const pk of list) {
         if (!pk || pk.type !== "money") continue;
-
-        const sx = pk.x - camX;
-        const sy = pk.y - camY;
-
-        const visible = isVisibleInCone(sx, sy);
+        const x = pk.x - camX;
+        const y = pk.y - camY;
 
         const w = 36, h = 24;
-
-        ctx.save();
-
-        if (!visible) {
-          // Under fog: slightly dimmed + subtle glow
-          ctx.globalAlpha = 0.70;
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = "rgba(34, 197, 94, .55)";
-        } else {
-          // In vision: normal
-          ctx.globalAlpha = 0.95;
-          ctx.shadowBlur = 0;
-        }
-
-        ctx.fillStyle = "rgba(34, 197, 94, 1)";
-        ctx.fillRect(sx - w/2, sy - h/2, w, h);
-
-        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(34, 197, 94, .95)";
+        ctx.fillRect(x - w/2, y - h/2, w, h);
         ctx.strokeStyle = "rgba(0,0,0,.35)";
-        ctx.strokeRect(sx - w/2, sy - h/2, w, h);
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
 
         ctx.fillStyle = "rgba(10,10,10,.9)";
         ctx.font = "16px system-ui";
-        ctx.fillText("$", sx - 5, sy + 6);
-
-        ctx.restore();
+        ctx.fillText("$", x - 5, y + 6);
       }
     }
 
@@ -1579,11 +1525,11 @@
       ctx.closePath();
     }
 
-    function drawPlayer(p, camX, camY, isMe){
+    // Split player draw into "body" and "label"
+    function drawPlayerBody(p, camX, camY, isMe){
       const px = p.x - camX;
       const py = p.y - camY;
 
-      // dead players: faint
       const alive = (p.alive !== false);
       const a = alive ? 1 : 0.35;
 
@@ -1595,10 +1541,20 @@
       ctx.moveTo(px, py);
       ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
       ctx.stroke();
+    }
 
-      ctx.fillStyle = `rgba(230,237,247,${0.85*a})`;
+    function drawPlayerLabel(p, camX, camY){
+      const px = p.x - camX;
+      const py = p.y - camY;
+
+      const alive = (p.alive !== false);
+      const a = alive ? 1 : 0.55;
+
+      ctx.save();
+      ctx.fillStyle = `rgba(230,237,247,${0.90*a})`;
       ctx.font = "12px system-ui";
       ctx.fillText(p.name, px - 14, py - 20);
+      ctx.restore();
     }
 
     function draw(){
@@ -1620,16 +1576,15 @@
       drawWalls(camX, camY);
       drawMachines(camX, camY);
 
-      // bullets BEFORE fog so fog hides them outside cone
+      // bullets BEFORE fog
       drawBullets(camX, camY);
 
+      // player bodies BEFORE fog (fog can hide them)
       for (const p of lastSnapshot.players) {
-        if (p.id === myId) continue;
-        drawPlayer(p, camX, camY, false);
+        drawPlayerBody(p, camX, camY, p.id === myId);
       }
 
-      if (me) drawSpeechBubble(me.x, me.y, camX, camY);
-
+      // fog on top of world
       if (me) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
@@ -1662,10 +1617,14 @@
         }
       }
 
-      // ✅ money AFTER fog (but dim+glow when outside cone)
+      // money AFTER fog
       drawPickups(camX, camY);
 
-      if (me) drawPlayer(me, camX, camY, true);
+      // ✅ labels + speech bubble AFTER fog so they are never hidden by fog
+      for (const p of lastSnapshot.players) {
+        drawPlayerLabel(p, camX, camY);
+      }
+      if (me) drawSpeechBubble(me.x, me.y, camX, camY);
     }
 
     function loop(){
