@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Timetable Clowns — Lobby + Movement</title>
+  <title>Timetable Clowns — Lobby + Game</title>
   <style>
     :root{
       --bg:#0b1220;
@@ -25,18 +25,22 @@
       color:var(--ink);
     }
 
-    /* Make the app use more width */
-    .wrap{max-width:none;margin:0 auto;padding:18px}
-    h1,h2,h3{margin:.2em 0 .4em}
+    .wrap{max-width:none;margin:0 auto;padding:14px}
+    h1{margin:.2em 0 .4em}
+    h2,h3{margin:.2em 0 .4em}
+    .muted{color:var(--muted)}
+    .hidden{display:none}
+
     .card{
       background:var(--panel);
       border:1px solid var(--line);
       border-radius:16px;
-      padding:16px;
-      margin:14px 0;
+      padding:14px;
+      margin:12px 0;
     }
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .row > *{flex:1 1 180px}
+
     input,select,button{
       font:inherit;
       padding:10px 12px;
@@ -48,8 +52,7 @@
     button{cursor:pointer}
     button.primary{ background:var(--accent); border-color:var(--accent); }
     button.danger{ background:rgba(239,68,68,.18); border-color:rgba(239,68,68,.45); }
-    .muted{color:var(--muted)}
-    .hidden{display:none}
+
     .pill{
       display:inline-block;
       padding:4px 10px;
@@ -67,18 +70,145 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
-    /* Canvas should be almost full window size */
-    canvas{
-      width:100%;
-      height: calc(100vh - 260px);
-      min-height: 520px;
+    /* ===== Game layout: canvas left, sidebar right ===== */
+    .gameLayout{
+      display:grid;
+      grid-template-columns: 1fr 240px;
+      gap:12px;
+      align-items:stretch;
+    }
+
+    .canvasWrap{
+      position:relative;
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
       background:#0e1630;
-      display:block;
+      overflow:hidden;
+      min-height: 520px;
+
+      /* take most viewport height */
+      height: calc(100vh - 150px);
+      max-height: 920px;
     }
 
-    /* Prompt overlay */
+    canvas{
+      width:100%;
+      height:100%;
+      display:block;
+      background:transparent;
+    }
+
+    /* HUD overlay (z-axis in front of arena) */
+    .hudOverlay{
+      position:absolute;
+      top:10px;
+      left:10px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      z-index:5;
+      pointer-events:none;
+    }
+    .hudPill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(0,0,0,.22);
+      color:rgba(230,237,247,.92);
+      box-shadow:0 8px 18px rgba(0,0,0,.25);
+      white-space:nowrap;
+      font-weight:800;
+    }
+    .dotCoin{
+      width:10px;height:10px;border-radius:999px;
+      background:var(--coin);
+      box-shadow:0 0 0 2px rgba(0,0,0,.18) inset;
+      display:inline-block;
+    }
+
+    /* Sidebar (upgrades + leave button) */
+    .sidePanel{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      height:100%;
+    }
+    .sideCard{
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      background:rgba(0,0,0,.10);
+      padding:10px;
+    }
+    .sideTitle{
+      font-weight:900;
+      margin:0 0 8px;
+      font-size:14px;
+      color:rgba(230,237,247,.9);
+    }
+
+    .upgradeSlotsCol{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .uSlot{
+      height:52px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:#0e1630;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:10px 10px;
+      position:relative;
+      box-shadow:0 0 0 2px rgba(0,0,0,.10) inset;
+    }
+    .uLeft{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      min-width:0;
+    }
+    .uHotkey{
+      width:26px;height:26px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,.12);
+      display:grid;place-items:center;
+      font-weight:900;
+      opacity:.9;
+      flex:0 0 auto;
+    }
+    .uName{
+      font-weight:900;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      max-width: 140px;
+    }
+    .uMeta{
+      font-size:12px;
+      color:rgba(230,237,247,.65);
+      margin-top:2px;
+    }
+    .uStack{
+      display:flex;
+      flex-direction:column;
+      min-width:0;
+    }
+    .uUses{
+      font-weight:900;
+      opacity:.85;
+      padding:2px 8px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.12);
+      flex:0 0 auto;
+    }
+
+    /* Prompt overlays */
     .overlay{
       position:fixed; inset:0;
       background:rgba(0,0,0,.55);
@@ -109,106 +239,11 @@
       gap:10px;
       margin-top:10px;
     }
-    .msg{margin-top:8px; font-weight:700}
+    .msg{margin-top:8px; font-weight:800}
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
-    /* HUD overlay */
-    .hudRow{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:space-between;
-      flex-wrap:wrap;
-      margin:8px 0 10px;
-    }
-    .hudLeft, .hudRight{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      flex-wrap:wrap;
-    }
-    .hudPill{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.12);
-      white-space:nowrap;
-    }
-    .dotCoin{
-      width:10px;height:10px;border-radius:999px;
-      background:var(--coin);
-      box-shadow:0 0 0 2px rgba(0,0,0,.18) inset;
-      display:inline-block;
-    }
-
-    /* Bottom upgrade bar */
-    .upgradeBar{
-      margin-top:10px;
-      padding:10px;
-      border-radius:14px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.10);
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:space-between;
-      flex-wrap:wrap;
-    }
-    .upgradeSlots{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      flex-wrap:wrap;
-    }
-    .uSlot{
-      width:44px;
-      height:44px;
-      border-radius:12px;
-      border:1px solid var(--line);
-      background:#0e1630;
-      display:grid;
-      place-items:center;
-      position:relative;
-      box-shadow:0 0 0 2px rgba(0,0,0,.10) inset;
-    }
-    .uSlot .uTxt{
-      font-weight:900;
-      font-size:12px;
-      opacity:.95;
-      text-align:center;
-      line-height:1.05;
-      padding:2px;
-    }
-    .uSlot .uHotkey{
-      position:absolute;
-      top:4px;
-      left:6px;
-      font-size:11px;
-      font-weight:900;
-      opacity:.85;
-    }
-    .uSlot .uUses{
-      position:absolute;
-      bottom:4px;
-      right:6px;
-      font-size:11px;
-      font-weight:900;
-      opacity:.8;
-    }
-    .uLegend{
-      color:var(--muted);
-      font-size:13px;
-      display:flex;
-      gap:14px;
-      flex-wrap:wrap;
-      align-items:center;
-    }
-
-    /* Upgrade picker grid tiles (reused for respawn) */
+    /* Upgrade picker tiles */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -234,9 +269,8 @@
     .upgKind{ font-size:12px; color:var(--muted); margin-top:6px; }
     .upgFoot{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:10px; }
     .upgTag{ font-size:12px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
-    .upgPick{ font-size:12px; font-weight:800; color:rgba(230,237,247,.9); }
+    .upgPick{ font-size:12px; font-weight:900; color:rgba(230,237,247,.9); }
 
-    /* Drop picker list */
     .dropList{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
     .dropBtn{
       text-align:left;
@@ -249,12 +283,21 @@
     }
     .dropBtn:hover{ border-color: rgba(255,255,255,.22); }
     .dropMeta{ font-size:12px; color:var(--muted); margin-top:4px; }
+
+    @media (max-width: 980px){
+      .gameLayout{ grid-template-columns: 1fr; }
+      .sidePanel{ flex-direction:row; flex-wrap:wrap; }
+      .sidePanel > *{ flex:1 1 240px; }
+      .canvasWrap{ height: calc(100vh - 210px); }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Shooting: hold Space. Debug: V (mask), B (edge ring).</p>
+    <p class="muted" style="margin:.2em 0 0.6em">
+      Move: WASD / Arrow keys · Interact: E · Shoot: hold Space · Debug: V (mask), B (edge ring)
+    </p>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -305,7 +348,7 @@
     </div>
 
     <div class="card hidden" id="lobbyCard">
-      <div class="row">
+      <div class="row" style="align-items:flex-end">
         <div>
           <div class="muted">Game code</div>
           <div class="code" id="gameCode">-----</div>
@@ -333,43 +376,34 @@
     </div>
 
     <div class="card hidden" id="runningCard">
-      <div class="row" style="align-items:center;justify-content:space-between">
-        <div>
-          <h2 style="margin:0">Game started 🎉</h2>
-          <p class="muted" id="runningHint" style="margin:.2em 0 0">Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space.</p>
-        </div>
-        <div>
-          <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
-        </div>
-      </div>
+      <div class="gameLayout">
+        <div class="canvasWrap" id="canvasWrap">
+          <div class="hudOverlay">
+            <div class="hudPill" title="Money">
+              <span class="dotCoin"></span>
+              <span id="hudMoney">$0</span>
+            </div>
+            <div class="hudPill" title="Life">
+              ❤️ <span id="hudLife">1</span>
+            </div>
+          </div>
 
-      <!-- HUD -->
-      <div class="hudRow" id="hudRow">
-        <div class="hudLeft">
-          <span class="hudPill" title="You">
-            <span class="pill" id="hudName">?</span>
-            <span class="pill" id="hudTeam">team: ?</span>
-          </span>
+          <canvas id="game"></canvas>
         </div>
-        <div class="hudRight">
-          <span class="hudPill" title="Money">
-            <span class="dotCoin"></span>
-            <span id="hudMoney">$0</span>
-          </span>
-          <span class="hudPill muted" title="Life (later)">
-            ❤️ <span id="hudLife">1</span>
-          </span>
-        </div>
-      </div>
 
-      <canvas id="game" width="900" height="520"></canvas>
+        <div class="sidePanel">
+          <div class="sideCard">
+            <div class="sideTitle">Menu</div>
+            <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
+          </div>
 
-      <!-- Bottom upgrade bar -->
-      <div class="upgradeBar" id="upgradeBar">
-        <div class="upgradeSlots" id="upgradeSlots"></div>
-        <div class="uLegend">
-          <span>Upgrades</span>
-          <span class="muted">Use consumables: 8 / 9 / 0</span>
+          <div class="sideCard" style="flex:1 1 auto">
+            <div class="sideTitle">Upgrades (8 / 9 / 0)</div>
+            <div class="upgradeSlotsCol" id="upgradeSlots"></div>
+            <p class="muted" style="margin:10px 0 0; font-size:13px">
+              Consumables are in the first 3 slots.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -393,10 +427,8 @@
   <div class="overlay" id="upgradeOverlay">
     <div class="modal">
       <h3>Choose an upgrade</h3>
-      <p class="muted" style="margin:.2em 0 .6em">Pick one. (Effects come later.)</p>
-
+      <p class="muted" style="margin:.2em 0 .6em">Pick one.</p>
       <div id="upgradeList"></div>
-
       <div class="actions">
         <button id="upgradeCloseBtn">Close</button>
       </div>
@@ -411,9 +443,7 @@
       <p class="muted" id="dropText" style="margin:.2em 0 .6em">
         You can only carry 3 consumable upgrades. Choose one to drop.
       </p>
-
       <div id="dropList" class="dropList"></div>
-
       <div class="actions">
         <button id="dropCancelBtn">Cancel</button>
       </div>
@@ -461,18 +491,17 @@
       hostControls: document.getElementById("hostControls"),
       startGame: document.getElementById("startGame"),
       lobbyHint: document.getElementById("lobbyHint"),
-      runningHint: document.getElementById("runningHint"),
 
       leaveLobby: document.getElementById("leaveLobby"),
       leaveGame: document.getElementById("leaveGame"),
 
-      hudName: document.getElementById("hudName"),
-      hudTeam: document.getElementById("hudTeam"),
       hudMoney: document.getElementById("hudMoney"),
       hudLife: document.getElementById("hudLife"),
 
       upgradeSlots: document.getElementById("upgradeSlots"),
+
       canvas: document.getElementById("game"),
+      canvasWrap: document.getElementById("canvasWrap"),
 
       overlay: document.getElementById("overlay"),
       qText: document.getElementById("qText"),
@@ -504,7 +533,6 @@
 
     let myId = null;
     let isHost = false;
-
     let settings = { mode: "ffa", teamCount: 0 };
 
     let mapData = null;
@@ -514,20 +542,21 @@
     let activePromptId = null;
     let activeOfferId = null;
     let pendingReplace = null;
-
     let activeRespawn = null;
 
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
 
-    // ---- bullets render tuning ----
+    // ---- bullets render ----
     const BULLET_R = 3;
 
+    // speech bubble (for denies etc)
     let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
     }
 
+    // ===== Role UI =====
     function updateRoleUI(){
       const guest = el.role.value === "guest";
       el.joinCode.classList.toggle("hidden", !guest);
@@ -582,7 +611,7 @@
       el.hostControls.style.display = "block";
     });
 
-    socket.on("JOIN_SUCCESS", ({ gameCode, players, teams, settings: s }) => {
+    socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
       el.gameCode.textContent = gameCode;
       el.start.classList.add("hidden");
       el.lobby.classList.remove("hidden");
@@ -590,11 +619,10 @@
 
       settings = s || { mode: "ffa", teamCount: 0 };
 
-      if (settings.mode === "ffa") {
-        el.lobbyHint.textContent = "All vs All: teams are automatic.";
-      } else {
-        el.lobbyHint.textContent = "Everyone must have a team before Start game works.";
-      }
+      el.lobbyHint.textContent =
+        (settings.mode === "ffa")
+          ? "All vs All: teams are automatic."
+          : "Everyone must have a team before Start game works.";
 
       renderPlayers(players);
     });
@@ -620,9 +648,6 @@
 
       settings = payload.settings || settings;
 
-      el.runningHint.textContent =
-        `Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space. Mode: ${settings.mode || "?"}. Map: ${mapData?.name || mapData?.id || "?"}`;
-
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
 
@@ -636,9 +661,10 @@
 
       const me = snap.players?.find(p => p.id === myId);
       if (me) {
-        el.hudName.textContent = me.name || "?";
-        el.hudTeam.textContent = "team: " + (me.teamId ?? "?");
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+
+        // if you add HP later, hook it here
+        el.hudLife.textContent = me.alive === false ? "0" : "1";
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
@@ -685,11 +711,14 @@
       }
     }
 
-    // ---------- Movement + Fire input ----------
+    // ---------- Input ----------
     const inputState = { up:false, down:false, left:false, right:false, fire:false };
 
     function isUiBlockingInput() {
-      return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show") || el.respawnOverlay.classList.contains("show");
+      return !!activePromptId ||
+             !!activeOfferId ||
+             el.dropOverlay.classList.contains("show") ||
+             el.respawnOverlay.classList.contains("show");
     }
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
@@ -978,60 +1007,78 @@
       }
     });
 
+    // ===== Upgrade bar render (vertical, no distortion) =====
     function renderUpgradeBar() {
-      const visualSlots = 6;
       el.upgradeSlots.innerHTML = "";
 
       const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
       const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
+      // Show 6 slots total: first 3 are consumables (hotkeys), then permanents / extra
       const display = [];
+
       for (const s of cons) {
         const info = s?.info || {};
-        display.push({ kind: "consumable", name: info.name || info.id || s.id, desc: info.desc || "", usesLeft: s.usesLeft });
+        display.push({
+          kind: "consumable",
+          name: info.name || info.id || s.id,
+          desc: info.desc || "",
+          usesLeft: s.usesLeft
+        });
       }
       for (const p of perm) {
         const info = p?.info || {};
-        display.push({ kind: "permanent", name: info.name || info.id || p.id, desc: info.desc || "", usesLeft: null });
+        display.push({
+          kind: "permanent",
+          name: info.name || info.id || p.id,
+          desc: info.desc || "",
+          usesLeft: null
+        });
       }
 
       const hotkeys = ["8", "9", "0"];
-      for (let i = 0; i < visualSlots; i++) {
+      const totalSlots = 6;
+
+      for (let i = 0; i < totalSlots; i++) {
         const u = display[i];
+
         const slot = document.createElement("div");
         slot.className = "uSlot";
         slot.title = u?.desc ? u.desc : "";
 
-        if (i < 3) {
-          const hk = document.createElement("div");
-          hk.className = "uHotkey";
-          hk.textContent = hotkeys[i];
-          slot.appendChild(hk);
-        }
+        const left = document.createElement("div");
+        left.className = "uLeft";
 
-        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) {
-          const uses = document.createElement("div");
-          uses.className = "uUses";
-          uses.textContent = String(u.usesLeft);
-          slot.appendChild(uses);
-        }
+        const hk = document.createElement("div");
+        hk.className = "uHotkey";
+        hk.textContent = (i < 3) ? hotkeys[i] : " ";
+        left.appendChild(hk);
 
-        const txt = document.createElement("div");
-        txt.className = "uTxt";
-        txt.textContent = u ? shortName(u.name) : "";
-        slot.appendChild(txt);
+        const stack = document.createElement("div");
+        stack.className = "uStack";
+
+        const name = document.createElement("div");
+        name.className = "uName";
+        name.textContent = u ? u.name : "";
+        stack.appendChild(name);
+
+        const meta = document.createElement("div");
+        meta.className = "uMeta";
+        if (!u) meta.textContent = "";
+        else meta.textContent = u.kind === "consumable" ? "consumable" : "permanent";
+        stack.appendChild(meta);
+
+        left.appendChild(stack);
+
+        const uses = document.createElement("div");
+        uses.className = "uUses";
+        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) uses.textContent = String(u.usesLeft);
+        else uses.textContent = "";
+        slot.appendChild(left);
+        slot.appendChild(uses);
 
         el.upgradeSlots.appendChild(slot);
       }
-    }
-
-    function shortName(name){
-      const s = String(name || "").trim();
-      if (!s) return "";
-      if (s.length <= 6) return s;
-      const parts = s.split(/\s+/);
-      if (parts.length >= 2) return (parts[0].slice(0,3) + parts[1].slice(0,3));
-      return s.slice(0,6);
     }
 
     // ---------- Respawn UI ----------
@@ -1115,12 +1162,70 @@
       }
     });
 
-    // ---------- Rendering ----------
+    // ---------- Canvas rendering (NO stretching) ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
-    ctx.imageSmoothingEnabled = true;
 
-    // Fog-of-war + LOS
+    // Keep a “CSS pixel coordinate system” regardless of devicePixelRatio
+    let VIEW_W = 900;
+    let VIEW_H = 520;
+
+    function resizeCanvasToDisplaySize() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+
+      const cssW = Math.max(1, Math.round(rect.width));
+      const cssH = Math.max(1, Math.round(rect.height));
+
+      const needW = Math.round(cssW * dpr);
+      const needH = Math.round(cssH * dpr);
+
+      if (canvas.width !== needW || canvas.height !== needH) {
+        canvas.width = needW;
+        canvas.height = needH;
+      }
+
+      // render in CSS pixels (so math stays sane)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      VIEW_W = cssW;
+      VIEW_H = cssH;
+    }
+
+    // Fog-of-war buffers
+    const fogCanvas = document.createElement("canvas");
+    const fogCtx = fogCanvas.getContext("2d", { alpha: true });
+
+    const visCanvas = document.createElement("canvas");
+    const visCtx = visCanvas.getContext("2d", { alpha: true });
+
+    const blurCanvas = document.createElement("canvas");
+    const blurCtx = blurCanvas.getContext("2d", { alpha: true });
+
+    const edgeCanvas = document.createElement("canvas");
+    const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
+
+    function resizeFogCanvases() {
+      const dpr = window.devicePixelRatio || 1;
+      const needW = Math.round(VIEW_W * dpr);
+      const needH = Math.round(VIEW_H * dpr);
+
+      const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
+      for (const c of canvases) {
+        if (c.width !== needW || c.height !== needH) {
+          c.width = needW;
+          c.height = needH;
+        }
+      }
+
+      // match transforms so we can draw in CSS pixels
+      fogCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      visCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      edgeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    // Fog config
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
@@ -1135,46 +1240,10 @@
 
     let lastFacingAng = 0;
 
-    function isUiBlockingInputForDebug() {
-      return isUiBlockingInput();
-    }
-
-    window.addEventListener("keydown", (e) => {
-      if (!isGameRunning()) return;
-      if (isUiBlockingInputForDebug()) return;
-
-      if (e.key.toLowerCase() === "v") {
-        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
-        e.preventDefault();
-        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
-      }
-      if (e.key.toLowerCase() === "b") {
-        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
-        e.preventDefault();
-        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
-      }
-    });
-
-    const fogCanvas = document.createElement("canvas");
-    const fogCtx = fogCanvas.getContext("2d", { alpha: true });
-
-    const visCanvas = document.createElement("canvas");
-    const visCtx = visCanvas.getContext("2d", { alpha: true });
-
-    const blurCanvas = document.createElement("canvas");
-    const blurCtx = blurCanvas.getContext("2d", { alpha: true });
-
-    const edgeCanvas = document.createElement("canvas");
-    const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
-
-    function resizeFogCanvases() {
-      const w = canvas.width, h = canvas.height;
-      if (fogCanvas.width !== w || fogCanvas.height !== h) {
-        fogCanvas.width = w; fogCanvas.height = h;
-        visCanvas.width = w; visCanvas.height = h;
-        blurCanvas.width = w; blurCanvas.height = h;
-        edgeCanvas.width = w; edgeCanvas.height = h;
-      }
+    function dist2(ax, ay, bx, by) {
+      const dx = ax - bx;
+      const dy = ay - by;
+      return dx*dx + dy*dy;
     }
 
     function segsFromWalls(walls){
@@ -1215,7 +1284,7 @@
         if (hit && hit.t < bestT) bestT = hit.t;
       }
 
-      return { rx, ry, t: bestT, x: px + rx * bestT, y: py + ry * bestT };
+      return { x: px + rx * bestT, y: py + ry * bestT };
     }
 
     function getWallCornerAngles(px, py) {
@@ -1258,7 +1327,6 @@
 
     function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
-
       const outer = [];
       for (const a of angles) {
         const hit = castRayToWalls(px, py, a, maxLen, segs);
@@ -1279,14 +1347,10 @@
 
       resizeFogCanvases();
 
-      const VIEW_W = canvas.width;
-      const VIEW_H = canvas.height;
-
       const meX = meWorldX - camX;
       const meY = meWorldY - camY;
 
-      const worldWalls = mapData?.walls || [];
-      const segsWorld = segsFromWalls(worldWalls);
+      const segsWorld = segsFromWalls(mapData?.walls || []);
       const segs = segsWorld.map(s => ({
         ax: s.ax - camX, ay: s.ay - camY,
         bx: s.bx - camX, by: s.by - camY
@@ -1310,12 +1374,7 @@
 
       visCtx.fillStyle = "rgba(255,255,255,1)";
       const okCone = fillConeFromPlayerApex(
-        visCtx,
-        meX, meY,
-        ang, half,
-        VISION_LEN,
-        segs,
-        cornerAngles
+        visCtx, meX, meY, ang, half, VISION_LEN, segs, cornerAngles
       );
 
       visCtx.beginPath();
@@ -1335,7 +1394,7 @@
       blurCtx.globalAlpha = 1;
       blurCtx.clearRect(0,0,VIEW_W,VIEW_H);
       blurCtx.filter = `blur(${EDGE_BLUR_PX}px)`;
-      blurCtx.drawImage(visCanvas, 0, 0);
+      blurCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
       blurCtx.filter = "none";
       blurCtx.restore();
 
@@ -1343,9 +1402,9 @@
       edgeCtx.globalCompositeOperation = "source-over";
       edgeCtx.globalAlpha = 1;
       edgeCtx.clearRect(0,0,VIEW_W,VIEW_H);
-      edgeCtx.drawImage(blurCanvas, 0, 0);
+      edgeCtx.drawImage(blurCanvas, 0, 0, VIEW_W, VIEW_H);
       edgeCtx.globalCompositeOperation = "destination-out";
-      edgeCtx.drawImage(visCanvas, 0, 0);
+      edgeCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
       edgeCtx.restore();
 
       fogCtx.save();
@@ -1358,12 +1417,23 @@
 
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.globalAlpha = 1;
-      fogCtx.drawImage(visCanvas, 0, 0);
+      fogCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
 
       fogCtx.globalAlpha = EDGE_STRENGTH;
-      fogCtx.drawImage(edgeCanvas, 0, 0);
+      fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
 
       fogCtx.restore();
+    }
+
+    function roundRect(c, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      c.beginPath();
+      c.moveTo(x + rr, y);
+      c.arcTo(x + w, y, x + w, y + h, rr);
+      c.arcTo(x + w, y + h, x, y + h, rr);
+      c.arcTo(x, y + h, x, y, rr);
+      c.arcTo(x, y, x + w, y, rr);
+      c.closePath();
     }
 
     function drawWalls(camX, camY){
@@ -1380,7 +1450,6 @@
 
     function drawWallsFogOutline(camX, camY){
       if (!mapData?.walls) return;
-
       ctx.save();
       ctx.globalCompositeOperation = "source-over";
       ctx.lineWidth = 1;
@@ -1395,8 +1464,35 @@
         ctx.strokeStyle = "rgba(255,255,255,.14)";
         ctx.strokeRect(x, y, w.w, w.h);
       }
-
       ctx.restore();
+    }
+
+    function drawMachines(camX, camY){
+      if (!mapData?.machines || !lastSnapshot) return;
+
+      const me = lastSnapshot.players.find(p => p.id === myId);
+      const mx = me?.x ?? -999999;
+      const myy = me?.y ?? -999999;
+      const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
+
+      for (const m of mapData.machines) {
+        const x = m.x - camX;
+        const y = m.y - camY;
+
+        const near = dist2(m.x, m.y, mx, myy) <= r2;
+
+        ctx.fillStyle = "rgba(255, 200, 0, .85)";
+        ctx.fillRect(x - 10, y - 10, 20, 20);
+
+        ctx.lineWidth = near ? 3 : 1;
+        ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
+        ctx.strokeRect(x - 10, y - 10, 20, 20);
+
+        ctx.fillStyle = "rgba(10, 10, 10, .9)";
+        ctx.font = "12px system-ui";
+        ctx.fillText(String(m.num), x - 4, y + 4);
+      }
+      ctx.lineWidth = 1;
     }
 
     // bullets BEFORE fog so fog hides them outside cone
@@ -1409,11 +1505,9 @@
         const x = b.x - camX;
         const y = b.y - camY;
 
-        const isMine = b.ownerId === myId;
-
         ctx.beginPath();
         ctx.arc(x, y, BULLET_R, 0, Math.PI * 2);
-        ctx.fillStyle = isMine ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
+        ctx.fillStyle = (b.ownerId === myId) ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
         ctx.fill();
       }
     }
@@ -1440,35 +1534,34 @@
       }
     }
 
-    function drawMachines(camX, camY){
-      if (!mapData?.machines || !lastSnapshot) return;
+    // ✅ dead players: DO NOT DRAW AT ALL
+    function drawPlayerBody(p, camX, camY, isMe){
+      if (p.alive === false) return;
 
-      const me = lastSnapshot.players.find(p => p.id === myId);
-      const mx = me?.x ?? -999999;
-      const myy = me?.y ?? -999999;
-      const r2 = INTERACT_RADIUS * INTERACT_RADIUS;
+      const px = p.x - camX;
+      const py = p.y - camY;
 
-      for (const m of mapData.machines) {
-        const x = m.x - camX;
-        const y = m.y - camY;
+      ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
+      ctx.fillRect(px - 14, py - 14, 28, 28);
 
-        const dx = m.x - mx;
-        const dy = m.y - myy;
-        const near = (dx*dx + dy*dy) <= r2;
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
+      ctx.stroke();
+    }
 
-        ctx.fillStyle = "rgba(255, 200, 0, .85)";
-        ctx.fillRect(x - 10, y - 10, 20, 20);
+    function drawPlayerLabel(p, camX, camY){
+      if (p.alive === false) return;
 
-        ctx.lineWidth = near ? 3 : 1;
-        ctx.strokeStyle = near ? "rgba(255, 60, 60, .95)" : "rgba(0,0,0,.35)";
-        ctx.strokeRect(x - 10, y - 10, 20, 20);
+      const px = p.x - camX;
+      const py = p.y - camY;
 
-        ctx.fillStyle = "rgba(10, 10, 10, .9)";
-        ctx.font = "12px system-ui";
-        ctx.fillText(String(m.num), x - 4, y + 4);
-      }
-
-      ctx.lineWidth = 1;
+      ctx.save();
+      ctx.fillStyle = "rgba(230,237,247,.90)";
+      ctx.font = "12px system-ui";
+      ctx.fillText(p.name, px - 14, py - 20);
+      ctx.restore();
     }
 
     function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
@@ -1514,77 +1607,54 @@
       ctx.lineWidth = 1;
     }
 
-    function roundRect(ctx, x, y, w, h, r) {
-      const rr = Math.min(r, w/2, h/2);
-      ctx.beginPath();
-      ctx.moveTo(x + rr, y);
-      ctx.arcTo(x + w, y, x + w, y + h, rr);
-      ctx.arcTo(x + w, y + h, x, y + h, rr);
-      ctx.arcTo(x, y + h, x, y, rr);
-      ctx.arcTo(x, y, x + w, y, rr);
-      ctx.closePath();
-    }
+    // Debug keys
+    window.addEventListener("keydown", (e) => {
+      if (!isGameRunning()) return;
+      if (isUiBlockingInput()) return;
 
-    // Split player draw into "body" and "label"
-    function drawPlayerBody(p, camX, camY, isMe){
-      const px = p.x - camX;
-      const py = p.y - camY;
-
-      const alive = (p.alive !== false);
-      const a = alive ? 1 : 0.35;
-
-      ctx.fillStyle = isMe ? `rgba(43,102,255,${0.95*a})` : `rgba(255,255,255,${0.75*a})`;
-      ctx.fillRect(px - 14, py - 14, 28, 28);
-
-      ctx.strokeStyle = `rgba(0,0,0,${0.35*a})`;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
-      ctx.stroke();
-    }
-
-    function drawPlayerLabel(p, camX, camY){
-      const px = p.x - camX;
-      const py = p.y - camY;
-
-      const alive = (p.alive !== false);
-      const a = alive ? 1 : 0.55;
-
-      ctx.save();
-      ctx.fillStyle = `rgba(230,237,247,${0.90*a})`;
-      ctx.font = "12px system-ui";
-      ctx.fillText(p.name, px - 14, py - 20);
-      ctx.restore();
-    }
+      if (e.key.toLowerCase() === "v") {
+        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
+        e.preventDefault();
+        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
+      }
+      if (e.key.toLowerCase() === "b") {
+        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
+        e.preventDefault();
+        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
+      }
+    });
 
     function draw(){
       if (!lastSnapshot) return;
 
+      resizeCanvasToDisplaySize();
+
       const me = lastSnapshot.players.find(p => p.id === myId);
 
-      const camXraw = me ? (me.x - canvas.width / 2) : 0;
-      const camYraw = me ? (me.y - canvas.height / 2) : 0;
+      // If you're dead, server still sends position; camera can stay where you died.
+      const camXraw = me ? (me.x - VIEW_W / 2) : 0;
+      const camYraw = me ? (me.y - VIEW_H / 2) : 0;
 
-      const camX = Math.round(Math.max(0, Math.min(world.w - canvas.width, camXraw)));
-      const camY = Math.round(Math.max(0, Math.min(world.h - canvas.height, camYraw)));
+      const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
+      const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
 
-      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
+      // World border
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
       drawWalls(camX, camY);
       drawMachines(camX, camY);
 
-      // bullets BEFORE fog
       drawBullets(camX, camY);
 
-      // player bodies BEFORE fog (fog can hide them)
+      // player bodies BEFORE fog
       for (const p of lastSnapshot.players) {
         drawPlayerBody(p, camX, camY, p.id === myId);
       }
 
-      // fog on top of world
+      // fog
       if (me) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
@@ -1596,12 +1666,11 @@
           ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = 0.85;
           ctx.fillStyle = "rgba(0,0,0,1)";
-          ctx.fillRect(0,0,canvas.width,canvas.height);
+          ctx.fillRect(0,0,VIEW_W,VIEW_H);
           ctx.globalAlpha = 1;
-          ctx.drawImage(visCanvas, 0, 0);
+          ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
           ctx.restore();
         } else if (DEBUG_SHOW_EDGE) {
-          const VIEW_W = canvas.width, VIEW_H = canvas.height;
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = 0.9;
@@ -1609,22 +1678,23 @@
           ctx.fillRect(0, 0, VIEW_W, VIEW_H);
           ctx.globalCompositeOperation = "destination-in";
           ctx.globalAlpha = 1;
-          ctx.drawImage(edgeCanvas, 0, 0);
+          ctx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
           ctx.restore();
         } else {
-          ctx.drawImage(fogCanvas, 0, 0);
+          ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
           drawWallsFogOutline(camX, camY);
         }
       }
 
-      // money AFTER fog
+      // After fog: pickups + labels + bubble
       drawPickups(camX, camY);
 
-      // ✅ labels + speech bubble AFTER fog so they are never hidden by fog
       for (const p of lastSnapshot.players) {
         drawPlayerLabel(p, camX, camY);
       }
-      if (me) drawSpeechBubble(me.x, me.y, camX, camY);
+
+      // Only show your bubble if YOU are alive (optional; feels cleaner)
+      if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY);
     }
 
     function loop(){
