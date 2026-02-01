@@ -1266,6 +1266,32 @@
       }
     }
 
+    // ✅ NEW: faint wall outlines on top of fog (so walls are readable in fog)
+    function drawWallsFogOutline(camX, camY){
+      if (!mapData?.walls) return;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+
+      // A subtle “double-outline” reads well through dark fog:
+      // 1) thin dark line (depth)
+      // 2) thin light line (visibility)
+      ctx.lineWidth = 1;
+
+      for (const w of mapData.walls) {
+        const x = w.x - camX;
+        const y = w.y - camY;
+
+        ctx.strokeStyle = "rgba(0,0,0,.55)";
+        ctx.strokeRect(x, y, w.w, w.h);
+
+        ctx.strokeStyle = "rgba(255,255,255,.14)";
+        ctx.strokeRect(x, y, w.w, w.h);
+      }
+
+      ctx.restore();
+    }
+
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -1448,6 +1474,9 @@
         } else {
           // Normal fog draw (ALWAYS ON)
           ctx.drawImage(fogCanvas, 0, 0);
+
+          // ✅ NEW: keep wall outlines readable in fog
+          drawWallsFogOutline(camX, camY);
         }
       }
 
