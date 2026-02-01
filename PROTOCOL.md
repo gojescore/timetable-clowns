@@ -107,10 +107,31 @@ A silly top-down multiplayer game for practicing times tables.
 
 ---
 
-## 6) Fog of war (later)
-- Vision cone in facing direction
-- Cone width + length upgradeable
-- Smooth fade at edges
+## 6) Fog of war (implemented: client-rendered)
+### What it is
+- Fog-of-war is **always active** during gameplay.
+- The player’s visible area is a **cone-shaped line-of-sight** (LOS) in the facing direction.
+- The cone is the player’s **only view**:
+  - inside cone = **fully clear** (no fog)
+  - outside cone = **fully obscured**
+- LOS is blocked by walls (raycast against wall segments).
+
+### Rendering rules
+- Fog is **client-rendered only**.
+- Server does **not** send visibility data.
+- Visibility is derived from:
+  - player position
+  - player facing direction (`dirX`, `dirY`)
+  - map wall geometry (`map.walls`)
+- Implementation notes:
+  - Build wall line segments from rectangles.
+  - Cast rays within the cone; each ray stops at the nearest wall hit or max range.
+  - Use an offscreen alpha mask for the cone, then punch it out of a full-screen dark overlay.
+  - Camera is pixel-aligned to avoid seams.
+
+### Debug tools (optional, never required)
+- `V` toggles raw visibility mask view (for diagnosing LOS)
+- `B` toggles edge-ring visualization (for diagnosing blur / boundary)
 
 ---
 
@@ -131,7 +152,7 @@ timetable-clowns/
     - index.js                   # map registry + buildDerived()
     - map01.js                   # map data (rooms, walls, roadAreas)
 - client/
-  - index.html                   # UI + canvas rendering + HUD + overlays
+  - index.html                   # UI + canvas rendering + HUD + overlays (+ fog-of-war rendering)
 
 ---
 
