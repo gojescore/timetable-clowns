@@ -6,18 +6,65 @@
 // Because server/maps/index.js uses structuredClone(), functions do not survive.
 // So we keep roadAreas here, and buildDerived() attaches derived.isRoad() at runtime.
 
+const W = 2400;
+const H = 1600;
+
+// Team zones: corners (rectangles).
+// Players on team T spawn ONLY inside teamSpawnZones[T].
+const teamSpawnZones = [
+  { id: 0, name: "NW", x: 80,      y: 80,      w: 320, h: 260 },
+  { id: 1, name: "NE", x: W - 400, y: 80,      w: 320, h: 260 },
+  { id: 2, name: "SW", x: 80,      y: H - 340, w: 320, h: 260 },
+  { id: 3, name: "SE", x: W - 400, y: H - 340, w: 320, h: 260 },
+];
+
+// FFA spawns: scattered around the rectangle perimeter (circumference-ish).
+function buildPerimeterSpawns(count) {
+  const pts = [];
+  const margin = 90;
+  const x0 = margin, y0 = margin, x1 = W - margin, y1 = H - margin;
+
+  const perim = 2 * ((x1 - x0) + (y1 - y0));
+  for (let i = 0; i < count; i++) {
+    const t = (i / count) * perim;
+    let d = t;
+
+    const topLen = x1 - x0;
+    if (d <= topLen) { pts.push({ x: x0 + d, y: y0 }); continue; }
+    d -= topLen;
+
+    const rightLen = y1 - y0;
+    if (d <= rightLen) { pts.push({ x: x1, y: y0 + d }); continue; }
+    d -= rightLen;
+
+    const botLen = x1 - x0;
+    if (d <= botLen) { pts.push({ x: x1 - d, y: y1 }); continue; }
+    d -= botLen;
+
+    pts.push({ x: x0, y: y1 - d });
+  }
+
+  return pts.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+}
+
+const ffaSpawnPoints = buildPerimeterSpawns(12);
+
 module.exports = {
   id: "map01",
   name: "Training Hall (10 rooms)",
-  world: { w: 2400, h: 1600 },
+  world: { w: W, h: H },
 
-spawns: [
-  { x: 220, y: 220 },
-  { x: 2180, y: 220 },
-  { x: 220, y: 1380 },
-  { x: 2180, y: 1380 },
-],
+  // Legacy spawns (kept for compatibility / fallback)
+  spawns: [
+    { x: 220, y: 220 },
+    { x: 2180, y: 220 },
+    { x: 220, y: 1380 },
+    { x: 2180, y: 1380 },
+  ],
 
+  // NEW: spawn metadata
+  teamSpawnZones,
+  ffaSpawnPoints,
 
   // 10 rooms, each:
   // - exactly 1 machine
