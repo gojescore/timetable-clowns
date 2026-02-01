@@ -44,12 +44,12 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 // --------------------
 // Shooting / bullets
 // --------------------
-const BULLET_SPEED = 780;           // px/sec
-const BULLET_TTL = 1.2;             // seconds
-const BULLET_HIT_R = 4;             // hit radius around bullet point
-const FIRE_COOLDOWN = 0.14;         // seconds between shots (hold Space)
-const RESPAWN_INVULN = 0.6;         // seconds after respawn
-const CORNER_PAD = 80;              // how far inside the corner spawn area
+const BULLET_SPEED = 780; // px/sec
+const BULLET_TTL = 1.2; // seconds
+const BULLET_HIT_R = 4; // hit radius around bullet point
+const FIRE_COOLDOWN = 0.14; // seconds between shots (hold Space)
+const RESPAWN_INVULN = 0.6; // seconds after respawn
+const CORNER_PAD = 80; // how far inside the corner spawn area
 
 // --------------------
 // In-memory game store
@@ -141,7 +141,7 @@ function collidesAt(game, cx, cy) {
     }
   }
 
-  // Machines are SOLID for everyone (no walking through machines)
+  // Machines are SOLID
   if (Array.isArray(map.machines)) {
     for (const m of map.machines) {
       const bx = m.x - MACHINE_HALF;
@@ -161,12 +161,14 @@ function snapshotForGame(game) {
     time: Date.now(),
     world,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
-    bullets: Array.isArray(game.bullets) ? game.bullets.map((b) => ({
-      id: b.id,
-      ownerId: b.ownerId,
-      x: b.x,
-      y: b.y,
-    })) : [],
+    bullets: Array.isArray(game.bullets)
+      ? game.bullets.map((b) => ({
+          id: b.id,
+          ownerId: b.ownerId,
+          x: b.x,
+          y: b.y,
+        }))
+      : [],
     players: [...game.players.values()].map((p) => {
       const up = p.upgrades || { permanent: [], slots: [] };
 
@@ -232,11 +234,9 @@ function findNearbyMachine(game, x, y, radius) {
 function makePromptId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
-
 function makeOfferId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
-
 function makeBulletId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
@@ -281,9 +281,9 @@ function buildRespawnOptions(game, player) {
   }
 
   // Sort so corners first, then machines by number
-  const corners = opts.filter(o => o.kind === "corner");
+  const corners = opts.filter((o) => o.kind === "corner");
   const machines = opts
-    .filter(o => o.kind === "machine")
+    .filter((o) => o.kind === "machine")
     .sort((a, b) => (a.machineNum || 0) - (b.machineNum || 0));
 
   return [...corners, ...machines];
@@ -361,7 +361,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -403,8 +404,8 @@ setInterval(() => {
         if (p.pendingUpgradeOffer) continue;
 
         // Require a facing direction
-        const dx = (typeof p.dirX === "number") ? p.dirX : 1;
-        const dy = (typeof p.dirY === "number") ? p.dirY : 0;
+        const dx = typeof p.dirX === "number" ? p.dirX : 1;
+        const dy = typeof p.dirY === "number" ? p.dirY : 0;
         const dlen = Math.hypot(dx, dy) || 1;
 
         const ndx = dx / dlen;
@@ -431,13 +432,16 @@ setInterval(() => {
     }
 
     // --------------------
-    // Bullets update + collisions
+    // Bullets update + collisions + deaths
     // --------------------
     if (!Array.isArray(game.bullets)) game.bullets = [];
 
     for (let i = game.bullets.length - 1; i >= 0; i--) {
       const b = game.bullets[i];
-      if (!b) { game.bullets.splice(i, 1); continue; }
+      if (!b) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
 
       b.ttl -= dt;
       if (b.ttl <= 0) {
@@ -450,7 +454,6 @@ setInterval(() => {
 
       // outside world
       if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
-
         game.bullets.splice(i, 1);
         continue;
       }
@@ -459,12 +462,11 @@ setInterval(() => {
       let hitWall = false;
       if (Array.isArray(game.map?.walls)) {
         for (const w of game.map.walls) {
-          // expand wall by bullet radius
           if (
-            b.x >= (w.x - BULLET_HIT_R) &&
-            b.x <= (w.x + w.w + BULLET_HIT_R) &&
-            b.y >= (w.y - BULLET_HIT_R) &&
-            b.y <= (w.y + w.h + BULLET_HIT_R)
+            b.x >= w.x - BULLET_HIT_R &&
+            b.x <= w.x + w.w + BULLET_HIT_R &&
+            b.y >= w.y - BULLET_HIT_R &&
+            b.y <= w.y + w.h + BULLET_HIT_R
           ) {
             hitWall = true;
             break;
@@ -476,7 +478,7 @@ setInterval(() => {
         continue;
       }
 
-      // bullet vs machines (solid)
+      // bullet vs machines
       let hitMachine = false;
       if (Array.isArray(game.map?.machines)) {
         for (const m of game.map.machines) {
@@ -486,10 +488,10 @@ setInterval(() => {
           const bh = MACHINE_HALF * 2;
 
           if (
-            b.x >= (bx - BULLET_HIT_R) &&
-            b.x <= (bx + bw + BULLET_HIT_R) &&
-            b.y >= (by - BULLET_HIT_R) &&
-            b.y <= (by + bh + BULLET_HIT_R)
+            b.x >= bx - BULLET_HIT_R &&
+            b.x <= bx + bw + BULLET_HIT_R &&
+            b.y >= by - BULLET_HIT_R &&
+            b.y <= by + bh + BULLET_HIT_R
           ) {
             hitMachine = true;
             break;
@@ -507,11 +509,11 @@ setInterval(() => {
         if (!p.alive) continue;
         if (p.id === b.ownerId) continue;
 
-        // invulnerability
+        // invulnerability (invulnUntil is ms timestamp)
         if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
         const d2 = dist2(b.x, b.y, p.x, p.y);
-        const rr = (PLAYER_HALF + BULLET_HIT_R);
+        const rr = PLAYER_HALF + BULLET_HIT_R;
         if (d2 <= rr * rr) {
           hitPlayer = p;
           break;
@@ -527,25 +529,25 @@ setInterval(() => {
         hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
         hitPlayer.fireCd = 0;
 
-        // clear any open machine prompt (you died)
+        // clear any open prompt (you died)
         hitPlayer.pendingPrompt = null;
 
         // Send respawn picker to that player only
         const opts = buildRespawnOptions(game, hitPlayer);
         hitPlayer.pendingRespawn = {
-          options: opts.map(o => o.id),
+          options: opts.map((o) => o.id),
           createdAt: now,
         };
 
         io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
-          options: opts.map(o => ({
+          options: opts.map((o) => ({
             id: o.id,
             label: o.label,
             kind: o.kind,
           })),
         });
 
-        // Optional: tell everyone someone died (for later UI)
+        // Optional: broadcast death event
         io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
 
         continue;
@@ -581,11 +583,10 @@ io.on("connection", (socket) => {
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
 
     const modeRaw = String(payload.mode || GAME_MODE_FFA).toLowerCase();
-    const mode = (modeRaw === GAME_MODE_TEAMS) ? GAME_MODE_TEAMS : GAME_MODE_FFA;
+    const mode = modeRaw === GAME_MODE_TEAMS ? GAME_MODE_TEAMS : GAME_MODE_FFA;
 
-    const teamCount = mode === GAME_MODE_TEAMS
-      ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2)
-      : 0;
+    const teamCount =
+      mode === GAME_MODE_TEAMS ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2) : 0;
 
     const inputMode =
       payload.inputMode === "kb" ||
@@ -637,7 +638,7 @@ io.on("connection", (socket) => {
       pendingRespawn: null,
     };
 
-    // FFA: assign unique teamId per player (used for color later)
+    // FFA
     if (game.settings.mode === GAME_MODE_FFA) {
       hostPlayer.teamId = 0;
     }
@@ -657,9 +658,10 @@ io.on("connection", (socket) => {
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: game.settings.mode === GAME_MODE_TEAMS
-        ? Array.from({ length: teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
-        : [],
+      teams:
+        game.settings.mode === GAME_MODE_TEAMS
+          ? Array.from({ length: teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+          : [],
       settings: game.settings,
     });
 
@@ -712,9 +714,11 @@ io.on("connection", (socket) => {
       pendingRespawn: null,
     };
 
-    // FFA: auto-assign a unique teamId (0..players-1)
+    // FFA: auto-assign unique teamId
     if (game.settings.mode === GAME_MODE_FFA) {
-      const used = new Set([...game.players.values()].map(p => p.teamId).filter(Number.isFinite));
+      const used = new Set(
+        [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
+      );
       let tid = 0;
       while (used.has(tid)) tid++;
       joinPlayer.teamId = tid;
@@ -733,9 +737,10 @@ io.on("connection", (socket) => {
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: game.settings.mode === GAME_MODE_TEAMS
-        ? Array.from({ length: game.settings.teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
-        : [],
+      teams:
+        game.settings.mode === GAME_MODE_TEAMS
+          ? Array.from({ length: game.settings.teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+          : [],
       settings: game.settings,
     });
 
@@ -749,9 +754,7 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // no teams in FFA
     if (game.settings.mode !== GAME_MODE_TEAMS) return;
-
     if (session.playerId !== game.hostPlayerId) return;
 
     const targetId = String(payload.playerId || "");
@@ -781,7 +784,7 @@ io.on("connection", (socket) => {
         if (p.teamId === null || p.teamId === undefined) return;
       }
     } else {
-      // FFA: make sure everyone has a teamId
+      // FFA: ensure everyone has teamId
       let idx = 0;
       for (const p of game.players.values()) {
         if (!Number.isFinite(p.teamId)) p.teamId = idx;
@@ -793,8 +796,6 @@ io.on("connection", (socket) => {
     game.map = map;
 
     const world = getWorldForGame(game);
-
-    // ✅ define 4 corner spawn areas
     const corners = cornerSpawns(world);
 
     // Spawn players: rotate corners
@@ -814,7 +815,6 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
     }
 
-    // Reset pickups / bullets on game start
     game.pickups = [];
     game.bullets = [];
 
@@ -869,16 +869,13 @@ io.on("connection", (socket) => {
 
     const p = game.players.get(session.playerId);
     if (!p) return;
-
     if (!p.alive) return;
 
-    // Don't allow starting another prompt while one is open
     if (p.pendingPrompt) return;
 
     const machine = findNearbyMachine(game, p.x, p.y, INTERACT_RADIUS);
     if (!machine) return;
 
-    // Cannot interact with a machine already cleared
     if (p.clearedMachines.has(machine.id)) {
       socket.emit("INTERACT_DENIED", {
         reason: "already_cleared",
@@ -888,7 +885,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Must be in numeric order: nextMachineNum only
     if (machine.num !== p.nextMachineNum) {
       socket.emit("INTERACT_DENIED", {
         reason: "wrong_order",
@@ -926,7 +922,6 @@ io.on("connection", (socket) => {
 
     const p = game.players.get(session.playerId);
     if (!p) return;
-
     if (!p.alive) return;
 
     const pending = p.pendingPrompt;
@@ -938,34 +933,28 @@ io.on("connection", (socket) => {
     const ans = Number(payload.answer);
     const ok = Number.isFinite(ans) && ans === pending.correct;
 
-    // Clear prompt now (so they can’t submit twice)
+    // Clear prompt now
     p.pendingPrompt = null;
 
     if (ok) {
-      // mark cleared + advance order
       p.clearedMachines.add(pending.machineId);
       p.lastCorrectMachineId = pending.machineId;
 
-      // advance to next machine number (cap at 10)
       if (p.nextMachineNum === pending.machineNum) {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
 
       socket.emit("ANSWER_RESULT", { ok: true });
 
-      // economy: spawn money pickups
       economy.awardCorrectAnswer(game, p.id);
 
-      // upgrades: offer ALL upgrades
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
-      const options = upgrades.buildOfferOptions(); // array of objects for UI
+      const options = upgrades.buildOfferOptions();
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
-
-      // economy: money penalty (floor at 0)
       economy.penalizeWrongAnswer(game, p.id);
     }
   });
@@ -992,9 +981,8 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Rebuild options (authoritative)
     const opts = buildRespawnOptions(game, p);
-    const allowedIds = new Set(opts.map(o => o.id));
+    const allowedIds = new Set(opts.map((o) => o.id));
 
     if (!allowedIds.has(spawnId)) {
       socket.emit("RESPAWN_RESULT", { ok: false, reason: "not_allowed" });
@@ -1015,13 +1003,10 @@ io.on("connection", (socket) => {
     p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
     p.pendingRespawn = null;
 
-    // clear inputs
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
 
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
-
-    // everyone will see it through next snapshot
   });
 
   // -------- Upgrade selection --------
@@ -1055,8 +1040,6 @@ io.on("connection", (socket) => {
 
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
 
-    // If consumable slots are full, DO NOT consume the offer.
-    // Instead, tell the client to pick a slot to drop.
     if (!res.ok && res.reason === "slots_full") {
       const slots = (p.upgrades?.slots || []).map((s) => ({
         id: s.id,
@@ -1077,7 +1060,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // consume offer
     p.pendingUpgradeOffer = null;
 
     const chosen = upgrades.getUpgradeInfo(upgradeId);
@@ -1090,7 +1072,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // replace flow when slots are full
   socket.on("chooseUpgradeReplace", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1128,27 +1109,21 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Drop it
     p.upgrades.slots.splice(idx, 1);
 
-    // Now apply the upgrade
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
 
-    // If it STILL fails, do not consume offer
     if (!res.ok) {
       socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
       return;
     }
 
-    // consume offer
     p.pendingUpgradeOffer = null;
-
-    const chosen = upgrades.getUpgradeInfo(upgradeId);
 
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen,
+      chosen: upgrades.getUpgradeInfo(upgradeId),
       upgrades: p.upgrades,
       dropped: upgrades.getUpgradeInfo(dropId),
     });
@@ -1167,19 +1142,16 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
-    // block using while dead
     if (!p.alive) {
       socket.emit("UPGRADE_USED", { ok: false, reason: "dead" });
       return;
     }
 
-    // block using while a math prompt is open (server-side safety)
     if (p.pendingPrompt) {
       socket.emit("UPGRADE_USED", { ok: false, reason: "prompt_open" });
       return;
     }
 
-    // block using while they have an upgrade offer pending
     if (p.pendingUpgradeOffer) {
       socket.emit("UPGRADE_USED", { ok: false, reason: "offer_open" });
       return;
@@ -1206,13 +1178,11 @@ io.on("connection", (socket) => {
     }
 
     if (!Number.isFinite(s.usesLeft) || s.usesLeft <= 0) {
-      // clean it if broken
       slots.splice(slotIndex, 1);
       socket.emit("UPGRADE_USED", { ok: false, reason: "no_uses_left" });
       return;
     }
 
-    // consume one use
     s.usesLeft -= 1;
 
     let removed = null;
@@ -1221,7 +1191,6 @@ io.on("connection", (socket) => {
       slots.splice(slotIndex, 1);
     }
 
-    // NOTE: effects come later. Right now this is just authoritative decrement.
     socket.emit("UPGRADE_USED", {
       ok: true,
       used: upgrades.getUpgradeInfo(s.id),
