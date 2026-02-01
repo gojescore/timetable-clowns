@@ -19,8 +19,13 @@ const CODE_LEN = 5;
 const MAX_PLAYERS = 12;
 
 const MIN_TEAMS = 1;
-const MAX_TEAMS = 6;
+const MAX_TEAMS = 4; // ✅ max 4 teams (plus FFA)
 
+// FFA / Teams
+const GAME_MODE_FFA = "ffa";
+const GAME_MODE_TEAMS = "teams";
+
+// Table
 const MIN_TABLE = 1;
 const MAX_TABLE = 10;
 
@@ -37,15 +42,14 @@ const INTERACT_RADIUS = 60; // must match client highlight
 const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 
 // --------------------
-// Shooting (server-authoritative)  ✅
-// (Later you can move these to server/shared/constants.js)
+// Shooting / bullets
 // --------------------
-const BULLET_SPEED = 520; // px/sec
-const BULLET_TTL = 1.2; // seconds
-const BULLET_RADIUS = 4; // collision radius
-const SHOOT_COOLDOWN = 0.25; // seconds between shots
-const BULLET_SPAWN_OFFSET = 18; // spawn in front of player
-const FRIENDLY_FIRE = true;
+const BULLET_SPEED = 780;           // px/sec
+const BULLET_TTL = 1.2;             // seconds
+const BULLET_HIT_R = 4;             // hit radius around bullet point
+const FIRE_COOLDOWN = 0.14;         // seconds between shots (hold Space)
+const RESPAWN_INVULN = 0.6;         // seconds after respawn
+const CORNER_PAD = 80;              // how far inside the corner spawn area
 
 // --------------------
 // In-memory game store
@@ -97,6 +101,7 @@ function lobbySummary(game) {
       name: p.name,
       teamId: p.teamId,
     })),
+    settings: game.settings,
   };
 }
 
@@ -117,15 +122,6 @@ function removePlayerFromGame(io, game, playerId) {
 // --- Collision helpers (AABB)
 function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
-}
-
-// Circle vs Rect (for bullet collisions)
-function circleIntersectsRect(cx, cy, r, rx, ry, rw, rh) {
-  const closestX = clamp(cx, rx, rx + rw);
-  const closestY = clamp(cy, ry, ry + rh);
-  const dx = cx - closestX;
-  const dy = cy - closestY;
-  return dx * dx + dy * dy <= r * r;
 }
 
 function collidesAt(game, cx, cy) {
@@ -165,18 +161,15 @@ function snapshotForGame(game) {
     time: Date.now(),
     world,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
-    bullets: Array.isArray(game.bullets)
-      ? game.bullets.map((b) => ({
-          id: b.id,
-          ownerId: b.ownerId,
-          x: b.x,
-          y: b.y,
-        }))
-      : [],
+    bullets: Array.isArray(game.bullets) ? game.bullets.map((b) => ({
+      id: b.id,
+      ownerId: b.ownerId,
+      x: b.x,
+      y: b.y,
+    })) : [],
     players: [...game.players.values()].map((p) => {
       const up = p.upgrades || { permanent: [], slots: [] };
 
-      // include info so client can render names/tooltips without drifting
       const permanent = Array.isArray(up.permanent)
         ? up.permanent.map((id) => ({
             id,
@@ -203,6 +196,10 @@ function snapshotForGame(game) {
         nextMachineNum: p.nextMachineNum,
         money: typeof p.money === "number" ? p.money : 0,
         upgrades: { permanent, slots },
+
+        // ✅ death/respawn state
+        alive: !!p.alive,
+        invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
       };
     }),
   };
@@ -240,107 +237,86 @@ function makeOfferId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
-// --------------------
-// Bullet helpers ✅
-// --------------------
-function spawnBullet(game, p) {
-  const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
-  const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
-
-  // If direction ever becomes 0,0 (shouldn't with your defaults), refuse.
-  const len = Math.hypot(dx, dy);
-  if (len <= 0.0001) return;
-
-  const ux = dx / len;
-  const uy = dy / len;
-
-  const b = {
-    id: String(game.nextBulletId++),
-    ownerId: p.id,
-    teamId: p.teamId,
-    x: p.x + ux * BULLET_SPAWN_OFFSET,
-    y: p.y + uy * BULLET_SPAWN_OFFSET,
-    vx: ux * BULLET_SPEED,
-    vy: uy * BULLET_SPEED,
-    ttl: BULLET_TTL,
-  };
-
-  game.bullets.push(b);
+function makeBulletId() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
-function bulletHitsWall(game, b) {
+// --------------------
+// Respawn options
+// --------------------
+function cornerSpawns(world) {
+  return [
+    { id: "c:NW", label: "Corner NW", x: CORNER_PAD, y: CORNER_PAD },
+    { id: "c:NE", label: "Corner NE", x: world.w - CORNER_PAD, y: CORNER_PAD },
+    { id: "c:SW", label: "Corner SW", x: CORNER_PAD, y: world.h - CORNER_PAD },
+    { id: "c:SE", label: "Corner SE", x: world.w - CORNER_PAD, y: world.h - CORNER_PAD },
+  ];
+}
+
+function buildRespawnOptions(game, player) {
+  const world = getWorldForGame(game);
+  const opts = [];
+
+  // corners always available
+  for (const c of cornerSpawns(world)) {
+    opts.push({ id: c.id, label: c.label, x: c.x, y: c.y, kind: "corner" });
+  }
+
+  // cleared machines
   const map = game.map;
-  if (!map || !Array.isArray(map.walls)) return false;
-
-  for (const w of map.walls) {
-    if (circleIntersectsRect(b.x, b.y, BULLET_RADIUS, w.x, w.y, w.w, w.h)) {
-      return true;
+  if (map && Array.isArray(map.machines) && player?.clearedMachines instanceof Set) {
+    for (const mid of player.clearedMachines) {
+      const m = map.machines.find((mm) => mm.id === mid);
+      if (!m) continue;
+      opts.push({
+        id: "m:" + m.id,
+        label: `Machine #${m.num}`,
+        x: m.x,
+        y: m.y,
+        kind: "machine",
+        machineId: m.id,
+        machineNum: m.num,
+      });
     }
   }
-  return false;
+
+  // Sort so corners first, then machines by number
+  const corners = opts.filter(o => o.kind === "corner");
+  const machines = opts
+    .filter(o => o.kind === "machine")
+    .sort((a, b) => (a.machineNum || 0) - (b.machineNum || 0));
+
+  return [...corners, ...machines];
 }
 
-function bulletHitsPlayer(game, b) {
-  // circle vs player AABB
-  for (const p of game.players.values()) {
-    if (!p) continue;
-
-    // don't hit owner
-    if (p.id === b.ownerId) continue;
-
-    // optional team logic
-    if (!FRIENDLY_FIRE && p.teamId != null && b.teamId != null) {
-      if (p.teamId === b.teamId) continue;
-    }
-
-    const rx = p.x - PLAYER_HALF;
-    const ry = p.y - PLAYER_HALF;
-    const rw = PLAYER_HALF * 2;
-    const rh = PLAYER_HALF * 2;
-
-    if (circleIntersectsRect(b.x, b.y, BULLET_RADIUS, rx, ry, rw, rh)) {
-      return p;
-    }
-  }
-  return null;
+function findRespawnById(options, spawnId) {
+  return options.find((o) => o.id === spawnId) || null;
 }
 
-function updateBullets(game, dt, world) {
-  if (!Array.isArray(game.bullets) || game.bullets.length === 0) return;
+function forceToValidPos(game, x, y) {
+  // if the exact spawn is inside something, nudge around a small ring
+  const world = getWorldForGame(game);
+  const minX = PLAYER_HALF;
+  const minY = PLAYER_HALF;
+  const maxX = world.w - PLAYER_HALF;
+  const maxY = world.h - PLAYER_HALF;
 
-  for (let i = game.bullets.length - 1; i >= 0; i--) {
-    const b = game.bullets[i];
+  const baseX = clamp(x, minX, maxX);
+  const baseY = clamp(y, minY, maxY);
 
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.ttl -= dt;
+  if (!collidesAt(game, baseX, baseY)) return { x: baseX, y: baseY };
 
-    // TTL
-    if (b.ttl <= 0) {
-      game.bullets.splice(i, 1);
-      continue;
-    }
-
-    // outside world bounds (quick despawn)
-    if (b.x < 0 || b.y < 0 || b.x > world.w || b.y > world.h) {
-      game.bullets.splice(i, 1);
-      continue;
-    }
-
-    // wall collision
-    if (bulletHitsWall(game, b)) {
-      game.bullets.splice(i, 1);
-      continue;
-    }
-
-    // player collision (despawn now; damage/lives later)
-    const hit = bulletHitsPlayer(game, b);
-    if (hit) {
-      // Later: apply damage / life / respawn logic here.
-      game.bullets.splice(i, 1);
-      continue;
-    }
+  const steps = 16;
+  const radius = 36;
+  for (let i = 0; i < steps; i++) {
+    const a = (i / steps) * Math.PI * 2;
+    const nx = clamp(baseX + Math.cos(a) * radius, minX, maxX);
+    const ny = clamp(baseY + Math.sin(a) * radius, minY, maxY);
+    if (!collidesAt(game, nx, ny)) return { x: nx, y: ny };
   }
+
+  // last resort: keep base
+  return { x: baseX, y: baseY };
 }
 
 // --------------------
@@ -374,14 +350,18 @@ setInterval(() => {
 
     const world = getWorldForGame(game);
 
+    // --------------------
+    // Movement + fire cooldown
+    // --------------------
     for (const p of game.players.values()) {
+      if (!p.alive) continue;
+
       const up = !!p.input?.up;
       const down = !!p.input?.down;
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0,
-        vy = 0;
+      let vx = 0, vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -413,21 +393,163 @@ setInterval(() => {
       cy = clamp(nextY, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.y = cy;
 
-      // ---- Shooting cooldown + fire ---- ✅
-      if (!Number.isFinite(p.shootCd)) p.shootCd = 0;
-      if (p.shootCd > 0) p.shootCd -= dt;
+      // ---- shooting ----
+      p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
       const wantsFire = !!p.input?.fire;
+      if (wantsFire && p.fireCd <= 0) {
+        // Don’t allow firing while prompts/offers open (server safety)
+        if (p.pendingPrompt) continue;
+        if (p.pendingUpgradeOffer) continue;
 
-      // keep it simple: don't shoot while a math prompt / offer is open
-      if (wantsFire && p.shootCd <= 0 && !p.pendingPrompt && !p.pendingUpgradeOffer) {
-        spawnBullet(game, p);
-        p.shootCd = SHOOT_COOLDOWN;
+        // Require a facing direction
+        const dx = (typeof p.dirX === "number") ? p.dirX : 1;
+        const dy = (typeof p.dirY === "number") ? p.dirY : 0;
+        const dlen = Math.hypot(dx, dy) || 1;
+
+        const ndx = dx / dlen;
+        const ndy = dy / dlen;
+
+        const spawnX = p.x + ndx * (PLAYER_HALF + 6);
+        const spawnY = p.y + ndy * (PLAYER_HALF + 6);
+
+        const b = {
+          id: makeBulletId(),
+          ownerId: p.id,
+          x: spawnX,
+          y: spawnY,
+          vx: ndx * BULLET_SPEED,
+          vy: ndy * BULLET_SPEED,
+          ttl: BULLET_TTL,
+        };
+
+        if (!Array.isArray(game.bullets)) game.bullets = [];
+        game.bullets.push(b);
+
+        p.fireCd = FIRE_COOLDOWN;
       }
     }
 
-    // bullets update (after movement)
-    updateBullets(game, dt, world);
+    // --------------------
+    // Bullets update + collisions
+    // --------------------
+    if (!Array.isArray(game.bullets)) game.bullets = [];
+
+    for (let i = game.bullets.length - 1; i >= 0; i--) {
+      const b = game.bullets[i];
+      if (!b) { game.bullets.splice(i, 1); continue; }
+
+      b.ttl -= dt;
+      if (b.ttl <= 0) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
+
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      // outside world
+      if (b.x < 0 || b.x >j=0|| b.x > world.w || b.y < 0 || b.y > world.h) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
+
+      // bullet vs walls (point-in-rect with radius)
+      let hitWall = false;
+      if (Array.isArray(game.map?.walls)) {
+        for (const w of game.map.walls) {
+          // expand wall by bullet radius
+          if (
+            b.x >= (w.x - BULLET_HIT_R) &&
+            b.x <= (w.x + w.w + BULLET_HIT_R) &&
+            b.y >= (w.y - BULLET_HIT_R) &&
+            b.y <= (w.y + w.h + BULLET_HIT_R)
+          ) {
+            hitWall = true;
+            break;
+          }
+        }
+      }
+      if (hitWall) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
+
+      // bullet vs machines (solid)
+      let hitMachine = false;
+      if (Array.isArray(game.map?.machines)) {
+        for (const m of game.map.machines) {
+          const bx = m.x - MACHINE_HALF;
+          const by = m.y - MACHINE_HALF;
+          const bw = MACHINE_HALF * 2;
+          const bh = MACHINE_HALF * 2;
+
+          if (
+            b.x >= (bx - BULLET_HIT_R) &&
+            b.x <= (bx + bw + BULLET_HIT_R) &&
+            b.y >= (by - BULLET_HIT_R) &&
+            b.y <= (by + bh + BULLET_HIT_R)
+          ) {
+            hitMachine = true;
+            break;
+          }
+        }
+      }
+      if (hitMachine) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
+
+      // bullet vs players
+      let hitPlayer = null;
+      for (const p of game.players.values()) {
+        if (!p.alive) continue;
+        if (p.id === b.ownerId) continue;
+
+        // invulnerability
+        if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
+
+        const d2 = dist2(b.x, b.y, p.x, p.y);
+        const rr = (PLAYER_HALF + BULLET_HIT_R);
+        if (d2 <= rr * rr) {
+          hitPlayer = p;
+          break;
+        }
+      }
+
+      if (hitPlayer) {
+        // remove bullet
+        game.bullets.splice(i, 1);
+
+        // kill player
+        hitPlayer.alive = false;
+        hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
+        hitPlayer.fireCd = 0;
+
+        // clear any open machine prompt (you died)
+        hitPlayer.pendingPrompt = null;
+
+        // Send respawn picker to that player only
+        const opts = buildRespawnOptions(game, hitPlayer);
+        hitPlayer.pendingRespawn = {
+          options: opts.map(o => o.id),
+          createdAt: now,
+        };
+
+        io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
+          options: opts.map(o => ({
+            id: o.id,
+            label: o.label,
+            kind: o.kind,
+          })),
+        });
+
+        // Optional: tell everyone someone died (for later UI)
+        io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
+
+        continue;
+      }
+    }
 
     // economy: pickup collection
     economy.tryCollectPickups(game);
@@ -456,7 +578,13 @@ io.on("connection", (socket) => {
 
   socket.on("createGame", (payload = {}) => {
     const tableBase = clampInt(payload.tableBase, MIN_TABLE, MAX_TABLE, 4);
-    const teamCount = clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2);
+
+    const modeRaw = String(payload.mode || GAME_MODE_FFA).toLowerCase();
+    const mode = (modeRaw === GAME_MODE_TEAMS) ? GAME_MODE_TEAMS : GAME_MODE_FFA;
+
+    const teamCount = mode === GAME_MODE_TEAMS
+      ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2)
+      : 0;
 
     const inputMode =
       payload.inputMode === "kb" ||
@@ -472,12 +600,11 @@ io.on("connection", (socket) => {
       code,
       hostPlayerId: session.playerId,
       phase: "lobby",
-      settings: { tableBase, teamCount, inputMode, mapChoice },
+      settings: { tableBase, mode, teamCount, inputMode, mapChoice },
       map: null,
       players: new Map(),
       pickups: [],
-      bullets: [], // ✅
-      nextBulletId: 1, // ✅
+      bullets: [],
     };
 
     const hostPlayer = {
@@ -489,8 +616,7 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false }, // ✅
-      shootCd: 0, // ✅
+      input: { up: false, down: false, left: false, right: false, fire: false },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -502,7 +628,18 @@ io.on("connection", (socket) => {
 
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
+
+      // ✅ death state
+      alive: true,
+      invulnUntil: 0,
+      fireCd: 0,
+      pendingRespawn: null,
     };
+
+    // FFA: assign unique teamId per player (used for color later)
+    if (game.settings.mode === GAME_MODE_FFA) {
+      hostPlayer.teamId = 0;
+    }
 
     economy.ensurePlayerEconomy(hostPlayer);
     upgrades.ensureUpgradeState(hostPlayer);
@@ -519,10 +656,10 @@ io.on("connection", (socket) => {
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: Array.from({ length: teamCount }, (_, i) => ({
-        teamId: i,
-        name: `Team ${i + 1}`,
-      })),
+      teams: game.settings.mode === GAME_MODE_TEAMS
+        ? Array.from({ length: teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+        : [],
+      settings: game.settings,
     });
 
     emitLobbyUpdate(io, game);
@@ -554,8 +691,7 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false }, // ✅
-      shootCd: 0, // ✅
+      input: { up: false, down: false, left: false, right: false, fire: false },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -567,7 +703,21 @@ io.on("connection", (socket) => {
 
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
+
+      // ✅ death state
+      alive: true,
+      invulnUntil: 0,
+      fireCd: 0,
+      pendingRespawn: null,
     };
+
+    // FFA: auto-assign a unique teamId (0..players-1)
+    if (game.settings.mode === GAME_MODE_FFA) {
+      const used = new Set([...game.players.values()].map(p => p.teamId).filter(Number.isFinite));
+      let tid = 0;
+      while (used.has(tid)) tid++;
+      joinPlayer.teamId = tid;
+    }
 
     economy.ensurePlayerEconomy(joinPlayer);
     upgrades.ensureUpgradeState(joinPlayer);
@@ -582,10 +732,10 @@ io.on("connection", (socket) => {
     socket.emit("JOIN_SUCCESS", {
       gameCode: code,
       players: lobbySummary(game).players,
-      teams: Array.from({ length: game.settings.teamCount }, (_, i) => ({
-        teamId: i,
-        name: `Team ${i + 1}`,
-      })),
+      teams: game.settings.mode === GAME_MODE_TEAMS
+        ? Array.from({ length: game.settings.teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+        : [],
+      settings: game.settings,
     });
 
     emitLobbyUpdate(io, game);
@@ -597,6 +747,9 @@ io.on("connection", (socket) => {
 
     const game = games[code];
     if (!game) return;
+
+    // no teams in FFA
+    if (game.settings.mode !== GAME_MODE_TEAMS) return;
 
     if (session.playerId !== game.hostPlayerId) return;
 
@@ -622,31 +775,47 @@ io.on("connection", (socket) => {
     if (session.playerId !== game.hostPlayerId) return;
     if (game.players.size < 2) return;
 
-    for (const p of game.players.values()) {
-      if (p.teamId === null || p.teamId === undefined) return;
+    if (game.settings.mode === GAME_MODE_TEAMS) {
+      for (const p of game.players.values()) {
+        if (p.teamId === null || p.teamId === undefined) return;
+      }
+    } else {
+      // FFA: make sure everyone has a teamId
+      let idx = 0;
+      for (const p of game.players.values()) {
+        if (!Number.isFinite(p.teamId)) p.teamId = idx;
+        idx++;
+      }
     }
 
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // Spawn
-    if (Array.isArray(map.spawns) && map.spawns.length) {
-      let i = 0;
-      for (const p of game.players.values()) {
-        const s = map.spawns[i % map.spawns.length];
-        p.x = s.x;
-        p.y = s.y;
-        i++;
+    const world = getWorldForGame(game);
 
-        economy.ensurePlayerEconomy(p);
-        upgrades.ensureUpgradeState(p);
-        if (!Number.isFinite(p.shootCd)) p.shootCd = 0; // ✅
-      }
+    // ✅ define 4 corner spawn areas
+    const corners = cornerSpawns(world);
+
+    // Spawn players: rotate corners
+    let i = 0;
+    for (const p of game.players.values()) {
+      const c = corners[i % corners.length];
+      const pos = forceToValidPos(game, c.x, c.y);
+      p.x = pos.x;
+      p.y = pos.y;
+      i++;
+
+      p.alive = true;
+      p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
+      p.pendingRespawn = null;
+
+      economy.ensurePlayerEconomy(p);
+      upgrades.ensureUpgradeState(p);
     }
 
-    // Reset pickups + bullets on game start
+    // Reset pickups / bullets on game start
     game.pickups = [];
-    game.bullets = []; // ✅
+    game.bullets = [];
 
     game.phase = "running";
 
@@ -658,6 +827,7 @@ io.on("connection", (socket) => {
         walls: map.walls,
         machines: map.machines,
       },
+      settings: game.settings,
     });
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -673,12 +843,18 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
+    // dead players don't move or shoot
+    if (!p.alive) {
+      p.input = { up: false, down: false, left: false, right: false, fire: false };
+      return;
+    }
+
     p.input = {
       up: !!payload.up,
       down: !!payload.down,
       left: !!payload.left,
       right: !!payload.right,
-      fire: !!payload.fire, // ✅
+      fire: !!payload.fire,
     };
   });
 
@@ -692,6 +868,8 @@ io.on("connection", (socket) => {
 
     const p = game.players.get(session.playerId);
     if (!p) return;
+
+    if (!p.alive) return;
 
     // Don't allow starting another prompt while one is open
     if (p.pendingPrompt) return;
@@ -748,6 +926,8 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
+    if (!p.alive) return;
+
     const pending = p.pendingPrompt;
     if (!pending) return;
 
@@ -787,6 +967,60 @@ io.on("connection", (socket) => {
       // economy: money penalty (floor at 0)
       economy.penalizeWrongAnswer(game, p.id);
     }
+  });
+
+  // -------- Respawn selection --------
+  socket.on("chooseRespawn", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    if (p.alive) {
+      socket.emit("RESPAWN_RESULT", { ok: false, reason: "not_dead" });
+      return;
+    }
+
+    const spawnId = String(payload.spawnId || "");
+    if (!spawnId) {
+      socket.emit("RESPAWN_RESULT", { ok: false, reason: "bad_spawn_id" });
+      return;
+    }
+
+    // Rebuild options (authoritative)
+    const opts = buildRespawnOptions(game, p);
+    const allowedIds = new Set(opts.map(o => o.id));
+
+    if (!allowedIds.has(spawnId)) {
+      socket.emit("RESPAWN_RESULT", { ok: false, reason: "not_allowed" });
+      return;
+    }
+
+    const chosen = findRespawnById(opts, spawnId);
+    if (!chosen) {
+      socket.emit("RESPAWN_RESULT", { ok: false, reason: "not_found" });
+      return;
+    }
+
+    const pos = forceToValidPos(game, chosen.x, chosen.y);
+
+    p.x = pos.x;
+    p.y = pos.y;
+    p.alive = true;
+    p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
+    p.pendingRespawn = null;
+
+    // clear inputs
+    p.input = { up: false, down: false, left: false, right: false, fire: false };
+    p.fireCd = 0;
+
+    socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
+
+    // everyone will see it through next snapshot
   });
 
   // -------- Upgrade selection --------
@@ -932,13 +1166,19 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
+    // block using while dead
+    if (!p.alive) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "dead" });
+      return;
+    }
+
     // block using while a math prompt is open (server-side safety)
     if (p.pendingPrompt) {
       socket.emit("UPGRADE_USED", { ok: false, reason: "prompt_open" });
       return;
     }
 
-    // block using while they have an upgrade offer pending (so they don't spam state)
+    // block using while they have an upgrade offer pending
     if (p.pendingUpgradeOffer) {
       socket.emit("UPGRADE_USED", { ok: false, reason: "offer_open" });
       return;
