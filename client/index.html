@@ -25,6 +25,12 @@
       color:var(--ink);
     }
 
+    /* ✅ When the game is running, remove top chrome to maximize arena */
+    body.inGame{ overflow:hidden; }
+    body.inGame #topHeader{ display:none; }
+    body.inGame .wrap{ padding:8px; }
+    body.inGame #runningCard.card{ margin:0; padding:8px; }
+
     .wrap{max-width:none;margin:0 auto;padding:14px}
     h1{margin:.2em 0 .4em}
     h2,h3{margin:.2em 0 .4em}
@@ -86,11 +92,12 @@
       overflow:hidden;
       min-height: 520px;
 
-      /* take most viewport height */
-      height: calc(100vh - 150px);
-      max-height: 920px;
+      /* ✅ maximize viewport height (less wasted top space) */
+      height: calc(100vh - 60px);
+      max-height: 980px;
     }
 
+    /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
       width:100%;
       height:100%;
@@ -288,16 +295,19 @@
       .gameLayout{ grid-template-columns: 1fr; }
       .sidePanel{ flex-direction:row; flex-wrap:wrap; }
       .sidePanel > *{ flex:1 1 240px; }
-      .canvasWrap{ height: calc(100vh - 210px); }
+      .canvasWrap{ height: calc(100vh - 120px); }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>🎪 Timetable Clowns</h1>
-    <p class="muted" style="margin:.2em 0 0.6em">
-      Move: WASD / Arrow keys · Interact: E · Shoot: hold Space · Debug: V (mask), B (edge ring)
-    </p>
+    <div id="topHeader">
+      <h1>🎪 Timetable Clowns</h1>
+      <!-- ✅ keep this in lobby only; hidden automatically in-game -->
+      <p class="muted" style="margin:.2em 0 0.6em">
+        Move: WASD / Arrow keys · Interact: E · Shoot: hold Space · Debug: V (mask), B (edge ring)
+      </p>
+    </div>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -639,6 +649,9 @@
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
     socket.on("GAME_STARTED", (payload = {}) => {
+      // ✅ maximize play area
+      document.body.classList.add("inGame");
+
       el.lobby.classList.add("hidden");
       el.running.classList.remove("hidden");
       el.status.textContent = "Game running.";
@@ -662,8 +675,6 @@
       const me = snap.players?.find(p => p.id === myId);
       if (me) {
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
-
-        // if you add HP later, hook it here
         el.hudLife.textContent = me.alive === false ? "0" : "1";
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
@@ -1007,14 +1018,13 @@
       }
     });
 
-    // ===== Upgrade bar render (vertical, no distortion) =====
+    // ===== Upgrade bar render (vertical) =====
     function renderUpgradeBar() {
       el.upgradeSlots.innerHTML = "";
 
       const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
       const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
-      // Show 6 slots total: first 3 are consumables (hotkeys), then permanents / extra
       const display = [];
 
       for (const s of cons) {
@@ -1074,6 +1084,7 @@
         uses.className = "uUses";
         if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) uses.textContent = String(u.usesLeft);
         else uses.textContent = "";
+
         slot.appendChild(left);
         slot.appendChild(uses);
 
@@ -1162,11 +1173,10 @@
       }
     });
 
-    // ---------- Canvas rendering (NO stretching) ----------
+    // ---------- Canvas rendering (NO stretching => fixes “x faster than y” look) ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
 
-    // Keep a “CSS pixel coordinate system” regardless of devicePixelRatio
     let VIEW_W = 900;
     let VIEW_H = 520;
 
@@ -1185,7 +1195,7 @@
         canvas.height = needH;
       }
 
-      // render in CSS pixels (so math stays sane)
+      // draw in CSS pixels
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       VIEW_W = cssW;
@@ -1218,7 +1228,6 @@
         }
       }
 
-      // match transforms so we can draw in CSS pixels
       fogCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       visCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1495,7 +1504,6 @@
       ctx.lineWidth = 1;
     }
 
-    // bullets BEFORE fog so fog hides them outside cone
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
@@ -1512,7 +1520,6 @@
       }
     }
 
-    // money AFTER fog so it is visible through fog
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -1534,7 +1541,7 @@
       }
     }
 
-    // ✅ dead players: DO NOT DRAW AT ALL
+    // ✅ dead players: not drawn
     function drawPlayerBody(p, camX, camY, isMe){
       if (p.alive === false) return;
 
@@ -1631,7 +1638,6 @@
 
       const me = lastSnapshot.players.find(p => p.id === myId);
 
-      // If you're dead, server still sends position; camera can stay where you died.
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
       const camYraw = me ? (me.y - VIEW_H / 2) : 0;
 
@@ -1640,7 +1646,6 @@
 
       ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
-      // World border
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
@@ -1649,12 +1654,10 @@
 
       drawBullets(camX, camY);
 
-      // player bodies BEFORE fog
       for (const p of lastSnapshot.players) {
         drawPlayerBody(p, camX, camY, p.id === myId);
       }
 
-      // fog
       if (me) {
         const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
         const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
@@ -1686,14 +1689,12 @@
         }
       }
 
-      // After fog: pickups + labels + bubble
       drawPickups(camX, camY);
 
       for (const p of lastSnapshot.players) {
         drawPlayerLabel(p, camX, camY);
       }
 
-      // Only show your bubble if YOU are alive (optional; feels cleaner)
       if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY);
     }
 
