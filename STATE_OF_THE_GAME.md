@@ -72,6 +72,26 @@ timetable-clowns/
 - Client shows modal
 - Answer validated server-side
 
+### Fog-of-war + Line-of-Sight (implemented) ✅
+- Fog-of-war is always active during gameplay
+- Player vision is a **cone-shaped LOS**
+- The cone is:
+  - fully transparent (100% clear)
+  - the only way to see the map
+- Visibility is blocked by walls (raycast-based LOS)
+- Fog completely hides:
+  - floors
+  - walls
+  - machines
+  - pickups
+- Walls become visible only when inside the cone
+- Soft edge at cone boundary (blurred falloff, no leaks)
+- Camera is pixel-aligned to prevent fog seams
+- Debug tools exist but are optional:
+  - `V` toggles raw visibility mask
+  - `B` toggles soft-edge visualization
+
+
 ---
 
 ## Economy (fully implemented) ✅
