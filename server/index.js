@@ -1,3 +1,4 @@
+// server/index.js
 const path = require("path");
 const express = require("express");
 const http = require("http");
@@ -165,45 +166,49 @@ function snapshotForGame(game) {
       ? game.bullets.map((b) => ({
           id: b.id,
           ownerId: b.ownerId,
+          ownerTeamId: b.ownerTeamId, // ✅ optional (debug / client use)
           x: b.x,
           y: b.y,
         }))
       : [],
-    players: [...game.players.values()].map((p) => {
-      const up = p.upgrades || { permanent: [], slots: [] };
+    // ✅ dead players disappear from snapshot until respawn
+    players: [...game.players.values()]
+      .filter((p) => p.alive)
+      .map((p) => {
+        const up = p.upgrades || { permanent: [], slots: [] };
 
-      const permanent = Array.isArray(up.permanent)
-        ? up.permanent.map((id) => ({
-            id,
-            info: upgrades.getUpgradeInfo(id),
-          }))
-        : [];
+        const permanent = Array.isArray(up.permanent)
+          ? up.permanent.map((id) => ({
+              id,
+              info: upgrades.getUpgradeInfo(id),
+            }))
+          : [];
 
-      const slots = Array.isArray(up.slots)
-        ? up.slots.map((s) => ({
-            id: s.id,
-            usesLeft: s.usesLeft,
-            info: upgrades.getUpgradeInfo(s.id),
-          }))
-        : [];
+        const slots = Array.isArray(up.slots)
+          ? up.slots.map((s) => ({
+              id: s.id,
+              usesLeft: s.usesLeft,
+              info: upgrades.getUpgradeInfo(s.id),
+            }))
+          : [];
 
-      return {
-        id: p.id,
-        name: p.name,
-        teamId: p.teamId,
-        x: p.x,
-        y: p.y,
-        dirX: p.dirX,
-        dirY: p.dirY,
-        nextMachineNum: p.nextMachineNum,
-        money: typeof p.money === "number" ? p.money : 0,
-        upgrades: { permanent, slots },
+        return {
+          id: p.id,
+          name: p.name,
+          teamId: p.teamId,
+          x: p.x,
+          y: p.y,
+          dirX: p.dirX,
+          dirY: p.dirY,
+          nextMachineNum: p.nextMachineNum,
+          money: typeof p.money === "number" ? p.money : 0,
+          upgrades: { permanent, slots },
 
-        // ✅ death/respawn state
-        alive: !!p.alive,
-        invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
-      };
-    }),
+          // death/respawn state (alive always true here, but keep fields for client logic)
+          alive: !!p.alive,
+          invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
+        };
+      }),
   };
 }
 
@@ -417,6 +422,7 @@ setInterval(() => {
         const b = {
           id: makeBulletId(),
           ownerId: p.id,
+          ownerTeamId: p.teamId, // ✅ for no-friendly-fire
           x: spawnX,
           y: spawnY,
           vx: ndx * BULLET_SPEED,
@@ -508,6 +514,16 @@ setInterval(() => {
       for (const p of game.players.values()) {
         if (!p.alive) continue;
         if (p.id === b.ownerId) continue;
+
+        // ✅ No friendly fire in TEAMS mode
+        if (game.settings?.mode === GAME_MODE_TEAMS) {
+          let shooterTeam = b.ownerTeamId;
+          if (shooterTeam === undefined || shooterTeam === null) {
+            const shooter = game.players.get(b.ownerId);
+            shooterTeam = shooter ? shooter.teamId : shooterTeam;
+          }
+          if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
+        }
 
         // invulnerability (invulnUntil is ms timestamp)
         if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
@@ -739,7 +755,10 @@ io.on("connection", (socket) => {
       players: lobbySummary(game).players,
       teams:
         game.settings.mode === GAME_MODE_TEAMS
-          ? Array.from({ length: game.settings.teamCount }, (_, i) => ({ teamId: i, name: `Team ${i + 1}` }))
+          ? Array.from({ length: game.settings.teamCount }, (_, i) => ({
+              teamId: i,
+              name: `Team ${i + 1}`,
+            }))
           : [],
       settings: game.settings,
     });
