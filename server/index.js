@@ -449,7 +449,8 @@ setInterval(() => {
       b.y += b.vy * dt;
 
       // outside world
-      if (b.x < 0 || b.x >j=0|| b.x > world.w || b.y < 0 || b.y > world.h) {
+      if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
+
         game.bullets.splice(i, 1);
         continue;
       }
