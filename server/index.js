@@ -37,6 +37,17 @@ const INTERACT_RADIUS = 60; // must match client highlight
 const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 
 // --------------------
+// Shooting (server-authoritative)  ✅
+// (Later you can move these to server/shared/constants.js)
+// --------------------
+const BULLET_SPEED = 520; // px/sec
+const BULLET_TTL = 1.2; // seconds
+const BULLET_RADIUS = 4; // collision radius
+const SHOOT_COOLDOWN = 0.25; // seconds between shots
+const BULLET_SPAWN_OFFSET = 18; // spawn in front of player
+const FRIENDLY_FIRE = true;
+
+// --------------------
 // In-memory game store
 // --------------------
 const games = Object.create(null);
@@ -108,6 +119,15 @@ function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
+// Circle vs Rect (for bullet collisions)
+function circleIntersectsRect(cx, cy, r, rx, ry, rw, rh) {
+  const closestX = clamp(cx, rx, rx + rw);
+  const closestY = clamp(cy, ry, ry + rh);
+  const dx = cx - closestX;
+  const dy = cy - closestY;
+  return dx * dx + dy * dy <= r * r;
+}
+
 function collidesAt(game, cx, cy) {
   const map = game.map;
   if (!map) return false;
@@ -145,6 +165,14 @@ function snapshotForGame(game) {
     time: Date.now(),
     world,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
+    bullets: Array.isArray(game.bullets)
+      ? game.bullets.map((b) => ({
+          id: b.id,
+          ownerId: b.ownerId,
+          x: b.x,
+          y: b.y,
+        }))
+      : [],
     players: [...game.players.values()].map((p) => {
       const up = p.upgrades || { permanent: [], slots: [] };
 
@@ -210,6 +238,109 @@ function makePromptId() {
 
 function makeOfferId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+
+// --------------------
+// Bullet helpers ✅
+// --------------------
+function spawnBullet(game, p) {
+  const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+  const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+
+  // If direction ever becomes 0,0 (shouldn't with your defaults), refuse.
+  const len = Math.hypot(dx, dy);
+  if (len <= 0.0001) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+
+  const b = {
+    id: String(game.nextBulletId++),
+    ownerId: p.id,
+    teamId: p.teamId,
+    x: p.x + ux * BULLET_SPAWN_OFFSET,
+    y: p.y + uy * BULLET_SPAWN_OFFSET,
+    vx: ux * BULLET_SPEED,
+    vy: uy * BULLET_SPEED,
+    ttl: BULLET_TTL,
+  };
+
+  game.bullets.push(b);
+}
+
+function bulletHitsWall(game, b) {
+  const map = game.map;
+  if (!map || !Array.isArray(map.walls)) return false;
+
+  for (const w of map.walls) {
+    if (circleIntersectsRect(b.x, b.y, BULLET_RADIUS, w.x, w.y, w.w, w.h)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function bulletHitsPlayer(game, b) {
+  // circle vs player AABB
+  for (const p of game.players.values()) {
+    if (!p) continue;
+
+    // don't hit owner
+    if (p.id === b.ownerId) continue;
+
+    // optional team logic
+    if (!FRIENDLY_FIRE && p.teamId != null && b.teamId != null) {
+      if (p.teamId === b.teamId) continue;
+    }
+
+    const rx = p.x - PLAYER_HALF;
+    const ry = p.y - PLAYER_HALF;
+    const rw = PLAYER_HALF * 2;
+    const rh = PLAYER_HALF * 2;
+
+    if (circleIntersectsRect(b.x, b.y, BULLET_RADIUS, rx, ry, rw, rh)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+function updateBullets(game, dt, world) {
+  if (!Array.isArray(game.bullets) || game.bullets.length === 0) return;
+
+  for (let i = game.bullets.length - 1; i >= 0; i--) {
+    const b = game.bullets[i];
+
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.ttl -= dt;
+
+    // TTL
+    if (b.ttl <= 0) {
+      game.bullets.splice(i, 1);
+      continue;
+    }
+
+    // outside world bounds (quick despawn)
+    if (b.x < 0 || b.y < 0 || b.x > world.w || b.y > world.h) {
+      game.bullets.splice(i, 1);
+      continue;
+    }
+
+    // wall collision
+    if (bulletHitsWall(game, b)) {
+      game.bullets.splice(i, 1);
+      continue;
+    }
+
+    // player collision (despawn now; damage/lives later)
+    const hit = bulletHitsPlayer(game, b);
+    if (hit) {
+      // Later: apply damage / life / respawn logic here.
+      game.bullets.splice(i, 1);
+      continue;
+    }
+  }
 }
 
 // --------------------
@@ -281,7 +412,22 @@ setInterval(() => {
       cx = clamp(p.x, minX, maxX);
       cy = clamp(nextY, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.y = cy;
+
+      // ---- Shooting cooldown + fire ---- ✅
+      if (!Number.isFinite(p.shootCd)) p.shootCd = 0;
+      if (p.shootCd > 0) p.shootCd -= dt;
+
+      const wantsFire = !!p.input?.fire;
+
+      // keep it simple: don't shoot while a math prompt / offer is open
+      if (wantsFire && p.shootCd <= 0 && !p.pendingPrompt && !p.pendingUpgradeOffer) {
+        spawnBullet(game, p);
+        p.shootCd = SHOOT_COOLDOWN;
+      }
     }
+
+    // bullets update (after movement)
+    updateBullets(game, dt, world);
 
     // economy: pickup collection
     economy.tryCollectPickups(game);
@@ -330,6 +476,8 @@ io.on("connection", (socket) => {
       map: null,
       players: new Map(),
       pickups: [],
+      bullets: [], // ✅
+      nextBulletId: 1, // ✅
     };
 
     const hostPlayer = {
@@ -341,7 +489,8 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false },
+      input: { up: false, down: false, left: false, right: false, fire: false }, // ✅
+      shootCd: 0, // ✅
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -405,7 +554,8 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false },
+      input: { up: false, down: false, left: false, right: false, fire: false }, // ✅
+      shootCd: 0, // ✅
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -490,11 +640,13 @@ io.on("connection", (socket) => {
 
         economy.ensurePlayerEconomy(p);
         upgrades.ensureUpgradeState(p);
+        if (!Number.isFinite(p.shootCd)) p.shootCd = 0; // ✅
       }
     }
 
-    // Reset pickups on game start
+    // Reset pickups + bullets on game start
     game.pickups = [];
+    game.bullets = []; // ✅
 
     game.phase = "running";
 
@@ -526,6 +678,7 @@ io.on("connection", (socket) => {
       down: !!payload.down,
       left: !!payload.left,
       right: !!payload.right,
+      fire: !!payload.fire, // ✅
     };
   });
 
