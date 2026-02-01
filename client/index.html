@@ -289,7 +289,7 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Hotkeys: 8/9/0 (use consumables). Debug: V (mask), B (edge ring).</p>
+    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Shooting: hold Space. Hotkeys: 8/9/0 (use consumables). Debug: V (mask), B (edge ring).</p>
 
     <div class="card" id="startCard">
       <div class="row">
@@ -511,6 +511,9 @@
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
 
+    // ---- Bullet render tuning (client-only) ----
+    const BULLET_R = 3;
+
     let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
@@ -581,7 +584,7 @@
       mapData = payload.map || null;
       if (mapData?.world) world = mapData.world;
       el.runningHint.textContent =
-        `Move: WASD / Arrow keys. Interact: E near a machine. Map: ${mapData?.name || mapData?.id || "?"}`;
+        `Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space. Map: ${mapData?.name || mapData?.id || "?"}`;
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
@@ -643,8 +646,8 @@
       }
     }
 
-    // ---------- Movement input ----------
-    const inputState = { up:false, down:false, left:false, right:false };
+    // ---------- Movement + Fire input ----------
+    const inputState = { up:false, down:false, left:false, right:false, fire:false };
 
     function isUiBlockingInput() {
       return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
@@ -672,6 +675,7 @@
       else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
       else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
       else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
+      else if (e.key === " " || e.code === "Space") inputState.fire = isDown; // ✅ Space fires
       else used = false;
 
       if (used) { e.preventDefault(); sendInput(); }
@@ -1266,16 +1270,12 @@
       }
     }
 
-    // ✅ NEW: faint wall outlines on top of fog (so walls are readable in fog)
+    // ✅ faint wall outlines on top of fog (so walls are readable in fog)
     function drawWallsFogOutline(camX, camY){
       if (!mapData?.walls) return;
 
       ctx.save();
       ctx.globalCompositeOperation = "source-over";
-
-      // A subtle “double-outline” reads well through dark fog:
-      // 1) thin dark line (depth)
-      // 2) thin light line (visibility)
       ctx.lineWidth = 1;
 
       for (const w of mapData.walls) {
@@ -1310,6 +1310,26 @@
         ctx.fillStyle = "rgba(10,10,10,.9)";
         ctx.font = "16px system-ui";
         ctx.fillText("$", x - 5, y + 6);
+      }
+    }
+
+    // ✅ NEW: bullets
+    function drawBullets(camX, camY){
+      const list = lastSnapshot?.bullets;
+      if (!Array.isArray(list)) return;
+
+      for (const b of list) {
+        if (!b) continue;
+        const x = b.x - camX;
+        const y = b.y - camY;
+
+        // Slightly different alpha if it's yours
+        const isMine = b.ownerId === myId;
+
+        ctx.beginPath();
+        ctx.arc(x, y, BULLET_R, 0, Math.PI * 2);
+        ctx.fillStyle = isMine ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
+        ctx.fill();
       }
     }
 
@@ -1437,6 +1457,9 @@
       drawPickups(camX, camY);
       drawMachines(camX, camY);
 
+      // ✅ bullets are in the world too
+      drawBullets(camX, camY);
+
       for (const p of lastSnapshot.players) {
         if (p.id === myId) continue;
         drawPlayer(p, camX, camY, false);
@@ -1475,7 +1498,7 @@
           // Normal fog draw (ALWAYS ON)
           ctx.drawImage(fogCanvas, 0, 0);
 
-          // ✅ NEW: keep wall outlines readable in fog
+          // keep wall outlines readable in fog
           drawWallsFogOutline(camX, camY);
         }
       }
