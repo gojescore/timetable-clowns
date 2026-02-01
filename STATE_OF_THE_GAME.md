@@ -91,10 +91,10 @@ timetable-clowns/
   - `V` toggles raw visibility mask
   - `B` toggles soft-edge visualization
 
-
 ---
 
 ## Economy (fully implemented) ✅
+
 ### Server
 - Start money: **100**
 - Wrong answer: **-100** (floored at 0)
@@ -113,6 +113,7 @@ timetable-clowns/
 ---
 
 ## Upgrade system (implemented scaffold) ✅
+
 ### Server
 - Upgrade definitions exist
 - After correct answer:
@@ -134,17 +135,45 @@ timetable-clowns/
 
 ---
 
+## Combat + respawn (in progress / partially implemented)
+- Shooting exists server-side with bullets + TTL + wall/machine collision.
+- Player hit detection exists.
+- Death state exists (`alive=false`) and dead players should not move/shoot/interact.
+- Client now hides dead players completely (body + label not drawn).
+- Respawn flow exists:
+  - server emits `RESPAWN_OPTIONS` to the dead player
+  - client shows respawn picker overlay
+  - client sends `chooseRespawn { spawnId }`
+  - server validates and emits `RESPAWN_RESULT`
+
+### Friendly fire (current intended rule)
+- Teams mode: **no friendly fire** (same team should not damage)
+- FFA mode: everyone is enemy (except self)
+- (This is a rule in PROTOCOL; server enforcement may be next step if not fully done.)
+
+---
+
+## UI / layout (implemented)
+- Arena is a canvas that fills the available area without distorting objects.
+- HUD is overlaid on top of the arena (z-axis), not taking vertical layout space.
+- Right sidebar contains:
+  - Leave / back button
+  - Upgrade slots column (8/9/0)
+- This frees more vertical space for gameplay.
+
+---
+
 ## Known constraints / gotchas
-- `structuredClone()` removes functions
-- All map helpers must be re-attached at runtime
+- `structuredClone()` removes functions.
+- All map helpers must be re-attached at runtime.
 - Client uses:
   - map data from `GAME_STARTED`
-  - pickups + players from `STATE_SNAPSHOT`
+  - pickups + players + bullets from `STATE_SNAPSHOT`
 
 ---
 
 ## Current visual placeholders
-- Players = rectangles
+- Players = rectangles (hidden if dead)
 - Machines = yellow squares
 - Pickups = green `$`
 - Upgrade icons = text only
@@ -154,9 +183,9 @@ timetable-clowns/
 ---
 
 ## Next ONE task (to choose)
+- Enforce **no friendly fire** on server in teams mode
+- Combat polish (hit feedback, cooldown tuning)
+- Respawn polish (spawn safety + invuln feedback)
 - Sprite / image system (players, machines, pickups)
-- Combat/shooting scaffold
-- Fog-of-war cone rendering
-- Life + respawn logic
 
 ⚠️ Rule: **only one system per iteration**
