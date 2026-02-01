@@ -6,8 +6,6 @@ const { UPGRADES, getUpgradeById } = require("./definitions");
 // Optional constants import (keeps your structure, but prevents crash if file isn't there)
 let C = { MAX_NONPERM_SLOTS: 3 };
 try {
-  // if you have this file, it will be used
-  // (your original code referenced it)
   C = require("../shared/constants");
 } catch (_) {
   // fallback stays at 3
@@ -39,7 +37,6 @@ function buildOfferOptions() {
 function getUpgradeInfo(id) {
   const u = getUpgradeById(id);
   if (!u) return null;
-  // ✅ include desc so client tooltips work (drop list + bar + hover)
   return { id: u.id, name: u.name, kind: u.kind, desc: u.desc || "" };
 }
 
@@ -54,13 +51,9 @@ function canTakeUpgrade(player, upgrade) {
     return { ok: true };
   }
 
-  // consumable / non-permanent
-  const existing = player.upgrades.slots.find((s) => s.id === upgrade.id);
-  if (existing) {
-    // For now: refresh to maxUses if they take same upgrade again
-    return { ok: true, mode: "refresh_existing" };
-  }
-
+  // consumable / non-permanent:
+  // ✅ NEW RULE: taking an upgrade should go into an empty slot first.
+  // This means we DO NOT "refresh existing" anymore.
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
@@ -83,17 +76,8 @@ function applyUpgradeSelection(player, upgradeId) {
     return { ok: true, applied: { kind: "permanent", id: up.id } };
   }
 
-  // consumable
+  // consumable: always add to a new slot (until slots full)
   const maxUses = Number.isFinite(up.maxUses) ? up.maxUses : 1;
-
-  const existing = player.upgrades.slots.find((s) => s.id === up.id);
-  if (existing) {
-    existing.usesLeft = maxUses; // refresh
-    return {
-      ok: true,
-      applied: { kind: "consumable_refresh", id: up.id, usesLeft: existing.usesLeft },
-    };
-  }
 
   player.upgrades.slots.push({ id: up.id, usesLeft: maxUses });
   return {
@@ -106,5 +90,5 @@ module.exports = {
   ensureUpgradeState,
   buildOfferOptions,
   applyUpgradeSelection,
-  getUpgradeInfo, // ✅ needed by server/index.js to send client `chosen`
+  getUpgradeInfo,
 };
