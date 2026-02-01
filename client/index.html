@@ -203,7 +203,7 @@
       align-items:center;
     }
 
-    /* Upgrade picker grid tiles */
+    /* Upgrade picker grid tiles (reused for respawn) */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -289,19 +289,24 @@
 <body>
   <div class="wrap">
     <h1>🎪 Timetable Clowns</h1>
-    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Shooting: hold Space. Hotkeys: 8/9/0 (use consumables). Debug: V (mask), B (edge ring).</p>
+    <p class="muted">Lobby + movement + walls + machines + machine interaction (press E). Shooting: hold Space. Debug: V (mask), B (edge ring).</p>
 
     <div class="card" id="startCard">
       <div class="row">
         <input id="name" placeholder="Your name" />
         <select id="role">
-          <option value="host">Host</option>
+          <option value="host" selected>Host</option>
           <option value="guest">Guest</option>
         </select>
         <input id="joinCode" placeholder="Game code (guest)" class="hidden" />
       </div>
 
       <div class="row" id="hostSettings">
+        <select id="mode">
+          <option value="ffa" selected>All vs All (FFA)</option>
+          <option value="teams">Teams</option>
+        </select>
+
         <select id="tableBase">
           <option value="1">Table 1</option><option value="2">Table 2</option><option value="3">Table 3</option>
           <option value="4" selected>Table 4</option>
@@ -311,11 +316,9 @@
 
         <select id="teamCount">
           <option value="1">1 team</option>
-          <option value="2" selected>2 teams</option>
+          <option value="2">2 teams</option>
           <option value="3">3 teams</option>
-          <option value="4">4 teams</option>
-          <option value="5">5 teams</option>
-          <option value="6">6 teams</option>
+          <option value="4" selected>4 teams</option>
         </select>
 
         <select id="mapChoice" title="Map">
@@ -357,12 +360,12 @@
 
       <h3>Players</h3>
       <ul id="playerList"></ul>
-      <p class="muted">Everyone must have a team before Start game works.</p>
+      <p class="muted" id="lobbyHint">Everyone must have a team before Start game works.</p>
     </div>
 
     <div class="card hidden" id="runningCard">
       <h2>Game started 🎉</h2>
-      <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine.</p>
+      <p class="muted" id="runningHint">Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space.</p>
 
       <!-- HUD -->
       <div class="hudRow" id="hudRow">
@@ -442,6 +445,19 @@
     </div>
   </div>
 
+  <!-- Respawn overlay -->
+  <div class="overlay" id="respawnOverlay">
+    <div class="modal">
+      <h3>You died 💀</h3>
+      <p class="muted" style="margin:.2em 0 .6em">Choose a respawn location:</p>
+      <div id="respawnList"></div>
+      <div class="actions">
+        <button id="respawnCloseBtn">Close</button>
+      </div>
+      <div class="msg" id="respawnMsg"></div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
@@ -451,6 +467,7 @@
       role: document.getElementById("role"),
       joinCode: document.getElementById("joinCode"),
       hostSettings: document.getElementById("hostSettings"),
+      mode: document.getElementById("mode"),
       tableBase: document.getElementById("tableBase"),
       teamCount: document.getElementById("teamCount"),
       mapChoice: document.getElementById("mapChoice"),
@@ -466,6 +483,7 @@
       playerList: document.getElementById("playerList"),
       hostControls: document.getElementById("hostControls"),
       startGame: document.getElementById("startGame"),
+      lobbyHint: document.getElementById("lobbyHint"),
       runningHint: document.getElementById("runningHint"),
 
       hudName: document.getElementById("hudName"),
@@ -474,7 +492,6 @@
       hudLife: document.getElementById("hudLife"),
 
       upgradeSlots: document.getElementById("upgradeSlots"),
-
       canvas: document.getElementById("game"),
 
       overlay: document.getElementById("overlay"),
@@ -494,11 +511,17 @@
       dropCancelBtn: document.getElementById("dropCancelBtn"),
       dropMsg: document.getElementById("dropMsg"),
       dropText: document.getElementById("dropText"),
+
+      respawnOverlay: document.getElementById("respawnOverlay"),
+      respawnList: document.getElementById("respawnList"),
+      respawnCloseBtn: document.getElementById("respawnCloseBtn"),
+      respawnMsg: document.getElementById("respawnMsg"),
     };
 
     let myId = null;
     let isHost = false;
-    let teamCount = 2;
+
+    let settings = { mode: "ffa", teamCount: 0 };
 
     let mapData = null;
     let world = { w: 2400, h: 1600 };
@@ -508,10 +531,12 @@
     let activeOfferId = null;
     let pendingReplace = null;
 
+    let activeRespawn = null; // { options: [...] }
+
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
 
-    // ---- Bullet render tuning (client-only) ----
+    // ---- bullets render tuning ----
     const BULLET_R = 3;
 
     let bubble = null;
@@ -525,7 +550,16 @@
       el.hostSettings.classList.toggle("hidden", guest);
     }
     el.role.addEventListener("change", updateRoleUI);
+
+    function updateHostModeUI(){
+      const isTeams = el.mode.value === "teams";
+      el.teamCount.classList.toggle("hidden", !isTeams);
+    }
+    el.mode.addEventListener("change", updateHostModeUI);
+
+    // initial UI
     updateRoleUI();
+    updateHostModeUI();
 
     socket.on("connect", () => el.status.textContent = "Connected.");
     socket.on("WELCOME", ({ playerId }) => {
@@ -541,10 +575,14 @@
       sayHello();
       if (el.role.value === "host") {
         isHost = true;
-        teamCount = Number(el.teamCount.value);
+
+        const mode = el.mode.value === "teams" ? "teams" : "ffa";
+        const teamCount = mode === "teams" ? Number(el.teamCount.value) : 0;
+
         socket.emit("createGame", {
-          tableBase: Number(el.tableBase.value),
+          mode,
           teamCount,
+          tableBase: Number(el.tableBase.value),
           mapChoice: el.mapChoice.value,
           inputMode: el.inputMode.value
         });
@@ -560,11 +598,19 @@
       el.hostControls.style.display = "block";
     });
 
-    socket.on("JOIN_SUCCESS", ({ gameCode, players, teams }) => {
+    socket.on("JOIN_SUCCESS", ({ gameCode, players, teams, settings: s }) => {
       el.gameCode.textContent = gameCode;
       el.lobby.classList.remove("hidden");
       el.hostControls.style.display = isHost ? "block" : "none";
-      teamCount = teams.length;
+
+      settings = s || { mode: "ffa", teamCount: 0 };
+
+      if (settings.mode === "ffa") {
+        el.lobbyHint.textContent = "All vs All: teams are automatic.";
+      } else {
+        el.lobbyHint.textContent = "Everyone must have a team before Start game works.";
+      }
+
       renderPlayers(players);
     });
 
@@ -572,7 +618,10 @@
       el.status.textContent = "Join failed: " + reason;
     });
 
-    socket.on("LOBBY_UPDATE", ({ players }) => renderPlayers(players));
+    socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
+      if (s) settings = s;
+      renderPlayers(players);
+    });
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
@@ -583,8 +632,11 @@
 
       mapData = payload.map || null;
       if (mapData?.world) world = mapData.world;
+
+      settings = payload.settings || settings;
+
       el.runningHint.textContent =
-        `Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space. Map: ${mapData?.name || mapData?.id || "?"}`;
+        `Move: WASD / Arrow keys. Interact: E near a machine. Shoot: hold Space. Mode: ${settings.mode || "?"}. Map: ${mapData?.name || mapData?.id || "?"}`;
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
@@ -617,7 +669,10 @@
         const li = document.createElement("li");
         li.textContent = `${p.name} (team: ${p.teamId ?? "—"})`;
 
-        if (isHost) {
+        // Only show team assignment if TEAMS mode and host
+        if (isHost && (settings?.mode === "teams")) {
+          const teamCount = settings?.teamCount ?? 2;
+
           const sel = document.createElement("select");
           sel.style.marginLeft = "10px";
 
@@ -650,7 +705,7 @@
     const inputState = { up:false, down:false, left:false, right:false, fire:false };
 
     function isUiBlockingInput() {
-      return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show");
+      return !!activePromptId || !!activeOfferId || el.dropOverlay.classList.contains("show") || el.respawnOverlay.classList.contains("show");
     }
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
@@ -675,7 +730,7 @@
       else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
       else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
       else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
-      else if (e.key === " " || e.code === "Space") inputState.fire = isDown; // ✅ Space fires
+      else if (e.key === " " || e.code === "Space") inputState.fire = isDown;
       else used = false;
 
       if (used) { e.preventDefault(); sendInput(); }
@@ -721,6 +776,7 @@
         if (p.reason === "empty_slot") showBubble("No upgrade in that slot.", 1200);
         else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
         else if (p.reason === "prompt_open") showBubble("Finish the machine first.", 1400);
+        else if (p.reason === "dead") showBubble("You are dead. Respawn first.", 1400);
         else showBubble("Cannot use right now.", 1200);
         return;
       }
@@ -994,6 +1050,87 @@
       return s.slice(0,6);
     }
 
+    // ---------- Respawn UI ----------
+    function openRespawnOverlay(payload) {
+      const options = Array.isArray(payload?.options) ? payload.options : [];
+      activeRespawn = { options };
+
+      el.respawnMsg.textContent = "";
+      el.respawnMsg.className = "msg";
+      el.respawnList.innerHTML = "";
+
+      const use4 = options.length >= 10;
+      const grid = document.createElement("div");
+      grid.className = "upgGrid" + (use4 ? " grid4" : "");
+
+      for (const o of options) {
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "upgTile";
+
+        const name = document.createElement("div");
+        name.className = "upgName";
+        name.textContent = o.label || o.id;
+
+        const kind = document.createElement("div");
+        kind.className = "upgKind";
+        kind.textContent = (o.kind === "machine") ? "machine spawn" : "corner spawn";
+
+        const foot = document.createElement("div");
+        foot.className = "upgFoot";
+
+        const tag = document.createElement("div");
+        tag.className = "upgTag";
+        tag.textContent = o.kind || "spawn";
+
+        const pick = document.createElement("div");
+        pick.className = "upgPick";
+        pick.textContent = "Spawn";
+
+        foot.appendChild(tag);
+        foot.appendChild(pick);
+
+        tile.appendChild(name);
+        tile.appendChild(kind);
+        tile.appendChild(foot);
+
+        tile.addEventListener("click", () => {
+          socket.emit("chooseRespawn", { spawnId: o.id });
+        });
+
+        grid.appendChild(tile);
+      }
+
+      el.respawnList.appendChild(grid);
+      el.respawnOverlay.classList.add("show");
+    }
+
+    function closeRespawnOverlay() {
+      activeRespawn = null;
+      el.respawnOverlay.classList.remove("show");
+      el.respawnList.innerHTML = "";
+      el.respawnMsg.textContent = "";
+    }
+
+    el.respawnCloseBtn.addEventListener("click", closeRespawnOverlay);
+
+    socket.on("RESPAWN_OPTIONS", (p) => {
+      openRespawnOverlay(p);
+      showBubble("You died. Choose a respawn.", 1400);
+    });
+
+    socket.on("RESPAWN_RESULT", (p) => {
+      if (!p) return;
+      if (p.ok) {
+        el.respawnMsg.textContent = "Respawned ✅";
+        el.respawnMsg.className = "msg good";
+        setTimeout(closeRespawnOverlay, 350);
+      } else {
+        el.respawnMsg.textContent = "Cannot respawn: " + (p.reason || "unknown");
+        el.respawnMsg.className = "msg bad";
+      }
+    });
+
     // ---------- Rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
@@ -1003,25 +1140,26 @@
     // Fog-of-war + LOS (CONE ONLY, walls block visibility)
     // ============================================================
     const FOG_ENABLED = true;
-    const FOG_ALPHA = 0.96;         // darkness outside cone (0..1)
+    const FOG_ALPHA = 0.96;
 
-    const VISION_LEN = 420;         // cone length
-    const CONE_ANGLE_DEG = 92;      // cone width
+    const VISION_LEN = 420;
+    const CONE_ANGLE_DEG = 92;
 
-    // Soft edge
     const EDGE_BLUR_PX = 14;
     const EDGE_STRENGTH = 0.75;
 
-    // Debug toggles
-    let DEBUG_SHOW_VIS = false;  // V shows visibility mask
-    let DEBUG_SHOW_EDGE = false; // B shows edge ring
+    let DEBUG_SHOW_VIS = false;
+    let DEBUG_SHOW_EDGE = false;
 
-    // Remember last facing angle so it doesn't snap when dir becomes (0,0)
     let lastFacingAng = 0;
+
+    function isUiBlockingInputForDebug() {
+      return isUiBlockingInput();
+    }
 
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
+      if (isUiBlockingInputForDebug()) return;
 
       if (e.key.toLowerCase() === "v") {
         DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
@@ -1035,7 +1173,6 @@
       }
     });
 
-    // Offscreen buffers
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
@@ -1127,7 +1264,6 @@
         if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
       }
 
-      // Fill cone with stable sampling so the boundary is smooth
       const samples = 220;
       for (let i = 1; i < samples; i++) {
         const t = i / samples;
@@ -1138,7 +1274,6 @@
       return angles;
     }
 
-    // Cone visible region (alpha mask): apex at player, walls block by raycast
     function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
 
@@ -1168,7 +1303,6 @@
       const meX = meWorldX - camX;
       const meY = meWorldY - camY;
 
-      // Build wall segments in SCREEN SPACE
       const worldWalls = mapData?.walls || [];
       const segsWorld = segsFromWalls(worldWalls);
       const segs = segsWorld.map(s => ({
@@ -1187,7 +1321,6 @@
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
-      // 1) Visibility mask as ALPHA (transparent outside cone)
       visCtx.save();
       visCtx.globalCompositeOperation = "source-over";
       visCtx.globalAlpha = 1;
@@ -1203,12 +1336,10 @@
         cornerAngles
       );
 
-      // Tiny dot so the player is never fully blind
       visCtx.beginPath();
       visCtx.arc(meX, meY, 2, 0, Math.PI*2);
       visCtx.fill();
 
-      // If something goes wrong, show a small circle fallback (still alpha mask)
       if (!okCone) {
         visCtx.beginPath();
         visCtx.arc(meX, meY, 80, 0, Math.PI*2);
@@ -1217,7 +1348,6 @@
 
       visCtx.restore();
 
-      // 2) Edge ring = blur(vis) - vis
       blurCtx.save();
       blurCtx.globalCompositeOperation = "source-over";
       blurCtx.globalAlpha = 1;
@@ -1236,22 +1366,18 @@
       edgeCtx.drawImage(visCanvas, 0, 0);
       edgeCtx.restore();
 
-      // 3) Final fog: full fog, punch out visible area fully (clear), soften edge
       fogCtx.save();
       fogCtx.globalCompositeOperation = "source-over";
       fogCtx.globalAlpha = 1;
       fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
-      // Dark layer everywhere
       fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
       fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
-      // Make cone totally clear
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.globalAlpha = 1;
       fogCtx.drawImage(visCanvas, 0, 0);
 
-      // Soft transition at the boundary (optional)
       fogCtx.globalAlpha = EDGE_STRENGTH;
       fogCtx.drawImage(edgeCanvas, 0, 0);
 
@@ -1270,7 +1396,6 @@
       }
     }
 
-    // ✅ faint wall outlines on top of fog (so walls are readable in fog)
     function drawWallsFogOutline(camX, camY){
       if (!mapData?.walls) return;
 
@@ -1292,6 +1417,26 @@
       ctx.restore();
     }
 
+    // ✅ bullets (draw BEFORE fog so they are hidden outside cone)
+    function drawBullets(camX, camY){
+      const list = lastSnapshot?.bullets;
+      if (!Array.isArray(list)) return;
+
+      for (const b of list) {
+        if (!b) continue;
+        const x = b.x - camX;
+        const y = b.y - camY;
+
+        const isMine = b.ownerId === myId;
+
+        ctx.beginPath();
+        ctx.arc(x, y, BULLET_R, 0, Math.PI * 2);
+        ctx.fillStyle = isMine ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
+        ctx.fill();
+      }
+    }
+
+    // ✅ money pickups (draw AFTER fog so they are visible through fog)
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -1310,26 +1455,6 @@
         ctx.fillStyle = "rgba(10,10,10,.9)";
         ctx.font = "16px system-ui";
         ctx.fillText("$", x - 5, y + 6);
-      }
-    }
-
-    // ✅ NEW: bullets
-    function drawBullets(camX, camY){
-      const list = lastSnapshot?.bullets;
-      if (!Array.isArray(list)) return;
-
-      for (const b of list) {
-        if (!b) continue;
-        const x = b.x - camX;
-        const y = b.y - camY;
-
-        // Slightly different alpha if it's yours
-        const isMine = b.ownerId === myId;
-
-        ctx.beginPath();
-        ctx.arc(x, y, BULLET_R, 0, Math.PI * 2);
-        ctx.fillStyle = isMine ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
-        ctx.fill();
       }
     }
 
@@ -1422,16 +1547,20 @@
       const px = p.x - camX;
       const py = p.y - camY;
 
-      ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
+      // dead players: faint
+      const alive = (p.alive !== false);
+      const a = alive ? 1 : 0.35;
+
+      ctx.fillStyle = isMe ? `rgba(43,102,255,${0.95*a})` : `rgba(255,255,255,${0.75*a})`;
       ctx.fillRect(px - 14, py - 14, 28, 28);
 
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.strokeStyle = `rgba(0,0,0,${0.35*a})`;
       ctx.beginPath();
       ctx.moveTo(px, py);
       ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
       ctx.stroke();
 
-      ctx.fillStyle = "rgba(230,237,247,.85)";
+      ctx.fillStyle = `rgba(230,237,247,${0.85*a})`;
       ctx.font = "12px system-ui";
       ctx.fillText(p.name, px - 14, py - 20);
     }
@@ -1444,7 +1573,6 @@
       const camXraw = me ? (me.x - canvas.width / 2) : 0;
       const camYraw = me ? (me.y - canvas.height / 2) : 0;
 
-      // round to whole pixels to prevent fog seams/lines
       const camX = Math.round(Math.max(0, Math.min(world.w - canvas.width, camXraw)));
       const camY = Math.round(Math.max(0, Math.min(world.h - canvas.height, camYraw)));
 
@@ -1454,10 +1582,9 @@
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
       drawWalls(camX, camY);
-      drawPickups(camX, camY);
       drawMachines(camX, camY);
 
-      // ✅ bullets are in the world too
+      // bullets BEFORE fog so fog hides them outside cone
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
@@ -1474,7 +1601,6 @@
         renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
 
         if (DEBUG_SHOW_VIS) {
-          // show mask on top of dark background
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = 0.85;
@@ -1495,13 +1621,13 @@
           ctx.drawImage(edgeCanvas, 0, 0);
           ctx.restore();
         } else {
-          // Normal fog draw (ALWAYS ON)
           ctx.drawImage(fogCanvas, 0, 0);
-
-          // keep wall outlines readable in fog
           drawWallsFogOutline(camX, camY);
         }
       }
+
+      // ✅ money AFTER fog so it is visible through fog
+      drawPickups(camX, camY);
 
       if (me) drawPlayer(me, camX, camY, true);
     }
