@@ -245,6 +245,7 @@
       display:flex;
       gap:10px;
       margin-top:10px;
+      flex-wrap:wrap;
     }
     .msg{margin-top:8px; font-weight:800}
     .msg.good{color:var(--good)}
@@ -446,17 +447,22 @@
     </div>
   </div>
 
-  <!-- Drop overlay -->
+  <!-- Drop/Replace overlay -->
   <div class="overlay" id="dropOverlay">
     <div class="modal">
-      <h3>Backpack full</h3>
+      <h3 id="dropTitle">Backpack full</h3>
       <p class="muted" id="dropText" style="margin:.2em 0 .6em">
-        You can only carry 3 consumable upgrades. Choose one to drop.
+        You can only carry 3 consumable upgrades.
       </p>
+
       <div id="dropList" class="dropList"></div>
+
       <div class="actions">
-        <button id="dropCancelBtn">Cancel</button>
+        <button class="primary" id="replaceYesBtn">Replace (Y)</button>
+        <button id="replaceNoBtn">Keep current (N)</button>
+        <button id="dropCancelBtn">Close</button>
       </div>
+
       <div class="msg" id="dropMsg"></div>
     </div>
   </div>
@@ -526,10 +532,13 @@
       upgradeMsg: document.getElementById("upgradeMsg"),
 
       dropOverlay: document.getElementById("dropOverlay"),
+      dropTitle: document.getElementById("dropTitle"),
       dropList: document.getElementById("dropList"),
       dropCancelBtn: document.getElementById("dropCancelBtn"),
       dropMsg: document.getElementById("dropMsg"),
       dropText: document.getElementById("dropText"),
+      replaceYesBtn: document.getElementById("replaceYesBtn"),
+      replaceNoBtn: document.getElementById("replaceNoBtn"),
 
       respawnOverlay: document.getElementById("respawnOverlay"),
       respawnList: document.getElementById("respawnList"),
@@ -551,7 +560,7 @@
 
     let activePromptId = null;
     let activeOfferId = null;
-    let pendingReplace = null;
+    let pendingReplace = null; // { stage:"ask"|"choose", offerId, upgradeId, requestedInfo, slotsPayload }
     let activeRespawn = null;
 
     let myServerUpgrades = { permanent: [], slots: [] };
@@ -779,6 +788,17 @@
     // HOTKEYS: 8 / 9 / 0
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
+
+      // If replace picker is open, 8/9/0 select which slot to drop
+      if (el.dropOverlay.classList.contains("show") && pendingReplace?.stage === "choose") {
+        if (e.key === "8" || e.key === "9" || e.key === "0") {
+          e.preventDefault();
+          const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
+          chooseDropByIndex(slotIndex);
+          return;
+        }
+      }
+
       if (isUiBlockingInput()) return;
 
       const t = e.target;
@@ -790,6 +810,19 @@
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
         socket.emit("useUpgradeSlot", { slotIndex });
+      }
+    });
+
+    // Replace dialog keys: Y/N/Escape
+    window.addEventListener("keydown", (e) => {
+      if (!el.dropOverlay.classList.contains("show")) return;
+
+      const k = e.key.toLowerCase();
+      if (pendingReplace?.stage === "ask") {
+        if (k === "y") { e.preventDefault(); enterReplaceChooseStage(); return; }
+        if (k === "n" || k === "escape") { e.preventDefault(); declineReplace(); return; }
+      } else if (pendingReplace?.stage === "choose") {
+        if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
       }
     });
 
@@ -933,8 +966,9 @@
 
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
-    function openDropPicker(payload) {
+    function openReplaceAsk(payload) {
       pendingReplace = {
+        stage: "ask",
         offerId: activeOfferId,
         upgradeId: payload?.requested?.id || null,
         requestedInfo: payload?.requested || null,
@@ -945,21 +979,48 @@
       el.dropMsg.className = "msg";
 
       const reqName = pendingReplace.requestedInfo?.name || pendingReplace.requestedInfo?.id || "New upgrade";
+      el.dropTitle.textContent = "Backpack full";
       el.dropText.textContent =
-        `You can only carry 3 consumable upgrades. To pick "${reqName}", choose one to drop:`;
+        `You have 3 consumables already. Replace one to pick "${reqName}"? (Y/N)`;
+
+      el.dropList.innerHTML = ""; // no list yet
+      el.dropOverlay.classList.add("show");
+    }
+
+    function enterReplaceChooseStage() {
+      if (!pendingReplace) return;
+      pendingReplace.stage = "choose";
+
+      const reqName = pendingReplace.requestedInfo?.name || pendingReplace.requestedInfo?.id || "New upgrade";
+      el.dropTitle.textContent = "Choose what to drop";
+      el.dropText.textContent =
+        `Press 8 / 9 / 0 to drop that slot and pick "${reqName}" (or click).`;
 
       el.dropList.innerHTML = "";
 
-      for (const s of pendingReplace.slotsPayload) {
-        const info = s.info || {};
+      // show exactly 3 consumable slots, in order
+      const hotkeys = ["8", "9", "0"];
+      for (let i = 0; i < 3; i++) {
+        const s = pendingReplace.slotsPayload[i];
+
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "dropBtn";
+
+        if (!s) {
+          btn.disabled = true;
+          btn.style.opacity = "0.5";
+          btn.textContent = `${hotkeys[i]} — (empty?)`;
+          el.dropList.appendChild(btn);
+          continue;
+        }
+
+        const info = s.info || {};
         btn.title = info.desc || "";
 
         const label = document.createElement("div");
         label.style.fontWeight = "900";
-        label.textContent = info.name || info.id || s.id;
+        label.textContent = `${hotkeys[i]} — ${info.name || info.id || s.id}`;
 
         const meta = document.createElement("div");
         meta.className = "dropMeta";
@@ -968,19 +1029,32 @@
         btn.appendChild(label);
         btn.appendChild(meta);
 
-        btn.addEventListener("click", () => {
-          if (!pendingReplace || !pendingReplace.upgradeId) return;
-          socket.emit("chooseUpgradeReplace", {
-            offerId: pendingReplace.offerId,
-            upgradeId: pendingReplace.upgradeId,
-            dropId: s.id,
-          });
-        });
-
+        btn.addEventListener("click", () => chooseDropByIndex(i));
         el.dropList.appendChild(btn);
       }
+    }
 
-      el.dropOverlay.classList.add("show");
+    function chooseDropByIndex(slotIndex) {
+      if (!pendingReplace) return;
+      if (pendingReplace.stage !== "choose") return;
+      if (!pendingReplace.upgradeId) return;
+
+      const s = pendingReplace.slotsPayload[slotIndex];
+      if (!s || !s.id) return;
+
+      socket.emit("chooseUpgradeReplace", {
+        offerId: pendingReplace.offerId,
+        upgradeId: pendingReplace.upgradeId,
+        dropId: s.id,
+      });
+    }
+
+    function declineReplace() {
+      // Keep current upgrades, simply close this overlay.
+      closeDropPicker();
+      // Leave upgrade offer open so player can choose a different (e.g. permanent) upgrade
+      el.upgradeMsg.textContent = "Kept current upgrades.";
+      el.upgradeMsg.className = "msg";
     }
 
     function closeDropPicker() {
@@ -989,15 +1063,18 @@
       el.dropList.innerHTML = "";
       el.dropMsg.textContent = "";
     }
-    el.dropCancelBtn.addEventListener("click", closeDropPicker);
+
+    el.dropCancelBtn.addEventListener("click", () => closeDropPicker());
+    el.replaceYesBtn.addEventListener("click", () => enterReplaceChooseStage());
+    el.replaceNoBtn.addEventListener("click", () => declineReplace());
 
     socket.on("UPGRADE_RESULT", (p) => {
       if (!p) return;
 
       if (!p.ok && p.reason === "slots_full") {
-        el.upgradeMsg.textContent = "Backpack full — choose one to drop.";
+        el.upgradeMsg.textContent = "Backpack full — replace? (Y/N)";
         el.upgradeMsg.className = "msg bad";
-        openDropPicker(p);
+        openReplaceAsk(p);
         return;
       }
 
@@ -1017,80 +1094,6 @@
         el.upgradeMsg.className = "msg bad";
       }
     });
-
-    // ===== Upgrade bar render (vertical) =====
-    function renderUpgradeBar() {
-      el.upgradeSlots.innerHTML = "";
-
-      const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
-      const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
-
-      const display = [];
-
-      for (const s of cons) {
-        const info = s?.info || {};
-        display.push({
-          kind: "consumable",
-          name: info.name || info.id || s.id,
-          desc: info.desc || "",
-          usesLeft: s.usesLeft
-        });
-      }
-      for (const p of perm) {
-        const info = p?.info || {};
-        display.push({
-          kind: "permanent",
-          name: info.name || info.id || p.id,
-          desc: info.desc || "",
-          usesLeft: null
-        });
-      }
-
-      const hotkeys = ["8", "9", "0"];
-      const totalSlots = 6;
-
-      for (let i = 0; i < totalSlots; i++) {
-        const u = display[i];
-
-        const slot = document.createElement("div");
-        slot.className = "uSlot";
-        slot.title = u?.desc ? u.desc : "";
-
-        const left = document.createElement("div");
-        left.className = "uLeft";
-
-        const hk = document.createElement("div");
-        hk.className = "uHotkey";
-        hk.textContent = (i < 3) ? hotkeys[i] : " ";
-        left.appendChild(hk);
-
-        const stack = document.createElement("div");
-        stack.className = "uStack";
-
-        const name = document.createElement("div");
-        name.className = "uName";
-        name.textContent = u ? u.name : "";
-        stack.appendChild(name);
-
-        const meta = document.createElement("div");
-        meta.className = "uMeta";
-        if (!u) meta.textContent = "";
-        else meta.textContent = u.kind === "consumable" ? "consumable" : "permanent";
-        stack.appendChild(meta);
-
-        left.appendChild(stack);
-
-        const uses = document.createElement("div");
-        uses.className = "uUses";
-        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) uses.textContent = String(u.usesLeft);
-        else uses.textContent = "";
-
-        slot.appendChild(left);
-        slot.appendChild(uses);
-
-        el.upgradeSlots.appendChild(slot);
-      }
-    }
 
     // ---------- Respawn UI ----------
     function openRespawnOverlay(payload) {
@@ -1172,6 +1175,80 @@
         el.respawnMsg.className = "msg bad";
       }
     });
+
+    // ===== Upgrade bar render (vertical) =====
+    function renderUpgradeBar() {
+      el.upgradeSlots.innerHTML = "";
+
+      const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
+      const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
+
+      const display = [];
+
+      for (const s of cons) {
+        const info = s?.info || {};
+        display.push({
+          kind: "consumable",
+          name: info.name || info.id || s.id,
+          desc: info.desc || "",
+          usesLeft: s.usesLeft
+        });
+      }
+      for (const p of perm) {
+        const info = p?.info || {};
+        display.push({
+          kind: "permanent",
+          name: info.name || info.id || p.id,
+          desc: info.desc || "",
+          usesLeft: null
+        });
+      }
+
+      const hotkeys = ["8", "9", "0"];
+      const totalSlots = 6;
+
+      for (let i = 0; i < totalSlots; i++) {
+        const u = display[i];
+
+        const slot = document.createElement("div");
+        slot.className = "uSlot";
+        slot.title = u?.desc ? u.desc : "";
+
+        const left = document.createElement("div");
+        left.className = "uLeft";
+
+        const hk = document.createElement("div");
+        hk.className = "uHotkey";
+        hk.textContent = (i < 3) ? hotkeys[i] : " ";
+        left.appendChild(hk);
+
+        const stack = document.createElement("div");
+        stack.className = "uStack";
+
+        const name = document.createElement("div");
+        name.className = "uName";
+        name.textContent = u ? u.name : "";
+        stack.appendChild(name);
+
+        const meta = document.createElement("div");
+        meta.className = "uMeta";
+        if (!u) meta.textContent = "";
+        else meta.textContent = u.kind === "consumable" ? "consumable" : "permanent";
+        stack.appendChild(meta);
+
+        left.appendChild(stack);
+
+        const uses = document.createElement("div");
+        uses.className = "uUses";
+        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) uses.textContent = String(u.usesLeft);
+        else uses.textContent = "";
+
+        slot.appendChild(left);
+        slot.appendChild(uses);
+
+        el.upgradeSlots.appendChild(slot);
+      }
+    }
 
     // ---------- Canvas rendering (NO stretching => fixes “x faster than y” look) ----------
     const canvas = el.canvas;
@@ -1558,17 +1635,9 @@
       ctx.stroke();
     }
 
+    // ✅ Player names intentionally NOT drawn in arena
     function drawPlayerLabel(p, camX, camY){
-      if (p.alive === false) return;
-
-      const px = p.x - camX;
-      const py = p.y - camY;
-
-      ctx.save();
-      ctx.fillStyle = "rgba(230,237,247,.90)";
-      ctx.font = "12px system-ui";
-      ctx.fillText(p.name, px - 14, py - 20);
-      ctx.restore();
+      // intentionally empty (names hidden)
     }
 
     function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
@@ -1691,6 +1760,7 @@
 
       drawPickups(camX, camY);
 
+      // labels intentionally hidden
       for (const p of lastSnapshot.players) {
         drawPlayerLabel(p, camX, camY);
       }
