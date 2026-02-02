@@ -25,7 +25,6 @@
       color:var(--ink);
     }
 
-    /* ✅ When the game is running, remove top chrome to maximize arena */
     body.inGame{ overflow:hidden; }
     body.inGame #topHeader{ display:none; }
     body.inGame .wrap{ padding:8px; }
@@ -76,7 +75,6 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
-    /* ===== Game layout: canvas left, sidebar right ===== */
     .gameLayout{
       display:grid;
       grid-template-columns: 1fr 240px;
@@ -91,13 +89,10 @@
       background:#0e1630;
       overflow:hidden;
       min-height: 520px;
-
-      /* ✅ maximize viewport height (less wasted top space) */
       height: calc(100vh - 60px);
       max-height: 980px;
     }
 
-    /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
       width:100%;
       height:100%;
@@ -105,7 +100,6 @@
       background:transparent;
     }
 
-    /* HUD overlay (z-axis in front of arena) */
     .hudOverlay{
       position:absolute;
       top:10px;
@@ -136,7 +130,6 @@
       display:inline-block;
     }
 
-    /* Sidebar (upgrades + leave button) */
     .sidePanel{
       display:flex;
       flex-direction:column;
@@ -215,7 +208,6 @@
       flex:0 0 auto;
     }
 
-    /* Prompt overlays */
     .overlay{
       position:fixed; inset:0;
       background:rgba(0,0,0,.55);
@@ -251,7 +243,6 @@
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
-    /* Upgrade picker tiles */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -304,7 +295,6 @@
   <div class="wrap">
     <div id="topHeader">
       <h1>🎪 Timetable Clowns</h1>
-      <!-- ✅ keep this in lobby only; hidden automatically in-game -->
       <p class="muted" style="margin:.2em 0 0.6em">
         Move: WASD / Arrow keys · Interact: E · Shoot: hold Space · Debug: V (mask), B (edge ring)
       </p>
@@ -394,12 +384,11 @@
               <span class="dotCoin"></span>
               <span id="hudMoney">$0</span>
             </div>
-
             <div class="hudPill" title="Life">
               ❤️ <span id="hudLife">1</span>
             </div>
 
-            <!-- ✅ Cakes / ammo -->
+            <!-- ✅ cakes HUD -->
             <div class="hudPill" title="Cakes (ammo)">
               🍰 <span id="hudCakes">7</span>
             </div>
@@ -553,7 +542,6 @@
       respawnMsg: document.getElementById("respawnMsg"),
     };
 
-    // Safe navigation: reload to cleanly disconnect + return
     el.leaveLobby.addEventListener("click", () => location.reload());
     el.leaveGame.addEventListener("click", () => location.reload());
 
@@ -567,25 +555,18 @@
 
     let activePromptId = null;
     let activeOfferId = null;
-    let pendingReplace = null; // { stage:"ask"|"choose", offerId, upgradeId, requestedInfo, slotsPayload }
+    let pendingReplace = null;
     let activeRespawn = null;
 
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
 
-    // ---- bullets render ----
-    const BULLET_R = 3;
-
-    // ✅ cakes config (HUD starts with 7)
-    const MAX_CAKES = 7;
-
-    // speech bubble (for denies etc)
+    // speech bubble
     let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
     }
 
-    // ===== Role UI =====
     function updateRoleUI(){
       const guest = el.role.value === "guest";
       el.joinCode.classList.toggle("hidden", !guest);
@@ -668,7 +649,6 @@
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
     socket.on("GAME_STARTED", (payload = {}) => {
-      // ✅ maximize play area
       document.body.classList.add("inGame");
 
       el.lobby.classList.add("hidden");
@@ -682,7 +662,7 @@
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
-      el.hudCakes.textContent = String(MAX_CAKES);
+      el.hudCakes.textContent = "7";
 
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
@@ -697,13 +677,12 @@
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
         el.hudLife.textContent = me.alive === false ? "0" : "1";
 
-        // ✅ cakes from server
-        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
+        // ✅ cakes HUD (shows 0 while dead)
+        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : 0);
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
-      // If me is missing (dead), we rely on PLAYER_DIED to set HUD to 0.
     });
 
     function renderPlayers(players){
@@ -804,7 +783,6 @@
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
-      // If replace picker is open, 8/9/0 select which slot to drop
       if (el.dropOverlay.classList.contains("show") && pendingReplace?.stage === "choose") {
         if (e.key === "8" || e.key === "9" || e.key === "0") {
           e.preventDefault();
@@ -864,13 +842,6 @@
         const rName = p.removed?.name || p.removed?.id || "Upgrade";
         setTimeout(() => showBubble(`Ran out: ${rName}`, 1400), 350);
       }
-    });
-
-    // ✅ Death event => force HUD to show 0 while dead (Option A)
-    socket.on("PLAYER_DIED", ({ playerId }) => {
-      if (playerId !== myId) return;
-      el.hudLife.textContent = "0";
-      el.hudCakes.textContent = "0";
     });
 
     // ---------- Prompt UI ----------
@@ -1005,7 +976,7 @@
       el.dropText.textContent =
         `You have 3 consumables already. Replace one to pick "${reqName}"? (Y/N)`;
 
-      el.dropList.innerHTML = ""; // no list yet
+      el.dropList.innerHTML = "";
       el.dropOverlay.classList.add("show");
     }
 
@@ -1020,7 +991,6 @@
 
       el.dropList.innerHTML = "";
 
-      // show exactly 3 consumable slots, in order
       const hotkeys = ["8", "9", "0"];
       for (let i = 0; i < 3; i++) {
         const s = pendingReplace.slotsPayload[i];
@@ -1072,9 +1042,7 @@
     }
 
     function declineReplace() {
-      // Keep current upgrades, simply close this overlay.
       closeDropPicker();
-      // Leave upgrade offer open so player can choose a different (e.g. permanent) upgrade
       el.upgradeMsg.textContent = "Kept current upgrades.";
       el.upgradeMsg.className = "msg";
     }
@@ -1191,11 +1159,6 @@
       if (p.ok) {
         el.respawnMsg.textContent = "Respawned ✅";
         el.respawnMsg.className = "msg good";
-
-        // HUD will update from next snapshot, but we can pre-set sane values:
-        el.hudLife.textContent = "1";
-        el.hudCakes.textContent = String(MAX_CAKES);
-
         setTimeout(closeRespawnOverlay, 350);
       } else {
         el.respawnMsg.textContent = "Cannot respawn: " + (p.reason || "unknown");
@@ -1277,7 +1240,7 @@
       }
     }
 
-    // ---------- Canvas rendering (NO stretching => fixes “x faster than y” look) ----------
+    // ---------- Canvas rendering ----------
     const canvas = el.canvas;
     const ctx = canvas.getContext("2d", { alpha: true });
 
@@ -1299,7 +1262,6 @@
         canvas.height = needH;
       }
 
-      // draw in CSS pixels
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       VIEW_W = cssW;
@@ -1338,7 +1300,6 @@
       edgeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    // Fog config
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
@@ -1608,20 +1569,26 @@
       ctx.lineWidth = 1;
     }
 
+    // ✅ Cakes (emoji) rendering
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
+
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "18px system-ui"; // cake size
 
       for (const b of list) {
         if (!b) continue;
         const x = b.x - camX;
         const y = b.y - camY;
 
-        ctx.beginPath();
-        ctx.arc(x, y, BULLET_R, 0, Math.PI * 2);
-        ctx.fillStyle = (b.ownerId === myId) ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.75)";
-        ctx.fill();
+        ctx.globalAlpha = (b.ownerId === myId) ? 1.0 : 0.85;
+        ctx.fillText("🍰", x, y);
       }
+
+      ctx.restore();
     }
 
     function drawPickups(camX, camY){
@@ -1645,7 +1612,6 @@
       }
     }
 
-    // ✅ dead players: not drawn
     function drawPlayerBody(p, camX, camY, isMe){
       if (p.alive === false) return;
 
@@ -1662,9 +1628,8 @@
       ctx.stroke();
     }
 
-    // ✅ Player names intentionally NOT drawn in arena
     function drawPlayerLabel(p, camX, camY){
-      // intentionally empty (names hidden)
+      // intentionally empty
     }
 
     function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
@@ -1787,7 +1752,6 @@
 
       drawPickups(camX, camY);
 
-      // labels intentionally hidden
       for (const p of lastSnapshot.players) {
         drawPlayerLabel(p, camX, camY);
       }
