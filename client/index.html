@@ -25,6 +25,7 @@
       color:var(--ink);
     }
 
+    /* ✅ When the game is running, remove top chrome to maximize arena */
     body.inGame{ overflow:hidden; }
     body.inGame #topHeader{ display:none; }
     body.inGame .wrap{ padding:8px; }
@@ -75,6 +76,7 @@
     li{margin:6px 0}
     .hostOnly{display:none}
 
+    /* ===== Game layout: canvas left, sidebar right ===== */
     .gameLayout{
       display:grid;
       grid-template-columns: 1fr 240px;
@@ -89,10 +91,13 @@
       background:#0e1630;
       overflow:hidden;
       min-height: 520px;
+
+      /* ✅ maximize viewport height (less wasted top space) */
       height: calc(100vh - 60px);
       max-height: 980px;
     }
 
+    /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
       width:100%;
       height:100%;
@@ -100,6 +105,7 @@
       background:transparent;
     }
 
+    /* HUD overlay (z-axis in front of arena) */
     .hudOverlay{
       position:absolute;
       top:10px;
@@ -130,6 +136,7 @@
       display:inline-block;
     }
 
+    /* Sidebar (upgrades + leave button) */
     .sidePanel{
       display:flex;
       flex-direction:column;
@@ -208,6 +215,7 @@
       flex:0 0 auto;
     }
 
+    /* Prompt overlays */
     .overlay{
       position:fixed; inset:0;
       background:rgba(0,0,0,.55);
@@ -243,6 +251,7 @@
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
+    /* Upgrade picker tiles */
     .upgGrid{
       display:grid;
       gap:10px;
@@ -384,11 +393,11 @@
               <span class="dotCoin"></span>
               <span id="hudMoney">$0</span>
             </div>
+
             <div class="hudPill" title="Life">
               ❤️ <span id="hudLife">1</span>
             </div>
 
-            <!-- ✅ cakes HUD -->
             <div class="hudPill" title="Cakes (ammo)">
               🍰 <span id="hudCakes">7</span>
             </div>
@@ -561,12 +570,16 @@
     let myServerUpgrades = { permanent: [], slots: [] };
     const INTERACT_RADIUS = 60;
 
+    // ✅ cakes config (HUD starts with 7)
+    const MAX_CAKES = 7;
+
     // speech bubble
     let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
     }
 
+    // ===== Role UI =====
     function updateRoleUI(){
       const guest = el.role.value === "guest";
       el.joinCode.classList.toggle("hidden", !guest);
@@ -662,7 +675,7 @@
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
-      el.hudCakes.textContent = "7";
+      el.hudCakes.textContent = String(MAX_CAKES);
 
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
@@ -676,9 +689,7 @@
       if (me) {
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
         el.hudLife.textContent = me.alive === false ? "0" : "1";
-
-        // ✅ cakes HUD (shows 0 while dead)
-        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : 0);
+        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
@@ -766,7 +777,6 @@
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
 
-    // Interact key (E)
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
@@ -779,7 +789,6 @@
       if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
     });
 
-    // HOTKEYS: 8 / 9 / 0
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
@@ -806,7 +815,6 @@
       }
     });
 
-    // Replace dialog keys: Y/N/Escape
     window.addEventListener("keydown", (e) => {
       if (!el.dropOverlay.classList.contains("show")) return;
 
@@ -842,6 +850,12 @@
         const rName = p.removed?.name || p.removed?.id || "Upgrade";
         setTimeout(() => showBubble(`Ran out: ${rName}`, 1400), 350);
       }
+    });
+
+    socket.on("PLAYER_DIED", ({ playerId }) => {
+      if (playerId !== myId) return;
+      el.hudLife.textContent = "0";
+      el.hudCakes.textContent = "0";
     });
 
     // ---------- Prompt UI ----------
@@ -1159,6 +1173,10 @@
       if (p.ok) {
         el.respawnMsg.textContent = "Respawned ✅";
         el.respawnMsg.className = "msg good";
+
+        el.hudLife.textContent = "1";
+        el.hudCakes.textContent = String(MAX_CAKES);
+
         setTimeout(closeRespawnOverlay, 350);
       } else {
         el.respawnMsg.textContent = "Cannot respawn: " + (p.reason || "unknown");
@@ -1569,22 +1587,23 @@
       ctx.lineWidth = 1;
     }
 
-    // ✅ Cakes (emoji) rendering
+    // ✅ cakes rendered as emoji projectiles
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
 
       ctx.save();
+      ctx.font = "18px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.font = "18px system-ui"; // cake size
 
       for (const b of list) {
         if (!b) continue;
         const x = b.x - camX;
         const y = b.y - camY;
 
-        ctx.globalAlpha = (b.ownerId === myId) ? 1.0 : 0.85;
+        // Slightly dim non-self bullets
+        ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
         ctx.fillText("🍰", x, y);
       }
 
@@ -1629,7 +1648,7 @@
     }
 
     function drawPlayerLabel(p, camX, camY){
-      // intentionally empty
+      // intentionally empty (names hidden)
     }
 
     function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
@@ -1675,7 +1694,6 @@
       ctx.lineWidth = 1;
     }
 
-    // Debug keys
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
