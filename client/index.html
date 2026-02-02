@@ -394,8 +394,14 @@
               <span class="dotCoin"></span>
               <span id="hudMoney">$0</span>
             </div>
+
             <div class="hudPill" title="Life">
               ❤️ <span id="hudLife">1</span>
+            </div>
+
+            <!-- ✅ Cakes / ammo -->
+            <div class="hudPill" title="Cakes (ammo)">
+              🍰 <span id="hudCakes">7</span>
             </div>
           </div>
 
@@ -513,6 +519,7 @@
 
       hudMoney: document.getElementById("hudMoney"),
       hudLife: document.getElementById("hudLife"),
+      hudCakes: document.getElementById("hudCakes"),
 
       upgradeSlots: document.getElementById("upgradeSlots"),
 
@@ -568,6 +575,9 @@
 
     // ---- bullets render ----
     const BULLET_R = 3;
+
+    // ✅ cakes config (HUD starts with 7)
+    const MAX_CAKES = 7;
 
     // speech bubble (for denies etc)
     let bubble = null;
@@ -672,6 +682,7 @@
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
+      el.hudCakes.textContent = String(MAX_CAKES);
 
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
@@ -686,9 +697,13 @@
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
         el.hudLife.textContent = me.alive === false ? "0" : "1";
 
+        // ✅ cakes from server
+        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
+
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
+      // If me is missing (dead), we rely on PLAYER_DIED to set HUD to 0.
     });
 
     function renderPlayers(players){
@@ -849,6 +864,13 @@
         const rName = p.removed?.name || p.removed?.id || "Upgrade";
         setTimeout(() => showBubble(`Ran out: ${rName}`, 1400), 350);
       }
+    });
+
+    // ✅ Death event => force HUD to show 0 while dead (Option A)
+    socket.on("PLAYER_DIED", ({ playerId }) => {
+      if (playerId !== myId) return;
+      el.hudLife.textContent = "0";
+      el.hudCakes.textContent = "0";
     });
 
     // ---------- Prompt UI ----------
@@ -1169,6 +1191,11 @@
       if (p.ok) {
         el.respawnMsg.textContent = "Respawned ✅";
         el.respawnMsg.className = "msg good";
+
+        // HUD will update from next snapshot, but we can pre-set sane values:
+        el.hudLife.textContent = "1";
+        el.hudCakes.textContent = String(MAX_CAKES);
+
         setTimeout(closeRespawnOverlay, 350);
       } else {
         el.respawnMsg.textContent = "Cannot respawn: " + (p.reason || "unknown");
