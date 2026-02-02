@@ -43,7 +43,7 @@ const INTERACT_RADIUS = 60; // must match client highlight
 const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 
 // --------------------
-// Shooting / bullets (later: cakes)
+// Shooting / bullets
 // --------------------
 const BULLET_SPEED = 780; // px/sec
 const BULLET_TTL = 1.2; // seconds
@@ -52,8 +52,10 @@ const FIRE_COOLDOWN = 0.5; // seconds between shots (hold Space)
 const RESPAWN_INVULN = 0.6; // seconds after respawn
 const CORNER_PAD = 80; // how far inside the corner spawn area
 
-// ✅ Ammo / Cakes
-const MAX_CAKES = 7;
+// --------------------
+// Cakes (ammo)
+// --------------------
+const MAX_CAKES = 7; // ✅ finite shots before refill
 
 // --------------------
 // In-memory game store
@@ -207,7 +209,7 @@ function snapshotForGame(game) {
           money: typeof p.money === "number" ? p.money : 0,
           upgrades: { permanent, slots },
 
-          // ✅ Ammo (cakes)
+          // ✅ cakes ammo
           cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
 
           // death/respawn state (alive always true here, but keep fields for client logic)
@@ -367,9 +369,6 @@ setInterval(() => {
     for (const p of game.players.values()) {
       if (!p.alive) continue;
 
-      // Ensure cakes is always a number
-      if (!Number.isFinite(p.cakes)) p.cakes = MAX_CAKES;
-
       const up = !!p.input?.up;
       const down = !!p.input?.down;
       const left = !!p.input?.left;
@@ -417,8 +416,13 @@ setInterval(() => {
         if (p.pendingPrompt) continue;
         if (p.pendingUpgradeOffer) continue;
 
-        // ✅ Require ammo
-        if (!Number.isFinite(p.cakes) || p.cakes <= 0) continue;
+        // ✅ ammo check: must have cakes
+        if (!Number.isFinite(p.cakes)) p.cakes = MAX_CAKES;
+        if (p.cakes <= 0) {
+          // no cakes -> cannot shoot, but still apply cooldown to prevent spam
+          p.fireCd = FIRE_COOLDOWN;
+          continue;
+        }
 
         // Require a facing direction
         const dx = typeof p.dirX === "number" ? p.dirX : 1;
@@ -446,7 +450,7 @@ setInterval(() => {
         game.bullets.push(b);
 
         // ✅ spend 1 cake
-        p.cakes = Math.max(0, (p.cakes || 0) - 1);
+        p.cakes -= 1;
 
         p.fireCd = FIRE_COOLDOWN;
       }
@@ -560,7 +564,7 @@ setInterval(() => {
         hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
         hitPlayer.fireCd = 0;
 
-        // ✅ show 0 cakes while dead
+        // ✅ while dead, treat cakes as 0 (HUD will show 0 on client)
         hitPlayer.cakes = 0;
 
         // clear any open prompt (you died)
@@ -619,7 +623,8 @@ io.on("connection", (socket) => {
     const modeRaw = String(payload.mode || GAME_MODE_FFA).toLowerCase();
     const mode = modeRaw === GAME_MODE_TEAMS ? GAME_MODE_TEAMS : GAME_MODE_FFA;
 
-    const teamCount = mode === GAME_MODE_TEAMS ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2) : 0;
+    const teamCount =
+      mode === GAME_MODE_TEAMS ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2) : 0;
 
     const inputMode =
       payload.inputMode === "kb" ||
@@ -670,7 +675,7 @@ io.on("connection", (socket) => {
       fireCd: 0,
       pendingRespawn: null,
 
-      // ✅ cakes (ammo)
+      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
@@ -749,13 +754,15 @@ io.on("connection", (socket) => {
       fireCd: 0,
       pendingRespawn: null,
 
-      // ✅ cakes (ammo)
+      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
     // FFA: auto-assign unique teamId
     if (game.settings.mode === GAME_MODE_FFA) {
-      const used = new Set([...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x)));
+      const used = new Set(
+        [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
+      );
       let tid = 0;
       while (used.has(tid)) tid++;
       joinPlayer.teamId = tid;
@@ -851,7 +858,7 @@ io.on("connection", (socket) => {
       p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
       p.pendingRespawn = null;
 
-      // ✅ refill cakes on game start spawn
+      // ✅ start with full cakes
       p.cakes = MAX_CAKES;
 
       economy.ensurePlayerEconomy(p);
@@ -987,7 +994,7 @@ io.on("connection", (socket) => {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
 
-      // ✅ refill cakes on correct answer
+      // ✅ full refill on correct answer
       p.cakes = MAX_CAKES;
 
       socket.emit("ANSWER_RESULT", { ok: true });
@@ -1052,7 +1059,7 @@ io.on("connection", (socket) => {
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
 
-    // ✅ refill cakes on respawn
+    // ✅ full refill on respawn
     p.cakes = MAX_CAKES;
 
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
