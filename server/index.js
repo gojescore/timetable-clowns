@@ -48,7 +48,7 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 const BULLET_SPEED = 780; // px/sec
 const BULLET_TTL = 1.2; // seconds
 const BULLET_HIT_R = 4; // hit radius around bullet point
-const FIRE_COOLDOWN = 0.14; // seconds between shots (hold Space)
+const FIRE_COOLDOWN = 0.5; // seconds between shots (hold Space)
 const RESPAWN_INVULN = 0.6; // seconds after respawn
 const CORNER_PAD = 80; // how far inside the corner spawn area
 
