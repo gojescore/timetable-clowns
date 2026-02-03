@@ -22,9 +22,46 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-// For now: offer ALL upgrades every time (as per your rule).
-function buildOfferOptions() {
-  return UPGRADES.map((u) => ({
+// ✅ NEW: pick a fixed random pool of upgrade IDs (for entire match)
+function pickRandomUpgradePool(n = 9) {
+  const all = Array.isArray(UPGRADES) ? UPGRADES.map(u => u.id).filter(Boolean) : [];
+  if (all.length === 0) return [];
+
+  const want = Math.max(1, Math.min(all.length, Math.floor(Number(n) || 9)));
+
+  // Fisher–Yates shuffle (copy)
+  const arr = all.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr.slice(0, want);
+}
+
+// ✅ UPDATED: build offer options from either:
+// - a fixed pool (array of ids), OR
+// - all upgrades (default)
+function buildOfferOptions(poolIds) {
+  let ids = null;
+
+  if (Array.isArray(poolIds) && poolIds.length) {
+    // keep order, remove unknown + duplicates
+    const seen = new Set();
+    ids = [];
+    for (const id of poolIds) {
+      if (!id || seen.has(id)) continue;
+      const u = getUpgradeById(id);
+      if (!u) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+
+  const list = ids ? ids.map(getUpgradeById).filter(Boolean) : UPGRADES;
+
+  return list.map((u) => ({
     id: u.id,
     name: u.name,
     kind: u.kind,
@@ -91,4 +128,5 @@ module.exports = {
   buildOfferOptions,
   applyUpgradeSelection,
   getUpgradeInfo,
+  pickRandomUpgradePool, // ✅ export
 };
