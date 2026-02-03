@@ -1014,11 +1014,11 @@ io.on("connection", (socket) => {
       const offerId = makeOfferId();
 
       // ✅ NEW: use fixed 9-upgrade pool for the entire match
-      const pool = Array.isArray(game.upgradePool) && game.upgradePool.length
-        ? game.upgradePool
-        : upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
+      const pool =
+        Array.isArray(game.upgradePool) && game.upgradePool.length
+          ? game.upgradePool
+          : upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
 
-      // ensure game has it (in case it was missing)
       game.upgradePool = pool;
 
       const options = upgrades.buildOfferOptions(pool);
