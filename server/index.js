@@ -57,8 +57,11 @@ const CORNER_PAD = 80; // how far inside the corner spawn area
 // --------------------
 const MAX_CAKES = 7; // ✅ finite shots before refill
 
-// ✅ NEW: fixed upgrade pool size for whole match
+// ✅ Fixed upgrade pool size for whole match
 const UPGRADE_POOL_SIZE = 9;
+
+// ✅ TEMP: offer size sent to client (keeps old client from crashing)
+const UPGRADE_OFFER_SIZE = 3;
 
 // --------------------
 // In-memory game store
@@ -174,12 +177,11 @@ function snapshotForGame(game) {
       ? game.bullets.map((b) => ({
           id: b.id,
           ownerId: b.ownerId,
-          ownerTeamId: b.ownerTeamId, // ✅ optional (debug / client use)
+          ownerTeamId: b.ownerTeamId,
           x: b.x,
           y: b.y,
         }))
       : [],
-    // ✅ dead players disappear from snapshot until respawn
     players: [...game.players.values()]
       .filter((p) => p.alive)
       .map((p) => {
@@ -211,11 +213,7 @@ function snapshotForGame(game) {
           nextMachineNum: p.nextMachineNum,
           money: typeof p.money === "number" ? p.money : 0,
           upgrades: { permanent, slots },
-
-          // ✅ cakes ammo
           cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
-
-          // death/respawn state (alive always true here, but keep fields for client logic)
           alive: !!p.alive,
           invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
         };
@@ -257,6 +255,20 @@ function makeBulletId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
+// ✅ helper: sample N unique elements from array (no crash if short)
+function sampleUnique(arr, n) {
+  if (!Array.isArray(arr) || arr.length === 0) return [];
+  const want = Math.max(0, Math.min(arr.length, Math.floor(Number(n) || 0)));
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = copy[i];
+    copy[i] = copy[j];
+    copy[j] = t;
+  }
+  return copy.slice(0, want);
+}
+
 // --------------------
 // Respawn options
 // --------------------
@@ -273,12 +285,10 @@ function buildRespawnOptions(game, player) {
   const world = getWorldForGame(game);
   const opts = [];
 
-  // corners always available
   for (const c of cornerSpawns(world)) {
     opts.push({ id: c.id, label: c.label, x: c.x, y: c.y, kind: "corner" });
   }
 
-  // cleared machines
   const map = game.map;
   if (map && Array.isArray(map.machines) && player?.clearedMachines instanceof Set) {
     for (const mid of player.clearedMachines) {
@@ -296,7 +306,6 @@ function buildRespawnOptions(game, player) {
     }
   }
 
-  // Sort so corners first, then machines by number
   const corners = opts.filter((o) => o.kind === "corner");
   const machines = opts
     .filter((o) => o.kind === "machine")
@@ -310,7 +319,6 @@ function findRespawnById(options, spawnId) {
 }
 
 function forceToValidPos(game, x, y) {
-  // if the exact spawn is inside something, nudge around a small ring
   const world = getWorldForGame(game);
   const minX = PLAYER_HALF;
   const minY = PLAYER_HALF;
@@ -331,7 +339,6 @@ function forceToValidPos(game, x, y) {
     if (!collidesAt(game, nx, ny)) return { x: nx, y: ny };
   }
 
-  // last resort: keep base
   return { x: baseX, y: baseY };
 }
 
@@ -342,7 +349,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// Serve client folder (local dev)
 const CLIENT_PATH = path.resolve(__dirname, "..", "client");
 console.log("SERVING CLIENT FROM:", CLIENT_PATH);
 console.log("Server folder is:", __dirname);
@@ -366,9 +372,7 @@ setInterval(() => {
 
     const world = getWorldForGame(game);
 
-    // --------------------
-    // Movement + fire cooldown
-    // --------------------
+    // movement + fire cooldown
     for (const p of game.players.values()) {
       if (!p.alive) continue;
 
@@ -395,13 +399,12 @@ setInterval(() => {
       const nextX = p.x + vx * PLAYER_SPEED * dt;
       const nextY = p.y + vy * PLAYER_SPEED * dt;
 
-      // Clamp to world bounds taking player size into account
       const minX = PLAYER_HALF;
       const minY = PLAYER_HALF;
       const maxX = world.w - PLAYER_HALF;
       const maxY = world.h - PLAYER_HALF;
 
-      // X then Y (slide)
+      // X then Y
       let cx = clamp(nextX, minX, maxX);
       let cy = clamp(p.y, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.x = cx;
@@ -410,24 +413,20 @@ setInterval(() => {
       cy = clamp(nextY, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.y = cy;
 
-      // ---- shooting ----
+      // shooting
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
       const wantsFire = !!p.input?.fire;
       if (wantsFire && p.fireCd <= 0) {
-        // Don’t allow firing while prompts/offers open (server safety)
         if (p.pendingPrompt) continue;
         if (p.pendingUpgradeOffer) continue;
 
-        // ✅ ammo check: must have cakes
         if (!Number.isFinite(p.cakes)) p.cakes = MAX_CAKES;
         if (p.cakes <= 0) {
-          // no cakes -> cannot shoot, but still apply cooldown to prevent spam
           p.fireCd = FIRE_COOLDOWN;
           continue;
         }
 
-        // Require a facing direction
         const dx = typeof p.dirX === "number" ? p.dirX : 1;
         const dy = typeof p.dirY === "number" ? p.dirY : 0;
         const dlen = Math.hypot(dx, dy) || 1;
@@ -441,7 +440,7 @@ setInterval(() => {
         const b = {
           id: makeBulletId(),
           ownerId: p.id,
-          ownerTeamId: p.teamId, // ✅ for no-friendly-fire
+          ownerTeamId: p.teamId,
           x: spawnX,
           y: spawnY,
           vx: ndx * BULLET_SPEED,
@@ -452,16 +451,12 @@ setInterval(() => {
         if (!Array.isArray(game.bullets)) game.bullets = [];
         game.bullets.push(b);
 
-        // ✅ spend 1 cake
         p.cakes -= 1;
-
         p.fireCd = FIRE_COOLDOWN;
       }
     }
 
-    // --------------------
-    // Bullets update + collisions + deaths
-    // --------------------
+    // bullets update
     if (!Array.isArray(game.bullets)) game.bullets = [];
 
     for (let i = game.bullets.length - 1; i >= 0; i--) {
@@ -480,13 +475,12 @@ setInterval(() => {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
-      // outside world
       if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
         game.bullets.splice(i, 1);
         continue;
       }
 
-      // bullet vs walls (point-in-rect with radius)
+      // walls
       let hitWall = false;
       if (Array.isArray(game.map?.walls)) {
         for (const w of game.map.walls) {
@@ -506,7 +500,7 @@ setInterval(() => {
         continue;
       }
 
-      // bullet vs machines
+      // machines
       let hitMachine = false;
       if (Array.isArray(game.map?.machines)) {
         for (const m of game.map.machines) {
@@ -531,13 +525,12 @@ setInterval(() => {
         continue;
       }
 
-      // bullet vs players
+      // players
       let hitPlayer = null;
       for (const p of game.players.values()) {
         if (!p.alive) continue;
         if (p.id === b.ownerId) continue;
 
-        // ✅ No friendly fire in TEAMS mode
         if (game.settings?.mode === GAME_MODE_TEAMS) {
           let shooterTeam = b.ownerTeamId;
           if (shooterTeam === undefined || shooterTeam === null) {
@@ -547,7 +540,6 @@ setInterval(() => {
           if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
         }
 
-        // invulnerability (invulnUntil is ms timestamp)
         if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
         const d2 = dist2(b.x, b.y, p.x, p.y);
@@ -559,45 +551,27 @@ setInterval(() => {
       }
 
       if (hitPlayer) {
-        // remove bullet
         game.bullets.splice(i, 1);
 
-        // kill player
         hitPlayer.alive = false;
         hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
         hitPlayer.fireCd = 0;
-
-        // ✅ while dead, treat cakes as 0 (HUD will show 0 on client)
         hitPlayer.cakes = 0;
-
-        // clear any open prompt (you died)
         hitPlayer.pendingPrompt = null;
 
-        // Send respawn picker to that player only
         const opts = buildRespawnOptions(game, hitPlayer);
-        hitPlayer.pendingRespawn = {
-          options: opts.map((o) => o.id),
-          createdAt: now,
-        };
+        hitPlayer.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
 
         io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
-          options: opts.map((o) => ({
-            id: o.id,
-            label: o.label,
-            kind: o.kind,
-          })),
+          options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
         });
 
-        // Optional: broadcast death event
         io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
-
         continue;
       }
     }
 
-    // economy: pickup collection
     economy.tryCollectPickups(game);
-
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
 }, TICK_MS);
@@ -648,9 +622,7 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
-
-      // ✅ NEW: will be set ONCE at startGame()
-      upgradePool: null,
+      upgradePool: null, // set once at startGame
     };
 
     const hostPlayer = {
@@ -675,17 +647,14 @@ io.on("connection", (socket) => {
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
 
-      // ✅ death state
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
       pendingRespawn: null,
 
-      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
-    // FFA
     if (game.settings.mode === GAME_MODE_FFA) {
       hostPlayer.teamId = 0;
     }
@@ -754,17 +723,14 @@ io.on("connection", (socket) => {
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
 
-      // ✅ death state
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
       pendingRespawn: null,
 
-      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
-    // FFA: auto-assign unique teamId
     if (game.settings.mode === GAME_MODE_FFA) {
       const used = new Set(
         [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
@@ -837,7 +803,6 @@ io.on("connection", (socket) => {
         if (p.teamId === null || p.teamId === undefined) return;
       }
     } else {
-      // FFA: ensure everyone has teamId
       let idx = 0;
       for (const p of game.players.values()) {
         if (!Number.isFinite(p.teamId)) p.teamId = idx;
@@ -848,13 +813,12 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // ✅ NEW: choose a fixed set of 9 upgrades ONCE per match
+    // ✅ Fixed pool of 9 for the whole match
     game.upgradePool = upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
 
     const world = getWorldForGame(game);
     const corners = cornerSpawns(world);
 
-    // Spawn players: rotate corners
     let i = 0;
     for (const p of game.players.values()) {
       const c = corners[i % corners.length];
@@ -866,8 +830,6 @@ io.on("connection", (socket) => {
       p.alive = true;
       p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
       p.pendingRespawn = null;
-
-      // ✅ start with full cakes
       p.cakes = MAX_CAKES;
 
       economy.ensurePlayerEconomy(p);
@@ -876,7 +838,6 @@ io.on("connection", (socket) => {
 
     game.pickups = [];
     game.bullets = [];
-
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
@@ -903,7 +864,6 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
-    // dead players don't move or shoot
     if (!p.alive) {
       p.input = { up: false, down: false, left: false, right: false, fire: false };
       return;
@@ -918,7 +878,6 @@ io.on("connection", (socket) => {
     };
   });
 
-  // -------- Machine interaction (ORDERED) --------
   socket.on("tryInteract", () => {
     const code = session.gameCode;
     if (!code) return;
@@ -927,8 +886,7 @@ io.on("connection", (socket) => {
     if (!game || game.phase !== "running") return;
 
     const p = game.players.get(session.playerId);
-    if (!p) return;
-    if (!p.alive) return;
+    if (!p || !p.alive) return;
 
     if (p.pendingPrompt) return;
 
@@ -980,8 +938,7 @@ io.on("connection", (socket) => {
     if (!game || game.phase !== "running") return;
 
     const p = game.players.get(session.playerId);
-    if (!p) return;
-    if (!p.alive) return;
+    if (!p || !p.alive) return;
 
     const pending = p.pendingPrompt;
     if (!pending) return;
@@ -992,7 +949,6 @@ io.on("connection", (socket) => {
     const ans = Number(payload.answer);
     const ok = Number.isFinite(ans) && ans === pending.correct;
 
-    // Clear prompt now
     p.pendingPrompt = null;
 
     if (ok) {
@@ -1003,7 +959,6 @@ io.on("connection", (socket) => {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
 
-      // ✅ full refill on correct answer
       p.cakes = MAX_CAKES;
 
       socket.emit("ANSWER_RESULT", { ok: true });
@@ -1013,7 +968,7 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
 
-      // ✅ NEW: use fixed 9-upgrade pool for the entire match
+      // ✅ Pool is fixed (9). Offer to client stays at 3 for now to prevent freeze.
       const pool =
         Array.isArray(game.upgradePool) && game.upgradePool.length
           ? game.upgradePool
@@ -1021,7 +976,9 @@ io.on("connection", (socket) => {
 
       game.upgradePool = pool;
 
-      const options = upgrades.buildOfferOptions(pool);
+      // ✅ Choose 3 ids from the pool for this offer
+      const offerIds = sampleUnique(pool, UPGRADE_OFFER_SIZE);
+      const options = upgrades.buildOfferOptions(offerIds);
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
@@ -1031,7 +988,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // -------- Respawn selection --------
   socket.on("chooseRespawn", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1077,14 +1033,11 @@ io.on("connection", (socket) => {
 
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
-
-    // ✅ full refill on respawn
     p.cakes = MAX_CAKES;
 
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
   });
 
-  // -------- Upgrade selection --------
   socket.on("chooseUpgrade", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1204,9 +1157,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // -------------------------
-  // HOTKEY USE: 8 / 9 / 0
-  // -------------------------
   socket.on("useUpgradeSlot", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
