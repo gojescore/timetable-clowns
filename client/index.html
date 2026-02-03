@@ -1061,11 +1061,15 @@
       });
     }
 
-    function declineReplace() {
-      closeDropPicker();
-      el.upgradeMsg.textContent = "Kept current upgrades.";
-      el.upgradeMsg.className = "msg";
-    }
+function declineReplace() {
+  closeDropPicker();
+
+  // ✅ closing means we also decline the upgrade offer server-side
+  closeUpgradeOffer();
+
+  showBubble("Kept current upgrades.", 1300);
+}
+
 
     function closeDropPicker() {
       pendingReplace = null;
