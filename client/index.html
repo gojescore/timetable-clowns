@@ -800,6 +800,15 @@
           return;
         }
       }
+  window.addEventListener("keydown", (e) => {
+  if (!isGameRunning()) return;
+  if (!el.upgradeOverlay.classList.contains("show")) return;
+
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeUpgradeOffer(); // ✅ also declines server offer now
+  }
+});
 
       if (isUiBlockingInput()) return;
 
