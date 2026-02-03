@@ -598,6 +598,9 @@ setInterval(() => {
 
           hitPlayer.pendingPrompt = null;
 
+          // ✅ IMPORTANT: clear stuck upgrade offer when you die
+          hitPlayer.pendingUpgradeOffer = null;
+
           const opts = buildRespawnOptions(game, hitPlayer);
           hitPlayer.pendingRespawn = {
             options: opts.map((o) => o.id),
@@ -878,6 +881,10 @@ io.on("connection", (socket) => {
       p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
       p.pendingRespawn = null;
 
+      // ✅ clear any stuck offer from lobby / previous run
+      p.pendingUpgradeOffer = null;
+      p.pendingPrompt = null;
+
       p.cakes = MAX_CAKES;
 
       economy.ensurePlayerEconomy(p);
@@ -1074,6 +1081,10 @@ io.on("connection", (socket) => {
 
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
+
+    // ✅ clear any stuck offer on respawn (safety)
+    p.pendingUpgradeOffer = null;
+    p.pendingPrompt = null;
 
     // ✅ Option A: full refill on respawn
     p.cakes = MAX_CAKES;
