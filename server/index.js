@@ -47,13 +47,7 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 // --------------------
 const BULLET_SPEED = 780; // px/sec
 const BULLET_TTL = 1.2; // seconds
-
-// IMPORTANT:
-// These are "physics hit radii" around a bullet point (not the drawn size).
-// We make player-hit radius larger to match the 🍰 emoji feel.
-const BULLET_HIT_R_WALL = 4;     // walls/machines
-const CAKE_HIT_R_PLAYER = 12;   // ✅ feels like a big emoji projectile
-
+const BULLET_HIT_R = 4; // hit radius around bullet point
 const FIRE_COOLDOWN = 0.5; // seconds between shots (hold Space)
 const RESPAWN_INVULN = 0.6; // seconds after respawn
 const CORNER_PAD = 80; // how far inside the corner spawn area
@@ -62,6 +56,9 @@ const CORNER_PAD = 80; // how far inside the corner spawn area
 // Cakes (ammo)
 // --------------------
 const MAX_CAKES = 7; // ✅ finite shots before refill
+
+// ✅ NEW: fixed upgrade pool size for whole match
+const UPGRADE_POOL_SIZE = 9;
 
 // --------------------
 // In-memory game store
@@ -177,7 +174,7 @@ function snapshotForGame(game) {
       ? game.bullets.map((b) => ({
           id: b.id,
           ownerId: b.ownerId,
-          ownerTeamId: b.ownerTeamId,
+          ownerTeamId: b.ownerTeamId, // ✅ optional (debug / client use)
           x: b.x,
           y: b.y,
         }))
@@ -218,6 +215,7 @@ function snapshotForGame(game) {
           // ✅ cakes ammo
           cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
 
+          // death/respawn state (alive always true here, but keep fields for client logic)
           alive: !!p.alive,
           invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
         };
@@ -247,20 +245,6 @@ function findNearbyMachine(game, x, y, radius) {
     }
   }
   return best;
-}
-
-// ✅ Continuous collision helper: segment vs circle
-function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len2 = dx * dx + dy * dy;
-  if (len2 <= 1e-9) return dist2(x1, y1, cx, cy) <= r * r;
-
-  let t = ((cx - x1) * dx + (cy - y1) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const px = x1 + t * dx;
-  const py = y1 + t * dy;
-  return dist2(px, py, cx, cy) <= r * r;
 }
 
 function makePromptId() {
@@ -312,6 +296,7 @@ function buildRespawnOptions(game, player) {
     }
   }
 
+  // Sort so corners first, then machines by number
   const corners = opts.filter((o) => o.kind === "corner");
   const machines = opts
     .filter((o) => o.kind === "machine")
@@ -325,6 +310,7 @@ function findRespawnById(options, spawnId) {
 }
 
 function forceToValidPos(game, x, y) {
+  // if the exact spawn is inside something, nudge around a small ring
   const world = getWorldForGame(game);
   const minX = PLAYER_HALF;
   const minY = PLAYER_HALF;
@@ -345,6 +331,7 @@ function forceToValidPos(game, x, y) {
     if (!collidesAt(game, nx, ny)) return { x: nx, y: ny };
   }
 
+  // last resort: keep base
   return { x: baseX, y: baseY };
 }
 
@@ -390,7 +377,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -407,6 +395,7 @@ setInterval(() => {
       const nextX = p.x + vx * PLAYER_SPEED * dt;
       const nextY = p.y + vy * PLAYER_SPEED * dt;
 
+      // Clamp to world bounds taking player size into account
       const minX = PLAYER_HALF;
       const minY = PLAYER_HALF;
       const maxX = world.w - PLAYER_HALF;
@@ -426,15 +415,19 @@ setInterval(() => {
 
       const wantsFire = !!p.input?.fire;
       if (wantsFire && p.fireCd <= 0) {
+        // Don’t allow firing while prompts/offers open (server safety)
         if (p.pendingPrompt) continue;
         if (p.pendingUpgradeOffer) continue;
 
+        // ✅ ammo check: must have cakes
         if (!Number.isFinite(p.cakes)) p.cakes = MAX_CAKES;
         if (p.cakes <= 0) {
+          // no cakes -> cannot shoot, but still apply cooldown to prevent spam
           p.fireCd = FIRE_COOLDOWN;
           continue;
         }
 
+        // Require a facing direction
         const dx = typeof p.dirX === "number" ? p.dirX : 1;
         const dy = typeof p.dirY === "number" ? p.dirY : 0;
         const dlen = Math.hypot(dx, dy) || 1;
@@ -448,7 +441,7 @@ setInterval(() => {
         const b = {
           id: makeBulletId(),
           ownerId: p.id,
-          ownerTeamId: p.teamId,
+          ownerTeamId: p.teamId, // ✅ for no-friendly-fire
           x: spawnX,
           y: spawnY,
           vx: ndx * BULLET_SPEED,
@@ -459,7 +452,9 @@ setInterval(() => {
         if (!Array.isArray(game.bullets)) game.bullets = [];
         game.bullets.push(b);
 
+        // ✅ spend 1 cake
         p.cakes -= 1;
+
         p.fireCd = FIRE_COOLDOWN;
       }
     }
@@ -482,142 +477,122 @@ setInterval(() => {
         continue;
       }
 
-      // ✅ substep so bullets don't "skip" through things on low tick / lag
-      const travel = BULLET_SPEED * dt;
-      const maxStep = 10; // px per micro-step
-      const steps = Math.max(1, Math.ceil(travel / maxStep));
-      const stepDt = dt / steps;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
 
-      let removed = false;
+      // outside world
+      if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
 
-      for (let s = 0; s < steps; s++) {
-        const prevX = b.x;
-        const prevY = b.y;
-
-        const nextX = prevX + b.vx * stepDt;
-        const nextY = prevY + b.vy * stepDt;
-
-        b.x = nextX;
-        b.y = nextY;
-
-        // outside world
-        if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
-        }
-
-        // bullet vs walls (point-in-rect with radius)
-        let hitWall = false;
-        if (Array.isArray(game.map?.walls)) {
-          for (const w of game.map.walls) {
-            if (
-              b.x >= w.x - BULLET_HIT_R_WALL &&
-              b.x <= w.x + w.w + BULLET_HIT_R_WALL &&
-              b.y >= w.y - BULLET_HIT_R_WALL &&
-              b.y <= w.y + w.h + BULLET_HIT_R_WALL
-            ) {
-              hitWall = true;
-              break;
-            }
-          }
-        }
-        if (hitWall) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
-        }
-
-        // bullet vs machines
-        let hitMachine = false;
-        if (Array.isArray(game.map?.machines)) {
-          for (const m of game.map.machines) {
-            const bx = m.x - MACHINE_HALF;
-            const by = m.y - MACHINE_HALF;
-            const bw = MACHINE_HALF * 2;
-            const bh = MACHINE_HALF * 2;
-
-            if (
-              b.x >= bx - BULLET_HIT_R_WALL &&
-              b.x <= bx + bw + BULLET_HIT_R_WALL &&
-              b.y >= by - BULLET_HIT_R_WALL &&
-              b.y <= by + bh + BULLET_HIT_R_WALL
-            ) {
-              hitMachine = true;
-              break;
-            }
-          }
-        }
-        if (hitMachine) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
-        }
-
-        // ✅ bullet vs players (continuous segment-vs-circle)
-        let hitPlayer = null;
-
-        for (const p of game.players.values()) {
-          if (!p.alive) continue;
-          if (p.id === b.ownerId) continue;
-
-          // no friendly fire in TEAMS mode
-          if (game.settings?.mode === GAME_MODE_TEAMS) {
-            let shooterTeam = b.ownerTeamId;
-            if (shooterTeam === undefined || shooterTeam === null) {
-              const shooter = game.players.get(b.ownerId);
-              shooterTeam = shooter ? shooter.teamId : shooterTeam;
-            }
-            if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
-          }
-
-          // invulnerability (invulnUntil is ms timestamp)
-          if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
-
-          // ✅ match big 🍰 feel
-          const r = PLAYER_HALF + CAKE_HIT_R_PLAYER;
-
-          if (segmentHitsCircle(prevX, prevY, nextX, nextY, p.x, p.y, r)) {
-            hitPlayer = p;
+      // bullet vs walls (point-in-rect with radius)
+      let hitWall = false;
+      if (Array.isArray(game.map?.walls)) {
+        for (const w of game.map.walls) {
+          if (
+            b.x >= w.x - BULLET_HIT_R &&
+            b.x <= w.x + w.w + BULLET_HIT_R &&
+            b.y >= w.y - BULLET_HIT_R &&
+            b.y <= w.y + w.h + BULLET_HIT_R
+          ) {
+            hitWall = true;
             break;
           }
         }
+      }
+      if (hitWall) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
 
-        if (hitPlayer) {
-          // remove bullet
-          game.bullets.splice(i, 1);
-          removed = true;
+      // bullet vs machines
+      let hitMachine = false;
+      if (Array.isArray(game.map?.machines)) {
+        for (const m of game.map.machines) {
+          const bx = m.x - MACHINE_HALF;
+          const by = m.y - MACHINE_HALF;
+          const bw = MACHINE_HALF * 2;
+          const bh = MACHINE_HALF * 2;
 
-          // kill player
-          hitPlayer.alive = false;
-          hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
-          hitPlayer.fireCd = 0;
+          if (
+            b.x >= bx - BULLET_HIT_R &&
+            b.x <= bx + bw + BULLET_HIT_R &&
+            b.y >= by - BULLET_HIT_R &&
+            b.y <= by + bh + BULLET_HIT_R
+          ) {
+            hitMachine = true;
+            break;
+          }
+        }
+      }
+      if (hitMachine) {
+        game.bullets.splice(i, 1);
+        continue;
+      }
 
-          // ✅ while dead, treat cakes as 0
-          hitPlayer.cakes = 0;
+      // bullet vs players
+      let hitPlayer = null;
+      for (const p of game.players.values()) {
+        if (!p.alive) continue;
+        if (p.id === b.ownerId) continue;
 
-          hitPlayer.pendingPrompt = null;
+        // ✅ No friendly fire in TEAMS mode
+        if (game.settings?.mode === GAME_MODE_TEAMS) {
+          let shooterTeam = b.ownerTeamId;
+          if (shooterTeam === undefined || shooterTeam === null) {
+            const shooter = game.players.get(b.ownerId);
+            shooterTeam = shooter ? shooter.teamId : shooterTeam;
+          }
+          if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
+        }
 
-          const opts = buildRespawnOptions(game, hitPlayer);
-          hitPlayer.pendingRespawn = {
-            options: opts.map((o) => o.id),
-            createdAt: now,
-          };
+        // invulnerability (invulnUntil is ms timestamp)
+        if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
-          io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
-            options: opts.map((o) => ({
-              id: o.id,
-              label: o.label,
-              kind: o.kind,
-            })),
-          });
-
-          io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
+        const d2 = dist2(b.x, b.y, p.x, p.y);
+        const rr = PLAYER_HALF + BULLET_HIT_R;
+        if (d2 <= rr * rr) {
+          hitPlayer = p;
           break;
         }
       }
 
-      if (removed) continue;
+      if (hitPlayer) {
+        // remove bullet
+        game.bullets.splice(i, 1);
+
+        // kill player
+        hitPlayer.alive = false;
+        hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
+        hitPlayer.fireCd = 0;
+
+        // ✅ while dead, treat cakes as 0 (HUD will show 0 on client)
+        hitPlayer.cakes = 0;
+
+        // clear any open prompt (you died)
+        hitPlayer.pendingPrompt = null;
+
+        // Send respawn picker to that player only
+        const opts = buildRespawnOptions(game, hitPlayer);
+        hitPlayer.pendingRespawn = {
+          options: opts.map((o) => o.id),
+          createdAt: now,
+        };
+
+        io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
+          options: opts.map((o) => ({
+            id: o.id,
+            label: o.label,
+            kind: o.kind,
+          })),
+        });
+
+        // Optional: broadcast death event
+        io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
+
+        continue;
+      }
     }
 
     // economy: pickup collection
@@ -673,6 +648,9 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
+
+      // ✅ NEW: will be set ONCE at startGame()
+      upgradePool: null,
     };
 
     const hostPlayer = {
@@ -697,14 +675,17 @@ io.on("connection", (socket) => {
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
 
+      // ✅ death state
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
       pendingRespawn: null,
 
+      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
+    // FFA
     if (game.settings.mode === GAME_MODE_FFA) {
       hostPlayer.teamId = 0;
     }
@@ -773,14 +754,17 @@ io.on("connection", (socket) => {
       upgrades: { permanent: [], slots: [] },
       pendingUpgradeOffer: null,
 
+      // ✅ death state
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
       pendingRespawn: null,
 
+      // ✅ cakes
       cakes: MAX_CAKES,
     };
 
+    // FFA: auto-assign unique teamId
     if (game.settings.mode === GAME_MODE_FFA) {
       const used = new Set(
         [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
@@ -853,6 +837,7 @@ io.on("connection", (socket) => {
         if (p.teamId === null || p.teamId === undefined) return;
       }
     } else {
+      // FFA: ensure everyone has teamId
       let idx = 0;
       for (const p of game.players.values()) {
         if (!Number.isFinite(p.teamId)) p.teamId = idx;
@@ -863,9 +848,13 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
+    // ✅ NEW: choose a fixed set of 9 upgrades ONCE per match
+    game.upgradePool = upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
+
     const world = getWorldForGame(game);
     const corners = cornerSpawns(world);
 
+    // Spawn players: rotate corners
     let i = 0;
     for (const p of game.players.values()) {
       const c = corners[i % corners.length];
@@ -878,6 +867,7 @@ io.on("connection", (socket) => {
       p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
       p.pendingRespawn = null;
 
+      // ✅ start with full cakes
       p.cakes = MAX_CAKES;
 
       economy.ensurePlayerEconomy(p);
@@ -886,6 +876,7 @@ io.on("connection", (socket) => {
 
     game.pickups = [];
     game.bullets = [];
+
     game.phase = "running";
 
     io.to(code).emit("GAME_STARTED", {
@@ -912,6 +903,7 @@ io.on("connection", (socket) => {
     const p = game.players.get(session.playerId);
     if (!p) return;
 
+    // dead players don't move or shoot
     if (!p.alive) {
       p.input = { up: false, down: false, left: false, right: false, fire: false };
       return;
@@ -1000,6 +992,7 @@ io.on("connection", (socket) => {
     const ans = Number(payload.answer);
     const ok = Number.isFinite(ans) && ans === pending.correct;
 
+    // Clear prompt now
     p.pendingPrompt = null;
 
     if (ok) {
@@ -1010,7 +1003,7 @@ io.on("connection", (socket) => {
         p.nextMachineNum = Math.min(10, p.nextMachineNum + 1);
       }
 
-      // ✅ Option A: full refill on correct answer
+      // ✅ full refill on correct answer
       p.cakes = MAX_CAKES;
 
       socket.emit("ANSWER_RESULT", { ok: true });
@@ -1019,7 +1012,17 @@ io.on("connection", (socket) => {
 
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
-      const options = upgrades.buildOfferOptions();
+
+      // ✅ NEW: use fixed 9-upgrade pool for the entire match
+      const pool = Array.isArray(game.upgradePool) && game.upgradePool.length
+        ? game.upgradePool
+        : upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
+
+      // ensure game has it (in case it was missing)
+      game.upgradePool = pool;
+
+      const options = upgrades.buildOfferOptions(pool);
+
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
@@ -1075,7 +1078,7 @@ io.on("connection", (socket) => {
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
 
-    // ✅ Option A: full refill on respawn
+    // ✅ full refill on respawn
     p.cakes = MAX_CAKES;
 
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
