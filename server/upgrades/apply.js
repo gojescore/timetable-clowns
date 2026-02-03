@@ -22,44 +22,52 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-// ✅ NEW: pick a fixed random pool of upgrade IDs (for entire match)
-function pickRandomUpgradePool(n = 9) {
-  const all = Array.isArray(UPGRADES) ? UPGRADES.map(u => u.id).filter(Boolean) : [];
-  if (all.length === 0) return [];
+// --------- NEW: stable pool picking ---------
 
-  const want = Math.max(1, Math.min(all.length, Math.floor(Number(n) || 9)));
-
-  // Fisher–Yates shuffle (copy)
-  const arr = all.slice();
-  for (let i = arr.length - 1; i > 0; i--) {
+function shuffleCopy(arr) {
+  const a = Array.isArray(arr) ? arr.slice() : [];
+  for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
+    const t = a[i];
+    a[i] = a[j];
+    a[j] = t;
   }
-  return arr.slice(0, want);
+  return a;
 }
 
-// ✅ UPDATED: build offer options from either:
-// - a fixed pool (array of ids), OR
-// - all upgrades (default)
+// Returns array of upgrade IDs (unique), size <= requested size
+function pickRandomUpgradePool(size) {
+  const n = Math.max(0, Math.floor(Number(size) || 0));
+  const ids = UPGRADES.map((u) => u.id);
+  const shuffled = shuffleCopy(ids);
+  return shuffled.slice(0, Math.min(n, shuffled.length));
+}
+
+// --------- UPDATED: offer builder respects pool ---------
+
+// If poolIds is provided, we ONLY build options from those ids (and keep order).
+// If poolIds is missing/invalid, we fall back to ALL upgrades.
 function buildOfferOptions(poolIds) {
   let ids = null;
 
   if (Array.isArray(poolIds) && poolIds.length) {
-    // keep order, remove unknown + duplicates
+    // keep only strings and keep order, unique
     const seen = new Set();
     ids = [];
-    for (const id of poolIds) {
-      if (!id || seen.has(id)) continue;
-      const u = getUpgradeById(id);
-      if (!u) continue;
+    for (const x of poolIds) {
+      const id = String(x || "");
+      if (!id) continue;
+      if (seen.has(id)) continue;
       seen.add(id);
       ids.push(id);
     }
+    if (!ids.length) ids = null;
   }
 
-  const list = ids ? ids.map(getUpgradeById).filter(Boolean) : UPGRADES;
+  // Build from ids if present; otherwise from all upgrades
+  const list = ids
+    ? ids.map(getUpgradeById).filter(Boolean)
+    : UPGRADES;
 
   return list.map((u) => ({
     id: u.id,
@@ -81,7 +89,7 @@ function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
   if (upgrade.kind === "permanent") {
-    // For now: no duplicates
+    // no duplicates
     if (player.upgrades.permanent.includes(upgrade.id)) {
       return { ok: false, reason: "already_have" };
     }
@@ -89,8 +97,7 @@ function canTakeUpgrade(player, upgrade) {
   }
 
   // consumable / non-permanent:
-  // ✅ NEW RULE: taking an upgrade should go into an empty slot first.
-  // This means we DO NOT "refresh existing" anymore.
+  // taking an upgrade should go into an empty slot first.
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
@@ -128,5 +135,5 @@ module.exports = {
   buildOfferOptions,
   applyUpgradeSelection,
   getUpgradeInfo,
-  pickRandomUpgradePool, // ✅ export
+  pickRandomUpgradePool, // ✅ export it
 };
