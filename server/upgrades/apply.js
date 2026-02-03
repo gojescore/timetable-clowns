@@ -1,5 +1,5 @@
 // server/upgrades/apply.js
-// Minimal rules for storing upgrades. Effects come later.
+// Minimal rules for storing upgrades + offering a fixed pool per match.
 
 const { UPGRADES, getUpgradeById } = require("./definitions");
 
@@ -15,62 +15,41 @@ function ensureUpgradeState(player) {
   if (!player.upgrades) {
     player.upgrades = {
       permanent: [], // array of ids
-      slots: [], // array of { id, usesLeft }
+      slots: [],     // array of { id, usesLeft }
     };
   }
   if (!Array.isArray(player.upgrades.permanent)) player.upgrades.permanent = [];
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-/**
- * ✅ NEW (server/index.js expects this)
- * Pick a pool of N upgrade IDs (unique) that stays fixed for the match.
- */
-function pickRandomUpgradePool(n = 9) {
-  const list = Array.isArray(UPGRADES) ? UPGRADES : [];
-  const ids = list.map((u) => u && u.id).filter(Boolean);
-
-  // unique
-  const uniq = Array.from(new Set(ids));
-
-  // shuffle (Fisher–Yates)
-  for (let i = uniq.length - 1; i > 0; i--) {
+// ----- NEW: pick a fixed pool ONCE per match -----
+function pickRandomUpgradePool(count = 9) {
+  const list = Array.isArray(UPGRADES) ? UPGRADES.slice() : [];
+  // Fisher-Yates shuffle
+  for (let i = list.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const t = uniq[i];
-    uniq[i] = uniq[j];
-    uniq[j] = t;
+    const tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
   }
-
-  const k = Math.max(0, Math.min(Number(n) || 0, uniq.length));
-  return uniq.slice(0, k);
+  const picked = list.slice(0, Math.max(0, Math.min(count, list.length)));
+  return picked.map((u) => u.id);
 }
 
-/**
- * ✅ UPDATED (server/index.js calls buildOfferOptions(pool))
- * - If called with no args -> offer ALL upgrades (backwards compatible)
- * - If called with an array of IDs -> offer ONLY those (in that order)
- */
-function buildOfferOptions(poolIds = null) {
-  // If poolIds is provided, map ids -> upgrades, skipping unknown ids.
-  if (Array.isArray(poolIds)) {
-    const out = [];
-    for (const id of poolIds) {
-      const u = getUpgradeById(id);
-      if (!u) continue;
-      out.push({
-        id: u.id,
-        name: u.name,
-        kind: u.kind,
-        desc: u.desc || "",
-        maxUses: u.maxUses ?? null,
-        useCost: u.useCost ?? null,
-      });
-    }
-    return out;
+// Build offer options from either:
+// - poolIds: array of ids (preferred; your match-wide 9 upgrades)
+// - OR: offer everything if poolIds missing
+function buildOfferOptions(poolIds) {
+  const all = Array.isArray(UPGRADES) ? UPGRADES : [];
+  let source = all;
+
+  if (Array.isArray(poolIds) && poolIds.length) {
+    const set = new Set(poolIds);
+    source = all.filter((u) => set.has(u.id));
   }
 
-  // Default: ALL upgrades (old behavior)
-  return (Array.isArray(UPGRADES) ? UPGRADES : []).map((u) => ({
+  // return the data client needs
+  return source.map((u) => ({
     id: u.id,
     name: u.name,
     kind: u.kind,
@@ -97,8 +76,8 @@ function canTakeUpgrade(player, upgrade) {
     return { ok: true };
   }
 
-  // consumable / non-permanent:
-  // taking an upgrade should go into an empty slot first.
+  // consumable/non-permanent:
+  // rule: add into an empty slot first; do NOT refresh existing
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
@@ -122,8 +101,8 @@ function applyUpgradeSelection(player, upgradeId) {
   }
 
   const maxUses = Number.isFinite(up.maxUses) ? up.maxUses : 1;
-
   player.upgrades.slots.push({ id: up.id, usesLeft: maxUses });
+
   return {
     ok: true,
     applied: { kind: "consumable_add", id: up.id, usesLeft: maxUses },
@@ -132,8 +111,8 @@ function applyUpgradeSelection(player, upgradeId) {
 
 module.exports = {
   ensureUpgradeState,
-  pickRandomUpgradePool,   // ✅ required by server/index.js
-  buildOfferOptions,       // ✅ accepts optional poolIds array
+  pickRandomUpgradePool,
+  buildOfferOptions,
   applyUpgradeSelection,
   getUpgradeInfo,
 };
