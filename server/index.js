@@ -20,7 +20,7 @@ const CODE_LEN = 5;
 const MAX_PLAYERS = 12;
 
 const MIN_TEAMS = 1;
-const MAX_TEAMS = 4; // ✅ max 4 teams (plus FFA)
+const MAX_TEAMS = 4;
 
 // FFA / Teams
 const GAME_MODE_FFA = "ffa";
@@ -39,29 +39,28 @@ const PLAYER_SPEED = 220; // px/sec
 const PLAYER_HALF = 14;
 
 // Interaction
-const INTERACT_RADIUS = 60; // must match client highlight
-const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
+const INTERACT_RADIUS = 60;
+const MACHINE_HALF = 10;
 
 // --------------------
 // Shooting / bullets
 // --------------------
-const BULLET_SPEED = 780; // px/sec
-const BULLET_TTL = 1.2; // seconds
-const BULLET_HIT_R = 4; // hit radius around bullet point
-const FIRE_COOLDOWN = 0.5; // seconds between shots (hold Space)
-const RESPAWN_INVULN = 0.6; // seconds after respawn
-const CORNER_PAD = 80; // how far inside the corner spawn area
+const BULLET_SPEED = 780;
+const BULLET_TTL = 1.2;
+const BULLET_HIT_R = 4;
+const FIRE_COOLDOWN = 0.5;
+const RESPAWN_INVULN = 0.6;
+const CORNER_PAD = 80;
 
 // --------------------
 // Cakes (ammo)
 // --------------------
-const MAX_CAKES = 7; // ✅ finite shots before refill
+const MAX_CAKES = 7;
 
-// ✅ Fixed upgrade pool size for whole match
+// --------------------
+// Upgrades
+// --------------------
 const UPGRADE_POOL_SIZE = 9;
-
-// ✅ TEMP: offer size sent to client (keeps old client from crashing)
-const UPGRADE_OFFER_SIZE = 3;
 
 // --------------------
 // In-memory game store
@@ -76,7 +75,7 @@ function randInt(min, max) {
 }
 
 function genCode() {
-  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // avoid 0/O, 1/I
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
   let code = "";
   for (let i = 0; i < CODE_LEN; i++) code += alphabet[randInt(0, alphabet.length - 1)];
   return code;
@@ -213,7 +212,9 @@ function snapshotForGame(game) {
           nextMachineNum: p.nextMachineNum,
           money: typeof p.money === "number" ? p.money : 0,
           upgrades: { permanent, slots },
+
           cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
+
           alive: !!p.alive,
           invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
         };
@@ -253,20 +254,6 @@ function makeOfferId() {
 }
 function makeBulletId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
-}
-
-// ✅ helper: sample N unique elements from array (no crash if short)
-function sampleUnique(arr, n) {
-  if (!Array.isArray(arr) || arr.length === 0) return [];
-  const want = Math.max(0, Math.min(arr.length, Math.floor(Number(n) || 0)));
-  const copy = arr.slice();
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const t = copy[i];
-    copy[i] = copy[j];
-    copy[j] = t;
-  }
-  return copy.slice(0, want);
 }
 
 // --------------------
@@ -372,7 +359,7 @@ setInterval(() => {
 
     const world = getWorldForGame(game);
 
-    // movement + fire cooldown
+    // Movement + fire cooldown
     for (const p of game.players.values()) {
       if (!p.alive) continue;
 
@@ -404,7 +391,6 @@ setInterval(() => {
       const maxX = world.w - PLAYER_HALF;
       const maxY = world.h - PLAYER_HALF;
 
-      // X then Y
       let cx = clamp(nextX, minX, maxX);
       let cy = clamp(p.y, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.x = cx;
@@ -456,7 +442,7 @@ setInterval(() => {
       }
     }
 
-    // bullets update
+    // Bullets update + collisions + deaths
     if (!Array.isArray(game.bullets)) game.bullets = [];
 
     for (let i = game.bullets.length - 1; i >= 0; i--) {
@@ -480,7 +466,7 @@ setInterval(() => {
         continue;
       }
 
-      // walls
+      // bullet vs walls
       let hitWall = false;
       if (Array.isArray(game.map?.walls)) {
         for (const w of game.map.walls) {
@@ -500,7 +486,7 @@ setInterval(() => {
         continue;
       }
 
-      // machines
+      // bullet vs machines
       let hitMachine = false;
       if (Array.isArray(game.map?.machines)) {
         for (const m of game.map.machines) {
@@ -525,7 +511,7 @@ setInterval(() => {
         continue;
       }
 
-      // players
+      // bullet vs players
       let hitPlayer = null;
       for (const p of game.players.values()) {
         if (!p.alive) continue;
@@ -560,10 +546,17 @@ setInterval(() => {
         hitPlayer.pendingPrompt = null;
 
         const opts = buildRespawnOptions(game, hitPlayer);
-        hitPlayer.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
+        hitPlayer.pendingRespawn = {
+          options: opts.map((o) => o.id),
+          createdAt: now,
+        };
 
         io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
-          options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
+          options: opts.map((o) => ({
+            id: o.id,
+            label: o.label,
+            kind: o.kind,
+          })),
         });
 
         io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
@@ -572,6 +565,7 @@ setInterval(() => {
     }
 
     economy.tryCollectPickups(game);
+
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
 }, TICK_MS);
@@ -622,14 +616,14 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
-      upgradePool: null, // set once at startGame
+      upgradePool: null,
     };
 
     const hostPlayer = {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: 0,
+      teamId: mode === GAME_MODE_TEAMS ? null : 0,
       x: randInt(200, 500),
       y: randInt(200, 500),
       dirX: 1,
@@ -654,10 +648,6 @@ io.on("connection", (socket) => {
 
       cakes: MAX_CAKES,
     };
-
-    if (game.settings.mode === GAME_MODE_FFA) {
-      hostPlayer.teamId = 0;
-    }
 
     economy.ensurePlayerEconomy(hostPlayer);
     upgrades.ensureUpgradeState(hostPlayer);
@@ -705,7 +695,7 @@ io.on("connection", (socket) => {
       id: session.playerId,
       name: session.name,
       socketId: socket.id,
-      teamId: null,
+      teamId: game.settings.mode === GAME_MODE_TEAMS ? null : 0,
       x: randInt(200, 500),
       y: randInt(200, 500),
       dirX: 1,
@@ -731,6 +721,7 @@ io.on("connection", (socket) => {
       cakes: MAX_CAKES,
     };
 
+    // FFA: auto-assign unique teamId
     if (game.settings.mode === GAME_MODE_FFA) {
       const used = new Set(
         [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
@@ -795,14 +786,28 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    if (session.playerId !== game.hostPlayerId) return;
-    if (game.players.size < 2) return;
+    if (session.playerId !== game.hostPlayerId) {
+      socket.emit("START_DENIED", { reason: "not_host" });
+      return;
+    }
+    if (game.players.size < 2) {
+      socket.emit("START_DENIED", { reason: "need_2_players" });
+      return;
+    }
 
+    // ✅ TEAMS: auto-assign missing teams so Start always works
     if (game.settings.mode === GAME_MODE_TEAMS) {
+      const teamCount = Math.max(1, game.settings.teamCount || 1);
+      let i = 0;
       for (const p of game.players.values()) {
-        if (p.teamId === null || p.teamId === undefined) return;
+        if (p.teamId === null || p.teamId === undefined) {
+          p.teamId = i % teamCount;
+        }
+        i++;
       }
+      emitLobbyUpdate(io, game);
     } else {
+      // FFA: ensure everyone has teamId
       let idx = 0;
       for (const p of game.players.values()) {
         if (!Number.isFinite(p.teamId)) p.teamId = idx;
@@ -810,48 +815,55 @@ io.on("connection", (socket) => {
       }
     }
 
-    const map = pickMap(game.settings.mapChoice);
-    game.map = map;
+    // Wrap start in try/catch so it never "does nothing"
+    try {
+      const map = pickMap(game.settings.mapChoice);
+      game.map = map;
 
-    // ✅ Fixed pool of 9 for the whole match
-    game.upgradePool = upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
+      // ✅ pick fixed set of 9 upgrades once per match
+      game.upgradePool = upgrades.pickRandomUpgradePool(UPGRADE_POOL_SIZE);
 
-    const world = getWorldForGame(game);
-    const corners = cornerSpawns(world);
+      const world = getWorldForGame(game);
+      const corners = cornerSpawns(world);
 
-    let i = 0;
-    for (const p of game.players.values()) {
-      const c = corners[i % corners.length];
-      const pos = forceToValidPos(game, c.x, c.y);
-      p.x = pos.x;
-      p.y = pos.y;
-      i++;
+      let i = 0;
+      for (const p of game.players.values()) {
+        const c = corners[i % corners.length];
+        const pos = forceToValidPos(game, c.x, c.y);
+        p.x = pos.x;
+        p.y = pos.y;
+        i++;
 
-      p.alive = true;
-      p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
-      p.pendingRespawn = null;
-      p.cakes = MAX_CAKES;
+        p.alive = true;
+        p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
+        p.pendingRespawn = null;
 
-      economy.ensurePlayerEconomy(p);
-      upgrades.ensureUpgradeState(p);
+        p.cakes = MAX_CAKES;
+
+        economy.ensurePlayerEconomy(p);
+        upgrades.ensureUpgradeState(p);
+      }
+
+      game.pickups = [];
+      game.bullets = [];
+      game.phase = "running";
+
+      io.to(code).emit("GAME_STARTED", {
+        map: {
+          id: map.id,
+          name: map.name,
+          world: map.world,
+          walls: map.walls,
+          machines: map.machines,
+        },
+        settings: game.settings,
+      });
+
+      io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
+    } catch (err) {
+      console.error("startGame failed:", err);
+      socket.emit("START_DENIED", { reason: "server_error", message: String(err?.message || err) });
     }
-
-    game.pickups = [];
-    game.bullets = [];
-    game.phase = "running";
-
-    io.to(code).emit("GAME_STARTED", {
-      map: {
-        id: map.id,
-        name: map.name,
-        world: map.world,
-        walls: map.walls,
-        machines: map.machines,
-      },
-      settings: game.settings,
-    });
-
-    io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   });
 
   socket.on("input", (payload = {}) => {
@@ -878,6 +890,7 @@ io.on("connection", (socket) => {
     };
   });
 
+  // -------- Machine interaction (ORDERED) --------
   socket.on("tryInteract", () => {
     const code = session.gameCode;
     if (!code) return;
@@ -923,11 +936,7 @@ io.on("connection", (socket) => {
       correct,
     };
 
-    socket.emit("MATH_PROMPT", {
-      promptId,
-      base,
-      machineNum: machine.num,
-    });
+    socket.emit("MATH_PROMPT", { promptId, base, machineNum: machine.num });
   });
 
   socket.on("submitAnswer", (payload = {}) => {
@@ -962,13 +971,12 @@ io.on("connection", (socket) => {
       p.cakes = MAX_CAKES;
 
       socket.emit("ANSWER_RESULT", { ok: true });
-
       economy.awardCorrectAnswer(game, p.id);
 
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
 
-      // ✅ Pool is fixed (9). Offer to client stays at 3 for now to prevent freeze.
+      // ✅ fixed pool for entire match
       const pool =
         Array.isArray(game.upgradePool) && game.upgradePool.length
           ? game.upgradePool
@@ -976,9 +984,7 @@ io.on("connection", (socket) => {
 
       game.upgradePool = pool;
 
-      // ✅ Choose 3 ids from the pool for this offer
-      const offerIds = sampleUnique(pool, UPGRADE_OFFER_SIZE);
-      const options = upgrades.buildOfferOptions(offerIds);
+      const options = upgrades.buildOfferOptions(pool);
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
@@ -988,6 +994,7 @@ io.on("connection", (socket) => {
     }
   });
 
+  // -------- Respawn selection --------
   socket.on("chooseRespawn", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1038,6 +1045,7 @@ io.on("connection", (socket) => {
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
   });
 
+  // -------- Upgrade selection --------
   socket.on("chooseUpgrade", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1090,12 +1098,10 @@ io.on("connection", (socket) => {
 
     p.pendingUpgradeOffer = null;
 
-    const chosen = upgrades.getUpgradeInfo(upgradeId);
-
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen,
+      chosen: upgrades.getUpgradeInfo(upgradeId),
       upgrades: p.upgrades,
     });
   });
@@ -1140,7 +1146,6 @@ io.on("connection", (socket) => {
     p.upgrades.slots.splice(idx, 1);
 
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
-
     if (!res.ok) {
       socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
       return;
@@ -1157,6 +1162,7 @@ io.on("connection", (socket) => {
     });
   });
 
+  // HOTKEY USE: 8 / 9 / 0
   socket.on("useUpgradeSlot", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
