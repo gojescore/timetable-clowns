@@ -963,12 +963,18 @@
       el.upgradeOverlay.classList.add("show");
     }
 
-    function closeUpgradeOffer() {
-      activeOfferId = null;
-      el.upgradeOverlay.classList.remove("show");
-      el.upgradeList.innerHTML = "";
-      el.upgradeMsg.textContent = "";
-    }
+   function closeUpgradeOffer() {
+  // ✅ tell server "I closed the picker" so shooting is not blocked forever
+  if (activeOfferId) {
+    socket.emit("declineUpgrade", { offerId: activeOfferId });
+  }
+
+  activeOfferId = null;
+  el.upgradeOverlay.classList.remove("show");
+  el.upgradeList.innerHTML = "";
+  el.upgradeMsg.textContent = "";
+}
+
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
 
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
