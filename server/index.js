@@ -1081,6 +1081,33 @@ io.on("connection", (socket) => {
     socket.emit("RESPAWN_RESULT", { ok: true, spawnId });
   });
 
+  // -------- Upgrade decline (close picker without choosing) --------
+  socket.on("declineUpgrade", (payload = {}) => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const p = game.players.get(session.playerId);
+    if (!p) return;
+
+    const offer = p.pendingUpgradeOffer;
+    if (!offer) {
+      socket.emit("UPGRADE_DECLINED", { ok: false, reason: "no_offer" });
+      return;
+    }
+
+    const offerId = String(payload.offerId || "");
+    if (offerId && offerId !== offer.id) {
+      socket.emit("UPGRADE_DECLINED", { ok: false, reason: "bad_offer_id" });
+      return;
+    }
+
+    p.pendingUpgradeOffer = null;
+    socket.emit("UPGRADE_DECLINED", { ok: true });
+  });
+
   // -------- Upgrade selection --------
   socket.on("chooseUpgrade", (payload = {}) => {
     const code = session.gameCode;
