@@ -22,50 +22,55 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-// -------------------------
-// Pool picking (match-wide)
-// -------------------------
-function shuffleCopy(arr) {
-  const a = Array.isArray(arr) ? arr.slice() : [];
-  for (let i = a.length - 1; i > 0; i--) {
+/**
+ * ✅ NEW (server/index.js expects this)
+ * Pick a pool of N upgrade IDs (unique) that stays fixed for the match.
+ */
+function pickRandomUpgradePool(n = 9) {
+  const list = Array.isArray(UPGRADES) ? UPGRADES : [];
+  const ids = list.map((u) => u && u.id).filter(Boolean);
+
+  // unique
+  const uniq = Array.from(new Set(ids));
+
+  // shuffle (Fisher–Yates)
+  for (let i = uniq.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const t = a[i];
-    a[i] = a[j];
-    a[j] = t;
+    const t = uniq[i];
+    uniq[i] = uniq[j];
+    uniq[j] = t;
   }
-  return a;
+
+  const k = Math.max(0, Math.min(Number(n) || 0, uniq.length));
+  return uniq.slice(0, k);
 }
 
-// Returns array of unique upgrade IDs (size <= requested)
-function pickRandomUpgradePool(size) {
-  const n = Math.max(0, Math.floor(Number(size) || 0));
-  const ids = UPGRADES.map((u) => u.id);
-  const shuffled = shuffleCopy(ids);
-  return shuffled.slice(0, Math.min(n, shuffled.length));
-}
-
-// -------------------------
-// Offer builder (pool-aware)
-// -------------------------
-function buildOfferOptions(poolIds) {
-  let ids = null;
-
-  if (Array.isArray(poolIds) && poolIds.length) {
-    const seen = new Set();
-    ids = [];
-    for (const x of poolIds) {
-      const id = String(x || "");
-      if (!id) continue;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      ids.push(id);
+/**
+ * ✅ UPDATED (server/index.js calls buildOfferOptions(pool))
+ * - If called with no args -> offer ALL upgrades (backwards compatible)
+ * - If called with an array of IDs -> offer ONLY those (in that order)
+ */
+function buildOfferOptions(poolIds = null) {
+  // If poolIds is provided, map ids -> upgrades, skipping unknown ids.
+  if (Array.isArray(poolIds)) {
+    const out = [];
+    for (const id of poolIds) {
+      const u = getUpgradeById(id);
+      if (!u) continue;
+      out.push({
+        id: u.id,
+        name: u.name,
+        kind: u.kind,
+        desc: u.desc || "",
+        maxUses: u.maxUses ?? null,
+        useCost: u.useCost ?? null,
+      });
     }
-    if (!ids.length) ids = null;
+    return out;
   }
 
-  const list = ids ? ids.map(getUpgradeById).filter(Boolean) : UPGRADES;
-
-  return list.map((u) => ({
+  // Default: ALL upgrades (old behavior)
+  return (Array.isArray(UPGRADES) ? UPGRADES : []).map((u) => ({
     id: u.id,
     name: u.name,
     kind: u.kind,
@@ -85,12 +90,15 @@ function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
   if (upgrade.kind === "permanent") {
+    // no duplicates
     if (player.upgrades.permanent.includes(upgrade.id)) {
       return { ok: false, reason: "already_have" };
     }
     return { ok: true };
   }
 
+  // consumable / non-permanent:
+  // taking an upgrade should go into an empty slot first.
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
@@ -114,8 +122,8 @@ function applyUpgradeSelection(player, upgradeId) {
   }
 
   const maxUses = Number.isFinite(up.maxUses) ? up.maxUses : 1;
-  player.upgrades.slots.push({ id: up.id, usesLeft: maxUses });
 
+  player.upgrades.slots.push({ id: up.id, usesLeft: maxUses });
   return {
     ok: true,
     applied: { kind: "consumable_add", id: up.id, usesLeft: maxUses },
@@ -124,8 +132,8 @@ function applyUpgradeSelection(player, upgradeId) {
 
 module.exports = {
   ensureUpgradeState,
-  buildOfferOptions,
+  pickRandomUpgradePool,   // ✅ required by server/index.js
+  buildOfferOptions,       // ✅ accepts optional poolIds array
   applyUpgradeSelection,
   getUpgradeInfo,
-  pickRandomUpgradePool,
 };
