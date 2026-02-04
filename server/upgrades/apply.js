@@ -19,9 +19,9 @@ function getAllUpgradesSafe() {
   const d = defs();
 
   // Support multiple shapes:
-  // - exports.UPGRADES = [...]
-  // - exports.default = { UPGRADES: [...] }
-  // - exports.getAllUpgrades() => [...]
+  // - module.exports = { UPGRADES: [...] }
+  // - module.exports = { default: { UPGRADES:[...] } }
+  // - module.exports = { getAllUpgrades(){...} }
   if (Array.isArray(d.UPGRADES)) return d.UPGRADES;
   if (d.default && Array.isArray(d.default.UPGRADES)) return d.default.UPGRADES;
 
@@ -51,9 +51,7 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-// ----------------------------
-// ✅ NEW: pick a fixed pool for the whole game (returns UPGRADE OBJECTS, not ids)
-// ----------------------------
+// ✅ Pick a fixed set of N upgrades ONCE per match (returns UPGRADE OBJECTS, not ids)
 function pickRandomUpgradePool(count = 9) {
   const all = getAllUpgradesSafe();
   const want = Math.max(1, Math.min(Math.floor(Number(count) || 9), all.length));
@@ -68,25 +66,21 @@ function pickRandomUpgradePool(count = 9) {
   return arr.slice(0, want);
 }
 
-// ----------------------------
-// Build offer options
-// Accepts either:
-// - pool: array of upgrade objects (recommended)
-// - ids: array of ids (legacy)
+// ✅ Build offer options from:
+// - pool of upgrade objects (recommended)
+// - list of ids (legacy)
 // - null/empty => fallback to ALL upgrades
 // GUARANTEE: if pool/ids resolve to empty, fallback to ALL upgrades
-// ----------------------------
 function buildOfferOptions(poolOrIds = null) {
   const all = getAllUpgradesSafe();
-
   let list = [];
 
-  // case A: pool of objects
+  // A) pool of objects
   if (Array.isArray(poolOrIds) && poolOrIds.length && typeof poolOrIds[0] === "object") {
     list = poolOrIds.filter((u) => u && u.id);
   }
 
-  // case B: list of ids
+  // B) list of ids
   if (Array.isArray(poolOrIds) && poolOrIds.length && typeof poolOrIds[0] !== "object") {
     const wanted = poolOrIds.map(String);
     const byId = new Map(all.map((u) => [u.id, u]));
@@ -96,7 +90,7 @@ function buildOfferOptions(poolOrIds = null) {
     }
   }
 
-  // fallback: all
+  // fallback
   if (!Array.isArray(list) || list.length === 0) list = all;
 
   return list.map((u) => ({
@@ -126,7 +120,8 @@ function canTakeUpgrade(player, upgrade) {
     return { ok: true };
   }
 
-  // consumable / non-permanent: add to empty slot first (no refresh)
+  // consumable / non-permanent:
+  // add to empty slot first (no refresh)
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
