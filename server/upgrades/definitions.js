@@ -59,7 +59,8 @@ const UPGRADES = [
 ];
 
 function getUpgradeById(id) {
-  return UPGRADES.find((u) => u.id === id) || null;
+  const key = String(id || "");
+  return UPGRADES.find((u) => u.id === key) || null;
 }
 
 module.exports = { UPGRADES, getUpgradeById };
