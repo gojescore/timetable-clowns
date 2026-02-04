@@ -561,7 +561,6 @@ setInterval(() => {
           hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
           hitPlayer.fireCd = 0;
           hitPlayer.cakes = 0;
-
           hitPlayer.pendingPrompt = null;
           hitPlayer.pendingUpgradeOffer = null;
 
@@ -588,6 +587,7 @@ setInterval(() => {
     }
 
     economy.tryCollectPickups(game);
+
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
 }, TICK_MS);
@@ -638,7 +638,8 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
-      // ✅ fixed pool chosen when match starts
+
+      // ✅ NEW: fixed upgrade pool for this match (set on startGame)
       upgradePool: null,
     };
 
@@ -830,7 +831,7 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // ✅ pick fixed pool ONCE per match (9 upgrades or fewer if not enough defined)
+    // ✅ NEW: pick a fixed pool once per match (3x3)
     game.upgradePool = upgrades.pickRandomUpgradePool(9);
 
     const world = getWorldForGame(game);
@@ -990,11 +991,13 @@ io.on("connection", (socket) => {
 
       upgrades.ensureUpgradeState(p);
 
-      // ✅ build offer from fixed pool (never empty unless you truly have 0 upgrades)
       const offerId = makeOfferId();
+
+      // ✅ IMPORTANT: build from the fixed pool (3x3)
       const options = upgrades.buildOfferOptions(game.upgradePool);
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
+
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
       socket.emit("ANSWER_RESULT", { ok: false, correct: pending.correct });
@@ -1067,12 +1070,19 @@ io.on("connection", (socket) => {
     if (!p) return;
 
     const offer = p.pendingUpgradeOffer;
-    if (!offer) return;
+    if (!offer) {
+      socket.emit("UPGRADE_DECLINED", { ok: false, reason: "no_offer" });
+      return;
+    }
 
     const offerId = String(payload.offerId || "");
-    if (offerId && offerId !== offer.id) return;
+    if (offerId && offerId !== offer.id) {
+      socket.emit("UPGRADE_DECLINED", { ok: false, reason: "bad_offer_id" });
+      return;
+    }
 
     p.pendingUpgradeOffer = null;
+    socket.emit("UPGRADE_DECLINED", { ok: true });
   });
 
   socket.on("chooseUpgrade", (payload = {}) => {
@@ -1127,10 +1137,12 @@ io.on("connection", (socket) => {
 
     p.pendingUpgradeOffer = null;
 
+    const chosen = upgrades.getUpgradeInfo(upgradeId);
+
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen: upgrades.getUpgradeInfo(upgradeId),
+      chosen,
       upgrades: p.upgrades,
     });
   });
