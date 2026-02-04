@@ -2,6 +2,7 @@
 // Minimal rules for storing upgrades + offering from a fixed pool.
 // Effects come later.
 
+// Optional constants import (keeps your structure, but prevents crash if file isn't there)
 let C = { MAX_NONPERM_SLOTS: 3 };
 try {
   C = require("../shared/constants");
@@ -9,9 +10,34 @@ try {
   // fallback stays at 3
 }
 
-// IMPORTANT: avoid destructuring at module load time (helps with circular deps).
+// IMPORTANT: Avoid destructuring at module load time (helps with circular deps / export shape changes).
 function defs() {
   return require("./definitions");
+}
+
+function getAllUpgradesSafe() {
+  const d = defs();
+
+  // Support multiple shapes:
+  // - exports.UPGRADES = [...]
+  // - exports.default = { UPGRADES: [...] }
+  // - exports.getAllUpgrades() => [...]
+  if (Array.isArray(d.UPGRADES)) return d.UPGRADES;
+  if (d.default && Array.isArray(d.default.UPGRADES)) return d.default.UPGRADES;
+
+  if (typeof d.getAllUpgrades === "function") {
+    const arr = d.getAllUpgrades();
+    if (Array.isArray(arr)) return arr;
+  }
+
+  return [];
+}
+
+function getUpgradeByIdSafe(id) {
+  const d = defs();
+  if (typeof d.getUpgradeById === "function") return d.getUpgradeById(id);
+  if (d.default && typeof d.default.getUpgradeById === "function") return d.default.getUpgradeById(id);
+  return null;
 }
 
 function ensureUpgradeState(player) {
@@ -25,33 +51,53 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
 }
 
-function getUpgradeByIdSafe(id) {
-  const d = defs();
-  return typeof d.getUpgradeById === "function" ? d.getUpgradeById(id) : null;
-}
-
-function getAllUpgradesSafe() {
-  const d = defs();
-  return Array.isArray(d.UPGRADES) ? d.UPGRADES : [];
-}
-
-// ✅ NEW: pick a fixed set of N upgrades ONCE per match (no duplicates)
-function pickRandomUpgradePool(n) {
+// ----------------------------
+// ✅ NEW: pick a fixed pool for the whole game (returns UPGRADE OBJECTS, not ids)
+// ----------------------------
+function pickRandomUpgradePool(count = 9) {
   const all = getAllUpgradesSafe();
-  const size = Math.max(0, Math.min(all.length, Math.floor(Number(n) || 0)));
+  const want = Math.max(1, Math.min(Math.floor(Number(count) || 9), all.length));
 
-  // Fisher–Yates shuffle copy
+  // Fisher–Yates shuffle copy, then take first N
   const arr = all.slice();
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
-  return arr.slice(0, size);
+
+  return arr.slice(0, want);
 }
 
-// ✅ Build offer options from a provided pool (the fixed 9)
-function buildOfferOptions(pool) {
-  const list = Array.isArray(pool) && pool.length ? pool : getAllUpgradesSafe();
+// ----------------------------
+// Build offer options
+// Accepts either:
+// - pool: array of upgrade objects (recommended)
+// - ids: array of ids (legacy)
+// - null/empty => fallback to ALL upgrades
+// GUARANTEE: if pool/ids resolve to empty, fallback to ALL upgrades
+// ----------------------------
+function buildOfferOptions(poolOrIds = null) {
+  const all = getAllUpgradesSafe();
+
+  let list = [];
+
+  // case A: pool of objects
+  if (Array.isArray(poolOrIds) && poolOrIds.length && typeof poolOrIds[0] === "object") {
+    list = poolOrIds.filter((u) => u && u.id);
+  }
+
+  // case B: list of ids
+  if (Array.isArray(poolOrIds) && poolOrIds.length && typeof poolOrIds[0] !== "object") {
+    const wanted = poolOrIds.map(String);
+    const byId = new Map(all.map((u) => [u.id, u]));
+    for (const id of wanted) {
+      const u = byId.get(id);
+      if (u) list.push(u);
+    }
+  }
+
+  // fallback: all
+  if (!Array.isArray(list) || list.length === 0) list = all;
 
   return list.map((u) => ({
     id: u.id,
@@ -80,8 +126,7 @@ function canTakeUpgrade(player, upgrade) {
     return { ok: true };
   }
 
-  // consumable / non-permanent:
-  // add to empty slot first (no refresh)
+  // consumable / non-permanent: add to empty slot first (no refresh)
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
   if (player.upgrades.slots.length >= maxSlots) {
     return { ok: false, reason: "slots_full" };
