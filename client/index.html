@@ -789,9 +789,14 @@
       if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
     });
 
+    // ✅ FIXED: single, non-nested keydown handler for:
+    // - drop overlay 8/9/0
+    // - upgrade overlay Escape
+    // - upgrade slot usage 8/9/0
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
+      // Drop overlay choose stage: 8/9/0 selects what to drop
       if (el.dropOverlay.classList.contains("show") && pendingReplace?.stage === "choose") {
         if (e.key === "8" || e.key === "9" || e.key === "0") {
           e.preventDefault();
@@ -800,23 +805,26 @@
           return;
         }
       }
-  window.addEventListener("keydown", (e) => {
-  if (!isGameRunning()) return;
-  if (!el.upgradeOverlay.classList.contains("show")) return;
 
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeUpgradeOffer(); // ✅ also declines server offer now
-  }
-});
+      // Upgrade picker open: Escape closes and declines offer server-side
+      if (el.upgradeOverlay.classList.contains("show")) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeUpgradeOffer();
+          return;
+        }
+      }
 
+      // Block gameplay hotkeys while UI is up
       if (isUiBlockingInput()) return;
 
+      // Ignore typing in inputs
       const t = e.target;
       const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
       const isForm = (tag === "input" || tag === "textarea" || tag === "select");
       if (isForm) return;
 
+      // Use upgrade slots 8/9/0
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
@@ -972,17 +980,17 @@
       el.upgradeOverlay.classList.add("show");
     }
 
-   function closeUpgradeOffer() {
-  // ✅ tell server "I closed the picker" so shooting is not blocked forever
-  if (activeOfferId) {
-    socket.emit("declineUpgrade", { offerId: activeOfferId });
-  }
+    function closeUpgradeOffer() {
+      // tell server "I closed the picker" so shooting is not blocked forever
+      if (activeOfferId) {
+        socket.emit("declineUpgrade", { offerId: activeOfferId });
+      }
 
-  activeOfferId = null;
-  el.upgradeOverlay.classList.remove("show");
-  el.upgradeList.innerHTML = "";
-  el.upgradeMsg.textContent = "";
-}
+      activeOfferId = null;
+      el.upgradeOverlay.classList.remove("show");
+      el.upgradeList.innerHTML = "";
+      el.upgradeMsg.textContent = "";
+    }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
 
@@ -1070,15 +1078,14 @@
       });
     }
 
-function declineReplace() {
-  closeDropPicker();
+    function declineReplace() {
+      closeDropPicker();
 
-  // ✅ closing means we also decline the upgrade offer server-side
-  closeUpgradeOffer();
+      // closing means we also decline the upgrade offer server-side
+      closeUpgradeOffer();
 
-  showBubble("Kept current upgrades.", 1300);
-}
-
+      showBubble("Kept current upgrades.", 1300);
+    }
 
     function closeDropPicker() {
       pendingReplace = null;
