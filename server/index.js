@@ -676,6 +676,8 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
+      // ✅ NEW: fixed pool chosen at startGame
+      upgradePool: null,
     };
 
     const hostPlayer = {
@@ -895,6 +897,9 @@ io.on("connection", (socket) => {
     game.bullets = [];
     game.phase = "running";
 
+    // ✅ NEW: pick the fixed 9-upgrade pool ONCE per match
+    game.upgradePool = upgrades.pickRandomUpgradePool(9);
+
     io.to(code).emit("GAME_STARTED", {
       map: {
         id: map.id,
@@ -1026,7 +1031,10 @@ io.on("connection", (socket) => {
 
       upgrades.ensureUpgradeState(p);
       const offerId = makeOfferId();
-      const options = upgrades.buildOfferOptions();
+
+      // ✅ NEW: build offers from the fixed pool chosen at startGame
+      const options = upgrades.buildOfferOptions(game.upgradePool);
+
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
     } else {
