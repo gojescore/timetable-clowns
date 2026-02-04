@@ -896,6 +896,8 @@ io.on("connection", (socket) => {
     game.pickups = [];
     game.bullets = [];
     game.phase = "running";
+    game.upgradePool = upgrades.pickRandomUpgradePool(9);
+
 
     // ✅ NEW: pick the fixed 9-upgrade pool ONCE per match
     game.upgradePool = upgrades.pickRandomUpgradePool(9);
