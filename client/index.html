@@ -136,6 +136,14 @@
       display:inline-block;
     }
 
+    /* ✅ Invulnerability pill (added) */
+    .hudPill.invuln{
+      border-color: rgba(34,197,94,.55);
+      background: rgba(34,197,94,.14);
+      color: rgba(230,237,247,.95);
+    }
+    .hudPill.invuln.hidden{ display:none; }
+
     /* Sidebar (upgrades + leave button) */
     .sidePanel{
       display:flex;
@@ -408,6 +416,11 @@
             <div class="hudPill" title="Cakes (ammo)">
               🍰 <span id="hudCakes">7</span>
             </div>
+
+            <!-- ✅ Added: invulnerability indicator (server invulnUntil) -->
+            <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
+              🛡️ <span id="hudInvulnText">INV 0.0s</span>
+            </div>
           </div>
 
           <canvas id="game"></canvas>
@@ -531,6 +544,10 @@
       hudLife: document.getElementById("hudLife"),
       hudCakes: document.getElementById("hudCakes"),
 
+      // ✅ Added
+      hudInvuln: document.getElementById("hudInvuln"),
+      hudInvulnText: document.getElementById("hudInvulnText"),
+
       upgradeSlotsCons: document.getElementById("upgradeSlotsCons"),
       upgradeSlotsPerm: document.getElementById("upgradeSlotsPerm"),
 
@@ -588,10 +605,31 @@
     // ✅ cakes config (HUD starts with 7)
     const MAX_CAKES = 7;
 
+    // ✅ invuln UI tuning
+    const INVULN_SHOW_THRESHOLD_MS = 80; // show only if > 0.08s remaining
+
     // speech bubble
     let bubble = null;
     function showBubble(text, ms = 1600) {
       bubble = { text: String(text), untilMs: Date.now() + ms };
+    }
+
+    // ✅ invuln HUD update (driven by latest snapshot each frame)
+    function updateInvulnHudFromMe(me) {
+      if (!me || me.alive === false) {
+        el.hudInvuln.classList.add("hidden");
+        return;
+      }
+      const until = Number.isFinite(me.invulnUntil) ? me.invulnUntil : 0;
+      const now = Date.now();
+      const msLeft = until - now;
+
+      if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
+        el.hudInvuln.classList.remove("hidden");
+        el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
+      } else {
+        el.hudInvuln.classList.add("hidden");
+      }
     }
 
     // ===== Role UI =====
@@ -696,6 +734,9 @@
       el.hudLife.textContent = "1";
       el.hudCakes.textContent = String(MAX_CAKES);
 
+      // ✅ reset invuln UI on start
+      el.hudInvuln.classList.add("hidden");
+
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
     });
@@ -709,6 +750,9 @@
         el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
         el.hudLife.textContent = me.alive === false ? "0" : "1";
         el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
+
+        // ✅ invuln HUD (updates at snapshot rate; frame loop also calls it)
+        updateInvulnHudFromMe(me);
 
         // ✅ IMPORTANT: only trust upgrades from STATE_SNAPSHOT (it contains info + correct shape)
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
@@ -893,6 +937,7 @@
       if (playerId !== myId) return;
       el.hudLife.textContent = "0";
       el.hudCakes.textContent = "0";
+      el.hudInvuln.classList.add("hidden");
     });
 
     // ---------- Prompt UI ----------
@@ -1740,8 +1785,25 @@
       const px = p.x - camX;
       const py = p.y - camY;
 
+      // ✅ invulnerability blink (server invulnUntil)
+      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
+      const invuln = (until - Date.now()) > INVULN_SHOW_THRESHOLD_MS;
+
+      // Blink by skipping some frames (simple + cheap)
+      const blinkOff = invuln && ((Date.now() % 240) < 110);
+      if (blinkOff) return;
+
       ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
       ctx.fillRect(px - 14, py - 14, 28, 28);
+
+      // outline when invuln (more readable than full alpha)
+      if (invuln) {
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(34,197,94,.95)";
+        ctx.strokeRect(px - 14, py - 14, 28, 28);
+        ctx.restore();
+      }
 
       ctx.strokeStyle = "rgba(0,0,0,.35)";
       ctx.beginPath();
@@ -1819,6 +1881,9 @@
       resizeCanvasToDisplaySize();
 
       const me = lastSnapshot.players.find(p => p.id === myId);
+
+      // ✅ invuln HUD updated every frame for smooth countdown
+      updateInvulnHudFromMe(me);
 
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
       const camYraw = me ? (me.y - VIEW_H / 2) : 0;
