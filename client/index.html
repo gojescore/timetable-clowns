@@ -213,6 +213,8 @@
       border:1px solid rgba(255,255,255,.12);
       background:rgba(0,0,0,.12);
       flex:0 0 auto;
+      min-width: 56px;
+      text-align:center;
     }
 
     /* Prompt overlays */
@@ -339,6 +341,11 @@
           <option value="4" selected>4 teams</option>
         </select>
 
+        <select id="friendlyFire" title="Friendly fire (teams)">
+          <option value="0" selected>Friendly fire: OFF</option>
+          <option value="1">Friendly fire: ON</option>
+        </select>
+
         <select id="mapChoice" title="Map">
           <option value="map01" selected>Training Hall (map01)</option>
           <option value="random">Random</option>
@@ -413,10 +420,14 @@
           </div>
 
           <div class="sideCard" style="flex:1 1 auto">
-            <div class="sideTitle">Upgrades (8 / 9 / 0)</div>
-            <div class="upgradeSlotsCol" id="upgradeSlots"></div>
+            <div class="sideTitle">Consumables (8 / 9 / 0)</div>
+            <div class="upgradeSlotsCol" id="upgradeSlotsCons"></div>
+
+            <div class="sideTitle" style="margin-top:12px">Permanents (stacking)</div>
+            <div class="upgradeSlotsCol" id="upgradeSlotsPerm"></div>
+
             <p class="muted" style="margin:10px 0 0; font-size:13px">
-              Consumables are in the first 3 slots.
+              Consumables cost money to use. Permanents cost money to buy and can stack (x2, x3…).
             </p>
           </div>
         </div>
@@ -497,6 +508,7 @@
       mode: document.getElementById("mode"),
       tableBase: document.getElementById("tableBase"),
       teamCount: document.getElementById("teamCount"),
+      friendlyFire: document.getElementById("friendlyFire"),
       mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
       go: document.getElementById("go"),
@@ -519,7 +531,8 @@
       hudLife: document.getElementById("hudLife"),
       hudCakes: document.getElementById("hudCakes"),
 
-      upgradeSlots: document.getElementById("upgradeSlots"),
+      upgradeSlotsCons: document.getElementById("upgradeSlotsCons"),
+      upgradeSlotsPerm: document.getElementById("upgradeSlotsPerm"),
 
       canvas: document.getElementById("game"),
       canvasWrap: document.getElementById("canvasWrap"),
@@ -556,7 +569,7 @@
 
     let myId = null;
     let isHost = false;
-    let settings = { mode: "ffa", teamCount: 0 };
+    let settings = { mode: "ffa", teamCount: 0, friendlyFire: false };
 
     let mapData = null;
     let world = { w: 2400, h: 1600 };
@@ -590,6 +603,7 @@
     function updateHostModeUI(){
       const isTeams = el.mode.value === "teams";
       el.teamCount.classList.toggle("hidden", !isTeams);
+      el.friendlyFire.classList.toggle("hidden", !isTeams);
     }
     el.mode.addEventListener("change", updateHostModeUI);
 
@@ -613,10 +627,12 @@
 
         const mode = el.mode.value === "teams" ? "teams" : "ffa";
         const teamCount = mode === "teams" ? Number(el.teamCount.value) : 0;
+        const friendlyFire = (mode === "teams") ? (el.friendlyFire.value === "1") : false;
 
         socket.emit("createGame", {
           mode,
           teamCount,
+          friendlyFire,
           tableBase: Number(el.tableBase.value),
           mapChoice: el.mapChoice.value,
           inputMode: el.inputMode.value
@@ -640,12 +656,12 @@
       el.lobby.classList.remove("hidden");
       el.hostControls.style.display = isHost ? "block" : "none";
 
-      settings = s || { mode: "ffa", teamCount: 0 };
+      settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
 
       el.lobbyHint.textContent =
         (settings.mode === "ffa")
           ? "All vs All: teams are automatic."
-          : "Everyone must have a team before Start game works.";
+          : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF."));
 
       renderPlayers(players);
     });
@@ -789,7 +805,7 @@
       if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
     });
 
-    // ✅ FIXED: single, non-nested keydown handler for:
+    // ✅ single keydown handler for:
     // - drop overlay 8/9/0
     // - upgrade overlay Escape
     // - upgrade slot usage 8/9/0
@@ -824,7 +840,7 @@
       const isForm = (tag === "input" || tag === "textarea" || tag === "select");
       if (isForm) return;
 
-      // Use upgrade slots 8/9/0
+      // Use upgrade slots 8/9/0 (consumables only)
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
@@ -852,8 +868,13 @@
         else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
         else if (p.reason === "prompt_open") showBubble("Finish the machine first.", 1400);
         else if (p.reason === "dead") showBubble("You are dead. Respawn first.", 1400);
+        else if (p.reason === "not_enough_money") showBubble(`Not enough money. Need $${p.need}.`, 1500);
         else showBubble("Cannot use right now.", 1200);
         return;
+      }
+
+      if (typeof p.money === "number") {
+        el.hudMoney.textContent = "$" + p.money;
       }
 
       if (p.upgrades) {
@@ -862,11 +883,8 @@
       }
 
       const name = p.used?.name || p.used?.id || "Upgrade";
-      showBubble(`Used: ${name}`, 1300);
-      if (p.removed) {
-        const rName = p.removed?.name || p.removed?.id || "Upgrade";
-        setTimeout(() => showBubble(`Ran out: ${rName}`, 1400), 350);
-      }
+      if (typeof p.paid === "number") showBubble(`Used: ${name} (-$${p.paid})`, 1300);
+      else showBubble(`Used: ${name}`, 1300);
     });
 
     socket.on("PLAYER_DIED", ({ playerId }) => {
@@ -956,7 +974,13 @@
 
         const tag = document.createElement("div");
         tag.className = "upgTag";
-        tag.textContent = opt.kind ? String(opt.kind) : "upgrade";
+        if (opt.kind === "permanent") {
+          const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
+          tag.textContent = `permanent · buy $${c}`;
+        } else {
+          const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
+          tag.textContent = `consumable · use $${c}`;
+        }
 
         const pick = document.createElement("div");
         pick.className = "upgPick";
@@ -981,7 +1005,6 @@
     }
 
     function closeUpgradeOffer() {
-      // tell server "I closed the picker" so shooting is not blocked forever
       if (activeOfferId) {
         socket.emit("declineUpgrade", { offerId: activeOfferId });
       }
@@ -993,7 +1016,6 @@
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
-
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
     function openReplaceAsk(payload) {
@@ -1053,7 +1075,8 @@
 
         const meta = document.createElement("div");
         meta.className = "dropMeta";
-        meta.textContent = `uses left: ${s.usesLeft}`;
+        const useCost = Number.isFinite(info.useCost) ? info.useCost : 0;
+        meta.textContent = `use cost: $${useCost}`;
 
         btn.appendChild(label);
         btn.appendChild(meta);
@@ -1080,10 +1103,7 @@
 
     function declineReplace() {
       closeDropPicker();
-
-      // closing means we also decline the upgrade offer server-side
       closeUpgradeOffer();
-
       showBubble("Kept current upgrades.", 1300);
     }
 
@@ -1112,6 +1132,10 @@
         el.upgradeMsg.textContent = "Picked ✅";
         el.upgradeMsg.className = "msg good";
 
+        if (typeof p.money === "number") {
+          el.hudMoney.textContent = "$" + p.money;
+        }
+
         if (p.upgrades) {
           myServerUpgrades = p.upgrades;
           renderUpgradeBar();
@@ -1119,10 +1143,16 @@
 
         closeDropPicker();
         setTimeout(closeUpgradeOffer, 450);
-      } else {
-        el.upgradeMsg.textContent = "Cannot pick: " + (p.reason || "unknown");
-        el.upgradeMsg.className = "msg bad";
+        return;
       }
+
+      // errors
+      let msg = "Cannot pick: " + (p.reason || "unknown");
+      if (p.reason === "not_enough_money") msg = `Not enough money. Need $${p.need}.`;
+      if (p.reason === "already_have") msg = "You already have that consumable.";
+      if (p.reason === "perm_slots_full") msg = "Permanent slots are full (3 types max).";
+      el.upgradeMsg.textContent = msg;
+      el.upgradeMsg.className = "msg bad";
     });
 
     // ---------- Respawn UI ----------
@@ -1210,50 +1240,30 @@
       }
     });
 
-    // ===== Upgrade bar render (vertical) =====
+    // ===== Upgrade bar render (two sections) =====
     function renderUpgradeBar() {
-      el.upgradeSlots.innerHTML = "";
+      el.upgradeSlotsCons.innerHTML = "";
+      el.upgradeSlotsPerm.innerHTML = "";
 
       const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
       const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
-      const display = [];
-
-      for (const s of cons) {
-        const info = s?.info || {};
-        display.push({
-          kind: "consumable",
-          name: info.name || info.id || s.id,
-          desc: info.desc || "",
-          usesLeft: s.usesLeft
-        });
-      }
-      for (const p of perm) {
-        const info = p?.info || {};
-        display.push({
-          kind: "permanent",
-          name: info.name || info.id || p.id,
-          desc: info.desc || "",
-          usesLeft: null
-        });
-      }
-
       const hotkeys = ["8", "9", "0"];
-      const totalSlots = 6;
 
-      for (let i = 0; i < totalSlots; i++) {
-        const u = display[i];
+      // Consumables (3)
+      for (let i = 0; i < 3; i++) {
+        const s = cons[i];
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
-        slot.title = u?.desc ? u.desc : "";
+        slot.title = s?.info?.desc ? s.info.desc : "";
 
         const left = document.createElement("div");
         left.className = "uLeft";
 
         const hk = document.createElement("div");
         hk.className = "uHotkey";
-        hk.textContent = (i < 3) ? hotkeys[i] : " ";
+        hk.textContent = hotkeys[i];
         left.appendChild(hk);
 
         const stack = document.createElement("div");
@@ -1261,26 +1271,81 @@
 
         const name = document.createElement("div");
         name.className = "uName";
-        name.textContent = u ? u.name : "";
+        name.textContent = s ? (s.info?.name || s.info?.id || s.id) : "";
         stack.appendChild(name);
 
         const meta = document.createElement("div");
         meta.className = "uMeta";
-        if (!u) meta.textContent = "";
-        else meta.textContent = u.kind === "consumable" ? "consumable" : "permanent";
+        if (!s) meta.textContent = "";
+        else {
+          const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
+          meta.textContent = `use $${useCost}`;
+        }
         stack.appendChild(meta);
 
         left.appendChild(stack);
 
         const uses = document.createElement("div");
         uses.className = "uUses";
-        if (u && u.kind === "consumable" && Number.isFinite(u.usesLeft)) uses.textContent = String(u.usesLeft);
-        else uses.textContent = "";
+        if (!s) uses.textContent = "";
+        else {
+          const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
+          uses.textContent = "$" + useCost;
+        }
 
         slot.appendChild(left);
         slot.appendChild(uses);
 
-        el.upgradeSlots.appendChild(slot);
+        el.upgradeSlotsCons.appendChild(slot);
+      }
+
+      // Permanents (3 types max, can stack with count)
+      for (let i = 0; i < 3; i++) {
+        const p = perm[i];
+
+        const slot = document.createElement("div");
+        slot.className = "uSlot";
+        slot.title = p?.info?.desc ? p.info.desc : "";
+
+        const left = document.createElement("div");
+        left.className = "uLeft";
+
+        const hk = document.createElement("div");
+        hk.className = "uHotkey";
+        hk.textContent = "★";
+        left.appendChild(hk);
+
+        const stack = document.createElement("div");
+        stack.className = "uStack";
+
+        const name = document.createElement("div");
+        name.className = "uName";
+        name.textContent = p ? (p.info?.name || p.info?.id || p.id) : "";
+        stack.appendChild(name);
+
+        const meta = document.createElement("div");
+        meta.className = "uMeta";
+        if (!p) meta.textContent = "";
+        else {
+          const buy = Number.isFinite(p.info?.acquireCost) ? p.info.acquireCost : 0;
+          meta.textContent = `buy $${buy} · stacks`;
+        }
+        stack.appendChild(meta);
+
+        left.appendChild(stack);
+
+        const uses = document.createElement("div");
+        uses.className = "uUses";
+        if (!p) uses.textContent = "";
+        else {
+          const count = Number.isFinite(p.count) ? p.count : 1;
+          uses.textContent = "x" + count;
+        }
+
+        slot.appendChild(left);
+        slot.appendChild(uses);
+
+        el.upgradeSlotsPerm.appendChild(slot);
       }
     }
 
@@ -1808,6 +1873,9 @@
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
+
+    // initial render
+    renderUpgradeBar();
   </script>
 </body>
 </html>
