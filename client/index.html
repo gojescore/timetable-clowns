@@ -144,6 +144,13 @@
     }
     .hudPill.invuln.hidden{ display:none; }
 
+    /* ✅ Timer pill */
+    .hudPill.timer{
+      border-color: rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+    }
+    .hudPill.timer.hidden{ display:none; }
+
     /* Sidebar (upgrades + leave button) */
     .sidePanel{
       display:flex;
@@ -237,7 +244,7 @@
     }
     .overlay.show{display:flex}
     .modal{
-      width:min(520px, 100%);
+      width:min(640px, 100%);
       background:var(--panel);
       border:1px solid var(--line);
       border-radius:16px;
@@ -302,6 +309,51 @@
     .dropBtn:hover{ border-color: rgba(255,255,255,.22); }
     .dropMeta{ font-size:12px; color:var(--muted); margin-top:4px; }
 
+    /* ✅ Leaderboard */
+    .boardGrid{
+      display:grid;
+      grid-template-columns: 40px 1fr 90px 80px 80px 80px;
+      gap:8px;
+      align-items:center;
+      margin-top:10px;
+    }
+    .boardHead{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:900;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      padding-bottom:6px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+      margin-bottom:8px;
+    }
+    .boardRow{
+      padding:8px 0;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    .rank{
+      font-weight:900;
+      opacity:.9;
+    }
+    .boardName{
+      font-weight:900;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .cellRight{ text-align:right; font-variant-numeric: tabular-nums; }
+    .reasonPill{
+      display:inline-block;
+      padding:3px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(0,0,0,.18);
+      color:rgba(230,237,247,.92);
+      font-weight:900;
+      font-size:12px;
+      white-space:nowrap;
+    }
+
     @media (max-width: 980px){
       .gameLayout{ grid-template-columns: 1fr; }
       .sidePanel{ flex-direction:row; flex-wrap:wrap; }
@@ -364,6 +416,15 @@
           <option value="kb">Keyboard only</option>
           <option value="kbm_gamepad">Keyboard + Mouse + Controller</option>
         </select>
+
+        <!-- ✅ NEW: session mode -->
+        <select id="sessionMode" title="Session">
+          <option value="standard" selected>Session: Standard</option>
+          <option value="timed">Session: Timed</option>
+        </select>
+
+        <!-- ✅ NEW: minutes -->
+        <input id="sessionMinutes" type="number" min="1" max="60" value="5" title="Timed minutes" />
       </div>
 
       <div class="row">
@@ -420,6 +481,11 @@
             <!-- ✅ Added: invulnerability indicator (server invulnUntil) -->
             <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
               🛡️ <span id="hudInvulnText">INV 0.0s</span>
+            </div>
+
+            <!-- ✅ Added: timer indicator (timed sessions) -->
+            <div class="hudPill timer hidden" id="hudTimer" title="Time left">
+              ⏱️ <span id="hudTimerText">--:--</span>
             </div>
           </div>
 
@@ -508,6 +574,40 @@
     </div>
   </div>
 
+  <!-- ✅ Game ended / Leaderboard overlay -->
+  <div class="overlay" id="endOverlay">
+    <div class="modal">
+      <h3>Game ended</h3>
+      <div class="row" style="align-items:center; margin-top:8px">
+        <div>
+          <span class="reasonPill" id="endReason">reason</span>
+          <span class="pill" id="endWinner" style="margin-left:8px">Winner: —</span>
+        </div>
+        <div style="text-align:right">
+          <span class="muted" id="endWhen">—</span>
+        </div>
+      </div>
+
+      <div class="boardHead boardGrid" style="margin-top:12px">
+        <div>#</div>
+        <div>Player</div>
+        <div class="cellRight">Correct</div>
+        <div class="cellRight">Kills</div>
+        <div class="cellRight">Deaths</div>
+        <div class="cellRight">Money</div>
+      </div>
+
+      <div id="endBoard"></div>
+
+      <div class="actions">
+        <button class="primary" id="endCloseBtn">Close</button>
+        <button class="danger" id="endBackBtn" title="Safe: reload page">Back / Reload</button>
+      </div>
+
+      <div class="msg" id="endMsg"></div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
@@ -524,6 +624,11 @@
       friendlyFire: document.getElementById("friendlyFire"),
       mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
+
+      // ✅ new: session
+      sessionMode: document.getElementById("sessionMode"),
+      sessionMinutes: document.getElementById("sessionMinutes"),
+
       go: document.getElementById("go"),
       status: document.getElementById("status"),
 
@@ -547,6 +652,10 @@
       // ✅ Added
       hudInvuln: document.getElementById("hudInvuln"),
       hudInvulnText: document.getElementById("hudInvulnText"),
+
+      // ✅ Added
+      hudTimer: document.getElementById("hudTimer"),
+      hudTimerText: document.getElementById("hudTimerText"),
 
       upgradeSlotsCons: document.getElementById("upgradeSlotsCons"),
       upgradeSlotsPerm: document.getElementById("upgradeSlotsPerm"),
@@ -579,10 +688,25 @@
       respawnList: document.getElementById("respawnList"),
       respawnCloseBtn: document.getElementById("respawnCloseBtn"),
       respawnMsg: document.getElementById("respawnMsg"),
+
+      // ✅ end screen
+      endOverlay: document.getElementById("endOverlay"),
+      endBoard: document.getElementById("endBoard"),
+      endCloseBtn: document.getElementById("endCloseBtn"),
+      endBackBtn: document.getElementById("endBackBtn"),
+      endReason: document.getElementById("endReason"),
+      endWinner: document.getElementById("endWinner"),
+      endWhen: document.getElementById("endWhen"),
+      endMsg: document.getElementById("endMsg"),
     };
 
     el.leaveLobby.addEventListener("click", () => location.reload());
     el.leaveGame.addEventListener("click", () => location.reload());
+    el.endBackBtn.addEventListener("click", () => location.reload());
+    el.endCloseBtn.addEventListener("click", () => {
+      el.endOverlay.classList.remove("show");
+      el.endMsg.textContent = "";
+    });
 
     let myId = null;
     let isHost = false;
@@ -607,6 +731,38 @@
 
     // ✅ invuln UI tuning
     const INVULN_SHOW_THRESHOLD_MS = 80; // show only if > 0.08s remaining
+
+    // ✅ timed session UI/runtime
+    let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
+    function formatMMSS(msLeft){
+      const s = Math.max(0, Math.ceil(msLeft / 1000));
+      const mm = Math.floor(s / 60);
+      const ss = s % 60;
+      return String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
+    }
+    function updateTimerHudFromSnapshot(snap){
+      // use endAt from snapshot (authoritative) if present
+      const endAt = Number.isFinite(snap?.endAt) ? snap.endAt : (Number.isFinite(gameEndAt) ? gameEndAt : null);
+      if (!endAt) {
+        el.hudTimer.classList.add("hidden");
+        return;
+      }
+      gameEndAt = endAt;
+      const msLeft = endAt - Date.now();
+      if (msLeft > 0) {
+        el.hudTimer.classList.remove("hidden");
+        el.hudTimerText.textContent = formatMMSS(msLeft);
+      } else {
+        el.hudTimer.classList.remove("hidden");
+        el.hudTimerText.textContent = "00:00";
+      }
+    }
+    function updateTimerHudFrame(){
+      if (!Number.isFinite(gameEndAt)) return;
+      const msLeft = gameEndAt - Date.now();
+      el.hudTimer.classList.remove("hidden");
+      el.hudTimerText.textContent = formatMMSS(msLeft);
+    }
 
     // speech bubble
     let bubble = null;
@@ -647,8 +803,16 @@
     }
     el.mode.addEventListener("change", updateHostModeUI);
 
+    function updateSessionUI(){
+      // show minutes only if timed
+      const timed = (el.sessionMode && el.sessionMode.value === "timed");
+      if (el.sessionMinutes) el.sessionMinutes.classList.toggle("hidden", !timed);
+    }
+    el.sessionMode.addEventListener("change", updateSessionUI);
+
     updateRoleUI();
     updateHostModeUI();
+    updateSessionUI();
 
     socket.on("connect", () => el.status.textContent = "Connected.");
 
@@ -670,13 +834,20 @@
         const teamCount = mode === "teams" ? Number(el.teamCount.value) : 0;
         const friendlyFire = (mode === "teams") ? (el.friendlyFire.value === "1") : false;
 
+        const sessionMode = (el.sessionMode?.value === "timed") ? "timed" : "standard";
+        const sessionMinutes = Math.max(1, Math.min(60, Math.floor(Number(el.sessionMinutes?.value || 5))));
+
         socket.emit("createGame", {
           mode,
           teamCount,
           friendlyFire,
           tableBase: Number(el.tableBase.value),
           mapChoice: el.mapChoice.value,
-          inputMode: el.inputMode.value
+          inputMode: el.inputMode.value,
+
+          // ✅ NEW
+          sessionMode,
+          sessionMinutes,
         });
       } else {
         isHost = false;
@@ -737,13 +908,28 @@
       // ✅ reset invuln UI on start
       el.hudInvuln.classList.add("hidden");
 
+      // ✅ timer init
+      gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
+      if (gameEndAt) {
+        el.hudTimer.classList.remove("hidden");
+        el.hudTimerText.textContent = formatMMSS(gameEndAt - Date.now());
+      } else {
+        el.hudTimer.classList.add("hidden");
+      }
+
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
+
+      // close end overlay if it was open for any reason
+      el.endOverlay.classList.remove("show");
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
+
+      // ✅ keep timer synced
+      updateTimerHudFromSnapshot(snap);
 
       const me = snap.players?.find(p => p.id === myId);
       if (me) {
@@ -758,6 +944,90 @@
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
+    });
+
+    // ✅ GAME_ENDED + leaderboard overlay
+    socket.on("GAME_ENDED", (p = {}) => {
+      // stop gameplay input effects immediately
+      inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
+      sendInput();
+
+      closePrompt();
+      closeDropPicker();
+      // (closeUpgradeOffer calls decline; not needed at game end, just close UI)
+      activeOfferId = null;
+      el.upgradeOverlay.classList.remove("show");
+      el.upgradeList.innerHTML = "";
+      el.upgradeMsg.textContent = "";
+
+      const reason = String(p.reason || "unknown");
+      el.endReason.textContent = "ended: " + reason;
+
+      if (p.winnerName) el.endWinner.textContent = "Winner: " + p.winnerName;
+      else el.endWinner.textContent = "Winner: —";
+
+      if (Number.isFinite(p.endedAt)) {
+        const d = new Date(p.endedAt);
+        el.endWhen.textContent = d.toLocaleString();
+      } else {
+        el.endWhen.textContent = "";
+      }
+
+      const board = Array.isArray(p.leaderboard) ? p.leaderboard : [];
+      el.endBoard.innerHTML = "";
+
+      for (let i = 0; i < board.length; i++) {
+        const r = board[i] || {};
+        const row = document.createElement("div");
+        row.className = "boardRow boardGrid";
+
+        const cRank = document.createElement("div");
+        cRank.className = "rank";
+        cRank.textContent = String(i + 1);
+
+        const cName = document.createElement("div");
+        cName.className = "boardName";
+        cName.textContent = r.name || "Unknown";
+
+        const cCorrect = document.createElement("div");
+        cCorrect.className = "cellRight";
+        cCorrect.textContent = String(Number.isFinite(r.correct) ? r.correct : 0);
+
+        const cKills = document.createElement("div");
+        cKills.className = "cellRight";
+        cKills.textContent = String(Number.isFinite(r.kills) ? r.kills : 0);
+
+        const cDeaths = document.createElement("div");
+        cDeaths.className = "cellRight";
+        cDeaths.textContent = String(Number.isFinite(r.deaths) ? r.deaths : 0);
+
+        const cMoney = document.createElement("div");
+        cMoney.className = "cellRight";
+        cMoney.textContent = "$" + String(Number.isFinite(r.money) ? r.money : 0);
+
+        row.appendChild(cRank);
+        row.appendChild(cName);
+        row.appendChild(cCorrect);
+        row.appendChild(cKills);
+        row.appendChild(cDeaths);
+        row.appendChild(cMoney);
+
+        el.endBoard.appendChild(row);
+      }
+
+      if (reason === "time") {
+        el.endMsg.textContent = "Time is up ⏱️";
+        el.endMsg.className = "msg bad";
+      } else if (reason === "machine10") {
+        el.endMsg.textContent = "Machine 10 cleared 🎉";
+        el.endMsg.className = "msg good";
+      } else {
+        el.endMsg.textContent = "";
+        el.endMsg.className = "msg";
+      }
+
+      el.endOverlay.classList.add("show");
+      showBubble("Game ended — leaderboard shown.", 1400);
     });
 
     function renderPlayers(players){
@@ -807,7 +1077,8 @@
       return !!activePromptId ||
              !!activeOfferId ||
              el.dropOverlay.classList.contains("show") ||
-             el.respawnOverlay.classList.contains("show");
+             el.respawnOverlay.classList.contains("show") ||
+             el.endOverlay.classList.contains("show");
     }
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
@@ -879,6 +1150,15 @@
         }
       }
 
+      // End overlay: Escape closes
+      if (el.endOverlay.classList.contains("show")) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          el.endOverlay.classList.remove("show");
+          return;
+        }
+      }
+
       // Block gameplay hotkeys while UI is up
       if (isUiBlockingInput()) return;
 
@@ -924,9 +1204,6 @@
       if (typeof p.money === "number") {
         el.hudMoney.textContent = "$" + p.money;
       }
-
-      // ✅ IMPORTANT: do NOT overwrite myServerUpgrades from UPGRADE_USED.
-      // Server sends an internal upgrade shape here; the next STATE_SNAPSHOT contains the correct UI shape + info.
 
       const name = p.used?.name || p.used?.id || "Upgrade";
       if (typeof p.paid === "number") showBubble(`Used: ${name} (-$${p.paid})`, 1300);
@@ -1069,7 +1346,6 @@
     socket.on("UPGRADE_DECLINED", (p) => {
       if (!p) return;
       if (p.ok) {
-        // If overlay is open, close it (safe no-op if already closed)
         activeOfferId = null;
         el.upgradeOverlay.classList.remove("show");
         el.upgradeList.innerHTML = "";
@@ -1195,9 +1471,6 @@
           el.hudMoney.textContent = "$" + p.money;
         }
 
-        // ✅ IMPORTANT: do NOT overwrite myServerUpgrades from UPGRADE_RESULT.
-        // Server sends internal upgrade storage shape; next STATE_SNAPSHOT has correct UI shape + info.
-
         closeDropPicker();
         setTimeout(closeUpgradeOffer, 450);
         return;
@@ -1217,8 +1490,15 @@
       const options = Array.isArray(payload?.options) ? payload.options : [];
       activeRespawn = { options };
 
-      el.respawnMsg.textContent = "";
-      el.respawnMsg.className = "msg";
+      // ✅ show killed-by message if provided by server
+      if (payload?.killedBy) {
+        el.respawnMsg.textContent = "Killed by: " + payload.killedBy;
+        el.respawnMsg.className = "msg bad";
+      } else {
+        el.respawnMsg.textContent = "";
+        el.respawnMsg.className = "msg";
+      }
+
       el.respawnList.innerHTML = "";
 
       const use4 = options.length >= 10;
@@ -1271,7 +1551,9 @@
       activeRespawn = null;
       el.respawnOverlay.classList.remove("show");
       el.respawnList.innerHTML = "";
+      // keep respawnMsg cleared
       el.respawnMsg.textContent = "";
+      el.respawnMsg.className = "msg";
     }
 
     el.respawnCloseBtn.addEventListener("click", closeRespawnOverlay);
@@ -1284,8 +1566,6 @@
     socket.on("RESPAWN_RESULT", (p) => {
       if (!p) return;
       if (p.ok) {
-        // ✅ Respawn polish: prevent “stuck keys” / stale firing after respawn.
-        // Server clears input on death, but the client might still think keys are held.
         inputState.up = false;
         inputState.down = false;
         inputState.left = false;
@@ -1299,7 +1579,6 @@
         el.hudLife.textContent = "1";
         el.hudCakes.textContent = String(MAX_CAKES);
 
-        // Optional: quick feedback (invuln UI already shows the countdown)
         showBubble("Respawned — you are invulnerable for a moment 🛡️", 1200);
 
         setTimeout(closeRespawnOverlay, 350);
@@ -1896,6 +2175,9 @@
 
       // ✅ invuln HUD updated every frame for smooth countdown
       updateInvulnHudFromMe(me);
+
+      // ✅ timer HUD updated every frame for smooth countdown
+      updateTimerHudFrame();
 
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
       const camYraw = me ? (me.y - VIEW_H / 2) : 0;
