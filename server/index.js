@@ -246,10 +246,8 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
   return dist2(px, py, cx, cy) <= r * r;
 }
 
-// ✅ Sweep segment vs expanded AABB (for wall/machine hits)
+// ✅ Sweep segment vs expanded AABB (for wall/machine hits) — slab method
 function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
-  // Robust segment vs axis-aligned rectangle intersection (slab method).
-  // Rect is [rx, rx+rw] x [ry, ry+rh].
   const minX = rx;
   const maxX = rx + rw;
   const minY = ry;
@@ -260,18 +258,16 @@ function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
 
   let tmin = 0;
   let tmax = 1;
-
   const EPS = 1e-12;
 
   // X slab
   if (Math.abs(dx) < EPS) {
-    // Segment parallel to Y axis: must already be within X slab
     if (x1 < minX || x1 > maxX) return false;
   } else {
     const invDx = 1 / dx;
     let tx1 = (minX - x1) * invDx;
     let tx2 = (maxX - x1) * invDx;
-    if (tx1 > tx2) { const tmp = tx1; tx1 = tx2; tx2 = tmp; }
+    if (tx1 > tx2) [tx1, tx2] = [tx2, tx1];
     tmin = Math.max(tmin, tx1);
     tmax = Math.min(tmax, tx2);
     if (tmin > tmax) return false;
@@ -279,46 +275,16 @@ function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
 
   // Y slab
   if (Math.abs(dy) < EPS) {
-    // Segment parallel to X axis: must already be within Y slab
     if (y1 < minY || y1 > maxY) return false;
   } else {
     const invDy = 1 / dy;
     let ty1 = (minY - y1) * invDy;
     let ty2 = (maxY - y1) * invDy;
-    if (ty1 > ty2) { const tmp = ty1; ty1 = ty2; ty2 = tmp; }
+    if (ty1 > ty2) [ty1, ty2] = [ty2, ty1];
     tmin = Math.max(tmin, ty1);
     tmax = Math.min(tmax, ty2);
     if (tmin > tmax) return false;
   }
-
-  return true;
-}
-
-
-  function clip(p, q) {
-    if (Math.abs(p) < 1e-12) {
-      // Line parallel to this boundary
-      return q >= 0;
-    }
-    const r = q / p;
-    if (p < 0) {
-      if (r > t1) return false;
-      if (r > t0) t0 = r;
-    } else {
-      if (r < t0) return false;
-      if (r < t1) t1 = r;
-    }
-    return true;
-  }
-
-  // Left: x >= rx  -> (x1 + t dx) - rx >= 0 -> t dx >= rx - x1
-  if (!clip( dx, (rx) - x1)) return false;
-  // Right: x <= rx+rw -> (rx+rw) - (x1 + t dx) >= 0 -> -t dx >= x1 - (rx+rw)
-  if (!clip(-dx, x1 - (rx + rw))) return false;
-  // Top: y >= ry
-  if (!clip( dy, (ry) - y1)) return false;
-  // Bottom: y <= ry+rh
-  if (!clip(-dy, y1 - (ry + rh))) return false;
 
   return true;
 }
@@ -442,7 +408,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -497,13 +464,12 @@ setInterval(() => {
         let spawnX = p.x + ndx * (PLAYER_HALF + 6);
         let spawnY = p.y + ndy * (PLAYER_HALF + 6);
 
-        // ✅ Spawn safety: if the spawn point is inside wall/machine, push it forward.
-        // If still colliding, skip spawning (instead of instant vanishing).
+        // Spawn safety: if spawn is inside expanded wall/machine, push forward a bit.
+        // If still colliding, skip spawning (don’t consume ammo).
         const pushSteps = 6;
         const pushStepLen = 6;
         let okSpawn = true;
 
-        // quick point-in-expanded-rect check using segmentIntersectsAABB with zero-length segment
         function pointHitsExpandedWalls(x, y) {
           if (Array.isArray(game.map?.walls)) {
             for (const w of game.map.walls) {
@@ -537,7 +503,8 @@ setInterval(() => {
         }
 
         for (let k = 0; k < pushSteps; k++) {
-          const bad = pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
+          const bad =
+            pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
           if (!bad) break;
           spawnX += ndx * pushStepLen;
           spawnY += ndy * pushStepLen;
@@ -545,7 +512,6 @@ setInterval(() => {
         }
 
         if (!okSpawn) {
-          // Don’t consume ammo; treat like “blocked shot”
           p.fireCd = FIRE_COOLDOWN;
           continue;
         }
@@ -586,7 +552,7 @@ setInterval(() => {
       }
 
       const travel = BULLET_SPEED * dt;
-      const maxStep = 10; // keep this small-ish so player sweeps stay reliable too
+      const maxStep = 10;
       const steps = Math.max(1, Math.ceil(travel / maxStep));
       const stepDt = dt / steps;
 
@@ -609,7 +575,7 @@ setInterval(() => {
           break;
         }
 
-        // ✅ WALL HIT (swept segment vs expanded wall rect)
+        // WALL HIT (swept segment vs expanded wall rect)
         let hitWall = false;
         if (Array.isArray(game.map?.walls)) {
           for (const w of game.map.walls) {
@@ -630,7 +596,7 @@ setInterval(() => {
           break;
         }
 
-        // ✅ MACHINE HIT (swept segment vs expanded machine rect)
+        // MACHINE HIT (swept segment vs expanded machine rect)
         let hitMachine = false;
         if (Array.isArray(game.map?.machines)) {
           for (const m of game.map.machines) {
@@ -1136,7 +1102,8 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id)
+      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1207,7 +1174,8 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id)
+      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
