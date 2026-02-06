@@ -45,7 +45,7 @@ const BULLET_SPEED = 780;
 
 // ✅ FIX: TTL was too short for a 2400px-wide world.
 // Old: 1.2s => ~936px max range. New: 3.0s => ~2340px max range.
-const BULLET_TTL = 3.0;
+const BULLET_TTL = 4.5;
 
 // ✅ Optional safety: ignore wall/machine collision for first 50ms
 // to avoid "spawn inside solid => instant delete" when hugging walls.
