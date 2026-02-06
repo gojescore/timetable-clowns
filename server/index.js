@@ -48,8 +48,8 @@ const MACHINE_HALF = 10; // machine is drawn as 20x20 in client
 const BULLET_SPEED = 780; // px/sec
 const BULLET_TTL = 1.2; // seconds
 
-const BULLET_HIT_R_WALL = 4;     // walls/machines
-const CAKE_HIT_R_PLAYER = 12;   // ✅ feels like a big emoji projectile
+const BULLET_HIT_R_WALL = 4; // walls/machines
+const CAKE_HIT_R_PLAYER = 12; // ✅ feels like a big emoji projectile
 
 const FIRE_COOLDOWN = 0.5; // seconds between shots (hold Space)
 const RESPAWN_INVULN = 0.6; // seconds after respawn
@@ -191,7 +191,6 @@ function snapshotForGame(game) {
         const slots = Array.isArray(up.slots)
           ? up.slots.map((s) => ({
               id: s.id,
-              usesLeft: s.usesLeft,
               info: upgrades.getUpgradeInfo(s.id),
             }))
           : [];
@@ -373,7 +372,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -534,13 +534,23 @@ setInterval(() => {
           if (!p.alive) continue;
           if (p.id === b.ownerId) continue;
 
+          // ✅ Friendly fire is now a lobby option (teams mode only)
           if (game.settings?.mode === GAME_MODE_TEAMS) {
-            let shooterTeam = b.ownerTeamId;
-            if (shooterTeam === undefined || shooterTeam === null) {
-              const shooter = game.players.get(b.ownerId);
-              shooterTeam = shooter ? shooter.teamId : shooterTeam;
+            const friendlyFire = !!game.settings?.friendlyFire;
+            if (!friendlyFire) {
+              let shooterTeam = b.ownerTeamId;
+              if (shooterTeam === undefined || shooterTeam === null) {
+                const shooter = game.players.get(b.ownerId);
+                shooterTeam = shooter ? shooter.teamId : shooterTeam;
+              }
+              if (
+                shooterTeam !== undefined &&
+                shooterTeam !== null &&
+                p.teamId === shooterTeam
+              ) {
+                continue;
+              }
             }
-            if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
           }
 
           if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
@@ -627,19 +637,23 @@ io.on("connection", (socket) => {
         : "kbm";
 
     const mapChoice = String(payload.mapChoice || "map01");
+
+    // ✅ NEW: friendly fire option (only meaningful in teams mode)
+    const friendlyFire = mode === GAME_MODE_TEAMS ? !!payload.friendlyFire : false;
+
     const code = createUniqueCode();
 
     const game = {
       code,
       hostPlayerId: session.playerId,
       phase: "lobby",
-      settings: { tableBase, mode, teamCount, inputMode, mapChoice },
+      settings: { tableBase, mode, teamCount, inputMode, mapChoice, friendlyFire },
       map: null,
       players: new Map(),
       pickups: [],
       bullets: [],
 
-      // ✅ NEW: fixed upgrade pool for this match (set on startGame)
+      // ✅ fixed upgrade pool for this match (set on startGame)
       upgradePool: null,
     };
 
@@ -831,7 +845,7 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // ✅ NEW: pick a fixed pool once per match (3x3)
+    // ✅ pick a fixed pool once per match (3x3)
     game.upgradePool = upgrades.pickRandomUpgradePool(9);
 
     const world = getWorldForGame(game);
@@ -993,7 +1007,7 @@ io.on("connection", (socket) => {
 
       const offerId = makeOfferId();
 
-      // ✅ IMPORTANT: build from the fixed pool (3x3)
+      // ✅ build from the fixed pool (3x3)
       const options = upgrades.buildOfferOptions(game.upgradePool);
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
@@ -1118,7 +1132,6 @@ io.on("connection", (socket) => {
     if (!res.ok && res.reason === "slots_full") {
       const slots = (p.upgrades?.slots || []).map((s) => ({
         id: s.id,
-        usesLeft: s.usesLeft,
         info: upgrades.getUpgradeInfo(s.id),
       }));
       socket.emit("UPGRADE_RESULT", {
@@ -1178,16 +1191,7 @@ io.on("connection", (socket) => {
     const dropId = String(payload.dropId || "");
     upgrades.ensureUpgradeState(p);
 
-    const idx = p.upgrades.slots.findIndex((s) => s.id === dropId);
-    if (idx < 0) {
-      socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_drop_id" });
-      return;
-    }
-
-    p.upgrades.slots.splice(idx, 1);
-
-    const res = upgrades.applyUpgradeSelection(p, upgradeId);
-
+    const res = upgrades.applyUpgradeReplace(p, upgradeId, dropId);
     if (!res.ok) {
       socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
       return;
@@ -1249,25 +1253,29 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!Number.isFinite(s.usesLeft) || s.usesLeft <= 0) {
-      slots.splice(slotIndex, 1);
-      socket.emit("UPGRADE_USED", { ok: false, reason: "no_uses_left" });
+    const info = upgrades.getUpgradeInfo(s.id);
+    if (!info) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "unknown_upgrade" });
       return;
     }
 
-    s.usesLeft -= 1;
+    const useCost = Number.isFinite(info.useCost) ? info.useCost : 0;
+    if (!Number.isFinite(p.money)) p.money = 0;
 
-    let removed = null;
-    if (s.usesLeft <= 0) {
-      removed = s.id;
-      slots.splice(slotIndex, 1);
+    if (p.money < useCost) {
+      socket.emit("UPGRADE_USED", { ok: false, reason: "not_enough_money", need: useCost });
+      return;
     }
 
+    p.money -= useCost;
+
+    // Effects come later; for now we just charge money and acknowledge the activation.
     socket.emit("UPGRADE_USED", {
       ok: true,
-      used: upgrades.getUpgradeInfo(s.id),
-      removed: removed ? upgrades.getUpgradeInfo(removed) : null,
+      used: info,
       upgrades: p.upgrades,
+      money: p.money,
+      paid: useCost,
     });
   });
 
