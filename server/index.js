@@ -248,12 +248,52 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
 
 // ✅ Sweep segment vs expanded AABB (for wall/machine hits)
 function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
-  // Liang–Barsky style segment clip against rect.
+  // Robust segment vs axis-aligned rectangle intersection (slab method).
+  // Rect is [rx, rx+rw] x [ry, ry+rh].
+  const minX = rx;
+  const maxX = rx + rw;
+  const minY = ry;
+  const maxY = ry + rh;
+
   const dx = x2 - x1;
   const dy = y2 - y1;
 
-  let t0 = 0;
-  let t1 = 1;
+  let tmin = 0;
+  let tmax = 1;
+
+  const EPS = 1e-12;
+
+  // X slab
+  if (Math.abs(dx) < EPS) {
+    // Segment parallel to Y axis: must already be within X slab
+    if (x1 < minX || x1 > maxX) return false;
+  } else {
+    const invDx = 1 / dx;
+    let tx1 = (minX - x1) * invDx;
+    let tx2 = (maxX - x1) * invDx;
+    if (tx1 > tx2) { const tmp = tx1; tx1 = tx2; tx2 = tmp; }
+    tmin = Math.max(tmin, tx1);
+    tmax = Math.min(tmax, tx2);
+    if (tmin > tmax) return false;
+  }
+
+  // Y slab
+  if (Math.abs(dy) < EPS) {
+    // Segment parallel to X axis: must already be within Y slab
+    if (y1 < minY || y1 > maxY) return false;
+  } else {
+    const invDy = 1 / dy;
+    let ty1 = (minY - y1) * invDy;
+    let ty2 = (maxY - y1) * invDy;
+    if (ty1 > ty2) { const tmp = ty1; ty1 = ty2; ty2 = tmp; }
+    tmin = Math.max(tmin, ty1);
+    tmax = Math.min(tmax, ty2);
+    if (tmin > tmax) return false;
+  }
+
+  return true;
+}
+
 
   function clip(p, q) {
     if (Math.abs(p) < 1e-12) {
