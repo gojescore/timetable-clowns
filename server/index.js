@@ -42,11 +42,15 @@ const MACHINE_HALF = 10;
 
 // Shooting / bullets
 const BULLET_SPEED = 780;
-// ✅ You tuned this and confirmed it works for you
+
+// You confirmed 2.0 works for you (range ≈ 1560px at 780px/s)
 const BULLET_TTL = 2.0;
 
-// Bullet hit radii
+// Separate radii for nicer tuning
 const BULLET_HIT_R_WALL = 4;
+const BULLET_HIT_R_MACHINE = 6;
+
+// Player hit radius tuning
 const CAKE_HIT_R_PLAYER = 12;
 
 const FIRE_COOLDOWN = 0.5;
@@ -228,6 +232,7 @@ function findNearbyMachine(game, x, y, radius) {
   return best;
 }
 
+// Sweep segment vs circle (player hits)
 function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -241,9 +246,9 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
   return dist2(px, py, cx, cy) <= r * r;
 }
 
-// ✅ Swept segment vs AABB (Liang–Barsky style clip)
-// This prevents fast bullets from "skipping through" walls/machines.
-function segmentHitsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
+// ✅ Sweep segment vs expanded AABB (for wall/machine hits)
+function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
+  // Liang–Barsky style segment clip against rect.
   const dx = x2 - x1;
   const dy = y2 - y1;
 
@@ -251,7 +256,10 @@ function segmentHitsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
   let t1 = 1;
 
   function clip(p, q) {
-    if (Math.abs(p) < 1e-9) return q >= 0;
+    if (Math.abs(p) < 1e-12) {
+      // Line parallel to this boundary
+      return q >= 0;
+    }
     const r = q / p;
     if (p < 0) {
       if (r > t1) return false;
@@ -263,15 +271,16 @@ function segmentHitsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
     return true;
   }
 
-  // x in [rx, rx+rw]
-  if (!clip(-dx, x1 - rx)) return false;
-  if (!clip(dx, rx + rw - x1)) return false;
+  // Left: x >= rx  -> (x1 + t dx) - rx >= 0 -> t dx >= rx - x1
+  if (!clip( dx, (rx) - x1)) return false;
+  // Right: x <= rx+rw -> (rx+rw) - (x1 + t dx) >= 0 -> -t dx >= x1 - (rx+rw)
+  if (!clip(-dx, x1 - (rx + rw))) return false;
+  // Top: y >= ry
+  if (!clip( dy, (ry) - y1)) return false;
+  // Bottom: y <= ry+rh
+  if (!clip(-dy, y1 - (ry + rh))) return false;
 
-  // y in [ry, ry+rh]
-  if (!clip(-dy, y1 - ry)) return false;
-  if (!clip(dy, ry + rh - y1)) return false;
-
-  return t1 >= t0;
+  return true;
 }
 
 function makePromptId() {
@@ -393,8 +402,7 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0,
-        vy = 0;
+      let vx = 0, vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -445,8 +453,62 @@ setInterval(() => {
         const ndx = dx / dlen;
         const ndy = dy / dlen;
 
-        const spawnX = p.x + ndx * (PLAYER_HALF + 6);
-        const spawnY = p.y + ndy * (PLAYER_HALF + 6);
+        // Spawn slightly outside player
+        let spawnX = p.x + ndx * (PLAYER_HALF + 6);
+        let spawnY = p.y + ndy * (PLAYER_HALF + 6);
+
+        // ✅ Spawn safety: if the spawn point is inside wall/machine, push it forward.
+        // If still colliding, skip spawning (instead of instant vanishing).
+        const pushSteps = 6;
+        const pushStepLen = 6;
+        let okSpawn = true;
+
+        // quick point-in-expanded-rect check using segmentIntersectsAABB with zero-length segment
+        function pointHitsExpandedWalls(x, y) {
+          if (Array.isArray(game.map?.walls)) {
+            for (const w of game.map.walls) {
+              const rx = w.x - BULLET_HIT_R_WALL;
+              const ry = w.y - BULLET_HIT_R_WALL;
+              const rw = w.w + BULLET_HIT_R_WALL * 2;
+              const rh = w.h + BULLET_HIT_R_WALL * 2;
+              if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+            }
+          }
+          return false;
+        }
+
+        function pointHitsExpandedMachines(x, y) {
+          if (Array.isArray(game.map?.machines)) {
+            for (const m of game.map.machines) {
+              const bx = m.x - MACHINE_HALF;
+              const by = m.y - MACHINE_HALF;
+              const bw = MACHINE_HALF * 2;
+              const bh = MACHINE_HALF * 2;
+
+              const rx = bx - BULLET_HIT_R_MACHINE;
+              const ry = by - BULLET_HIT_R_MACHINE;
+              const rw = bw + BULLET_HIT_R_MACHINE * 2;
+              const rh = bh + BULLET_HIT_R_MACHINE * 2;
+
+              if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+            }
+          }
+          return false;
+        }
+
+        for (let k = 0; k < pushSteps; k++) {
+          const bad = pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
+          if (!bad) break;
+          spawnX += ndx * pushStepLen;
+          spawnY += ndy * pushStepLen;
+          if (k === pushSteps - 1) okSpawn = false;
+        }
+
+        if (!okSpawn) {
+          // Don’t consume ammo; treat like “blocked shot”
+          p.fireCd = FIRE_COOLDOWN;
+          continue;
+        }
 
         const b = {
           id: makeBulletId(),
@@ -484,7 +546,7 @@ setInterval(() => {
       }
 
       const travel = BULLET_SPEED * dt;
-      const maxStep = 10;
+      const maxStep = 10; // keep this small-ish so player sweeps stay reliable too
       const steps = Math.max(1, Math.ceil(travel / maxStep));
       const stepDt = dt / steps;
 
@@ -500,58 +562,58 @@ setInterval(() => {
         b.x = nextX;
         b.y = nextY;
 
-        // out of world -> remove
+        // arena bounds
         if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
 
-        // ✅ wall hit (SWEPT segment vs expanded wall AABB)
+        // ✅ WALL HIT (swept segment vs expanded wall rect)
+        let hitWall = false;
         if (Array.isArray(game.map?.walls)) {
-          let hitWall = false;
           for (const w of game.map.walls) {
-            const ex = w.x - BULLET_HIT_R_WALL;
-            const ey = w.y - BULLET_HIT_R_WALL;
-            const ew = w.w + BULLET_HIT_R_WALL * 2;
-            const eh = w.h + BULLET_HIT_R_WALL * 2;
+            const rx = w.x - BULLET_HIT_R_WALL;
+            const ry = w.y - BULLET_HIT_R_WALL;
+            const rw = w.w + BULLET_HIT_R_WALL * 2;
+            const rh = w.h + BULLET_HIT_R_WALL * 2;
 
-            if (segmentHitsAABB(prevX, prevY, nextX, nextY, ex, ey, ew, eh)) {
+            if (segmentIntersectsAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh)) {
               hitWall = true;
               break;
             }
           }
-          if (hitWall) {
-            game.bullets.splice(i, 1);
-            removed = true;
-            break;
-          }
+        }
+        if (hitWall) {
+          game.bullets.splice(i, 1);
+          removed = true;
+          break;
         }
 
-        // ✅ machine hit (SWEPT segment vs expanded machine AABB)
+        // ✅ MACHINE HIT (swept segment vs expanded machine rect)
+        let hitMachine = false;
         if (Array.isArray(game.map?.machines)) {
-          let hitMachine = false;
           for (const m of game.map.machines) {
             const bx = m.x - MACHINE_HALF;
             const by = m.y - MACHINE_HALF;
             const bw = MACHINE_HALF * 2;
             const bh = MACHINE_HALF * 2;
 
-            const ex = bx - BULLET_HIT_R_WALL;
-            const ey = by - BULLET_HIT_R_WALL;
-            const ew = bw + BULLET_HIT_R_WALL * 2;
-            const eh = bh + BULLET_HIT_R_WALL * 2;
+            const rx = bx - BULLET_HIT_R_MACHINE;
+            const ry = by - BULLET_HIT_R_MACHINE;
+            const rw = bw + BULLET_HIT_R_MACHINE * 2;
+            const rh = bh + BULLET_HIT_R_MACHINE * 2;
 
-            if (segmentHitsAABB(prevX, prevY, nextX, nextY, ex, ey, ew, eh)) {
+            if (segmentIntersectsAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh)) {
               hitMachine = true;
               break;
             }
           }
-          if (hitMachine) {
-            game.bullets.splice(i, 1);
-            removed = true;
-            break;
-          }
+        }
+        if (hitMachine) {
+          game.bullets.splice(i, 1);
+          removed = true;
+          break;
         }
 
         // player hit (segment sweep)
@@ -569,11 +631,7 @@ setInterval(() => {
                 const shooter = game.players.get(b.ownerId);
                 shooterTeam = shooter ? shooter.teamId : shooterTeam;
               }
-              if (
-                shooterTeam !== undefined &&
-                shooterTeam !== null &&
-                p.teamId === shooterTeam
-              ) {
+              if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) {
                 continue;
               }
             }
@@ -1038,8 +1096,7 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id)
-      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1110,8 +1167,7 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id)
-      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
