@@ -208,3 +208,177 @@ Client renders upgrades from `STATE_SNAPSHOT.players[].upgrades` in UI-ready sha
 Client input payload:
 ```js
 { up:boolean, down:boolean, left:boolean, right:boolean, fire:boolean }
+
+4) Data model (canonical)
+4.1 Map
+
+world: { w, h }
+
+walls: [{ x, y, w, h }, ...]
+
+machines: [{ id, num, x, y }, ...] where x,y are centers
+
+Optional: spawn metadata for UI (server still sends respawn options explicitly)
+
+4.2 Player (snapshot shape)
+
+Minimum fields used by client:
+
+id, name, teamId
+
+x, y
+
+dirX, dirY
+
+nextMachineNum
+
+alive
+
+money
+
+cakes
+
+invulnUntil
+
+upgrades: { slots, permanent }
+
+4.3 Snapshot (STATE_SNAPSHOT)
+
+Client expects:
+
+players[] (required)
+
+world (optional but recommended)
+
+bullets[] (optional)
+
+pickups[] (optional)
+
+Recommended bullet shape:
+
+{ id?, ownerId, ownerTeamId?, x, y }
+
+Recommended pickup shape:
+
+{ id, type:"money", x, y, amount? }
+
+5) Networking events (canonical)
+5.1 Connection / identity
+
+Server → Client
+
+WELCOME { playerId }
+
+Client → Server
+
+hello { name }
+
+5.2 Lobby flow
+
+Client → Server
+
+createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode }
+
+joinGame { gameCode }
+
+assignTeam { playerId, teamId } (host only, teams mode)
+
+startGame {}
+
+Server → Client
+
+GAME_CREATED { gameCode }
+
+JOIN_SUCCESS { gameCode, players, teams?, settings }
+
+JOIN_FAILED { reason }
+
+LOBBY_UPDATE { players, settings }
+
+GAME_STARTED { map, settings }
+
+5.3 In-game
+
+Client → Server
+
+input InputState
+
+tryInteract {}
+
+submitAnswer { promptId, answer }
+
+chooseUpgrade { offerId, upgradeId }
+
+chooseUpgradeReplace { offerId, upgradeId, dropId }
+
+declineUpgrade { offerId }
+
+useUpgradeSlot { slotIndex }
+
+chooseRespawn { spawnId }
+
+Server → Client
+
+STATE_SNAPSHOT Snapshot
+
+MATH_PROMPT { promptId, base, machineNum }
+
+ANSWER_RESULT { ok, correct? }
+
+INTERACT_DENIED { reason, nextMachineNum?, tried? }
+
+UPGRADE_OFFER { offerId, options[] }
+
+UPGRADE_RESULT { ok, reason?, upgrades?, requested?, slots?, chosen?, applied?, need?, money? }
+
+UPGRADE_USED { ok, reason?, used?, upgrades?, money?, paid?, need? }
+
+UPGRADE_DECLINED { ok, reason? }
+
+RESPAWN_OPTIONS { options[] }
+
+RESPAWN_RESULT { ok, reason?, spawnId? }
+
+Optional: PLAYER_DIED { playerId }
+
+6) Constants (defaults)
+
+INTERACT_RADIUS = 60
+
+Player size: 28×28 (PLAYER_HALF = 14)
+
+Machine draw size: 20×20 (MACHINE_HALF = 10) for visuals
+
+Tick rate: 20 Hz (server)
+
+Fog-of-war is client-only (cone length/angle are client tuning)
+
+Upgrades:
+
+MAX_PERM_SLOTS = 3
+
+MAX_CONS_SLOTS = 3
+
+Combat:
+
+MAX_CAKES = 7
+
+RESPAWN_INVULN = 0.6s (server sets invulnUntil in ms epoch)
+
+Bullet TTL + speed are server-defined
+
+7) “Do not break” checklist
+
+STATE_SNAPSHOT must always include players[].
+
+Each player must include:
+
+id,x,y,dirX,dirY,alive,money,upgrades,cakes,invulnUntil
+
+GAME_STARTED.map.walls must be rectangles {x,y,w,h} (client fog uses them).
+
+Machine prompt uses promptId roundtrip.
+
+Upgrade offer uses offerId roundtrip.
+
+Respawn uses spawnId from server-provided options.
