@@ -42,15 +42,10 @@ const MACHINE_HALF = 10;
 
 // Shooting / bullets
 const BULLET_SPEED = 780;
-
-// ✅ FIX: TTL was too short for a 2400px-wide world.
-// Old: 1.2s => ~936px max range. New: 3.0s => ~2340px max range.
+// ✅ You tuned this and confirmed it works for you
 const BULLET_TTL = 2.0;
 
-// ✅ Optional safety: ignore wall/machine collision for first 50ms
-// to avoid "spawn inside solid => instant delete" when hugging walls.
-const BULLET_SPAWN_GRACE = 0.05; // seconds
-
+// Bullet hit radii
 const BULLET_HIT_R_WALL = 4;
 const CAKE_HIT_R_PLAYER = 12;
 
@@ -184,7 +179,6 @@ function snapshotForGame(game) {
         info: upgrades.getUpgradeInfo(s.id),
       }));
 
-      // ✅ include usesLeft (client UI needs it)
       const cons = (p.upgrades.consSlots || []).map((s) => ({
         id: s.id,
         usesLeft: Number.isFinite(s.usesLeft) ? s.usesLeft : undefined,
@@ -201,10 +195,7 @@ function snapshotForGame(game) {
         dirY: p.dirY,
         nextMachineNum: p.nextMachineNum,
         money: typeof p.money === "number" ? p.money : 0,
-
-        // Keep client shape: permanent + slots
         upgrades: { permanent: perm, slots: cons },
-
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
@@ -248,6 +239,39 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
   const px = x1 + t * dx;
   const py = y1 + t * dy;
   return dist2(px, py, cx, cy) <= r * r;
+}
+
+// ✅ Swept segment vs AABB (Liang–Barsky style clip)
+// This prevents fast bullets from "skipping through" walls/machines.
+function segmentHitsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  let t0 = 0;
+  let t1 = 1;
+
+  function clip(p, q) {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  }
+
+  // x in [rx, rx+rw]
+  if (!clip(-dx, x1 - rx)) return false;
+  if (!clip(dx, rx + rw - x1)) return false;
+
+  // y in [ry, ry+rh]
+  if (!clip(-dy, y1 - ry)) return false;
+  if (!clip(dy, ry + rh - y1)) return false;
+
+  return t1 >= t0;
 }
 
 function makePromptId() {
@@ -369,7 +393,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -420,13 +445,8 @@ setInterval(() => {
         const ndx = dx / dlen;
         const ndy = dy / dlen;
 
-        // ✅ spawn in front of player
-        let spawnX = p.x + ndx * (PLAYER_HALF + 6);
-        let spawnY = p.y + ndy * (PLAYER_HALF + 6);
-
-        // ✅ clamp spawn inside world so it can't be insta-culled
-        spawnX = clamp(spawnX, 1, world.w - 1);
-        spawnY = clamp(spawnY, 1, world.h - 1);
+        const spawnX = p.x + ndx * (PLAYER_HALF + 6);
+        const spawnY = p.y + ndy * (PLAYER_HALF + 6);
 
         const b = {
           id: makeBulletId(),
@@ -437,9 +457,6 @@ setInterval(() => {
           vx: ndx * BULLET_SPEED,
           vy: ndy * BULLET_SPEED,
           ttl: BULLET_TTL,
-
-          // ✅ track age for grace collision window
-          age: 0,
         };
 
         if (!Array.isArray(game.bullets)) game.bullets = [];
@@ -483,32 +500,25 @@ setInterval(() => {
         b.x = nextX;
         b.y = nextY;
 
-        // ✅ age update (used for grace period)
-        b.age = (Number.isFinite(b.age) ? b.age : 0) + stepDt;
-
+        // out of world -> remove
         if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
 
-        // ✅ grace period: skip wall/machine collision very briefly
-        const inGrace = b.age < BULLET_SPAWN_GRACE;
-
-        // wall hit
-        if (!inGrace) {
+        // ✅ wall hit (SWEPT segment vs expanded wall AABB)
+        if (Array.isArray(game.map?.walls)) {
           let hitWall = false;
-          if (Array.isArray(game.map?.walls)) {
-            for (const w of game.map.walls) {
-              if (
-                b.x >= w.x - BULLET_HIT_R_WALL &&
-                b.x <= w.x + w.w + BULLET_HIT_R_WALL &&
-                b.y >= w.y - BULLET_HIT_R_WALL &&
-                b.y <= w.y + w.h + BULLET_HIT_R_WALL
-              ) {
-                hitWall = true;
-                break;
-              }
+          for (const w of game.map.walls) {
+            const ex = w.x - BULLET_HIT_R_WALL;
+            const ey = w.y - BULLET_HIT_R_WALL;
+            const ew = w.w + BULLET_HIT_R_WALL * 2;
+            const eh = w.h + BULLET_HIT_R_WALL * 2;
+
+            if (segmentHitsAABB(prevX, prevY, nextX, nextY, ex, ey, ew, eh)) {
+              hitWall = true;
+              break;
             }
           }
           if (hitWall) {
@@ -518,25 +528,23 @@ setInterval(() => {
           }
         }
 
-        // machine hit
-        if (!inGrace) {
+        // ✅ machine hit (SWEPT segment vs expanded machine AABB)
+        if (Array.isArray(game.map?.machines)) {
           let hitMachine = false;
-          if (Array.isArray(game.map?.machines)) {
-            for (const m of game.map.machines) {
-              const bx = m.x - MACHINE_HALF;
-              const by = m.y - MACHINE_HALF;
-              const bw = MACHINE_HALF * 2;
-              const bh = MACHINE_HALF * 2;
+          for (const m of game.map.machines) {
+            const bx = m.x - MACHINE_HALF;
+            const by = m.y - MACHINE_HALF;
+            const bw = MACHINE_HALF * 2;
+            const bh = MACHINE_HALF * 2;
 
-              if (
-                b.x >= bx - BULLET_HIT_R_WALL &&
-                b.x <= bx + bw + BULLET_HIT_R_WALL &&
-                b.y >= by - BULLET_HIT_R_WALL &&
-                b.y <= by + bh + BULLET_HIT_R_WALL
-              ) {
-                hitMachine = true;
-                break;
-              }
+            const ex = bx - BULLET_HIT_R_WALL;
+            const ey = by - BULLET_HIT_R_WALL;
+            const ew = bw + BULLET_HIT_R_WALL * 2;
+            const eh = bh + BULLET_HIT_R_WALL * 2;
+
+            if (segmentHitsAABB(prevX, prevY, nextX, nextY, ex, ey, ew, eh)) {
+              hitMachine = true;
+              break;
             }
           }
           if (hitMachine) {
@@ -1030,7 +1038,8 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id)
+      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1101,7 +1110,8 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id)
+      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1182,7 +1192,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // ✅ Respawn handler
   socket.on("chooseRespawn", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
