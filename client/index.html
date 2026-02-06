@@ -608,6 +608,16 @@
     // ✅ invuln UI tuning
     const INVULN_SHOW_THRESHOLD_MS = 80; // show only if > 0.08s remaining
 
+    // ✅ invuln blink + shield ring tuning (client-only)
+    const INVULN_BLINK_MS = 120; // blink speed
+    const INVULN_ALPHA_LOW = 0.25; // faint phase alpha
+    const SHIELD_RING_PAD = 6; // ring outside player half-size
+
+    function isInvuln(p, nowMs) {
+      if (!p || typeof p.invulnUntil !== "number") return false;
+      return (p.invulnUntil - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+    }
+
     // speech bubble
     let bubble = null;
     function showBubble(text, ms = 1600) {
@@ -1782,34 +1792,51 @@
     function drawPlayerBody(p, camX, camY, isMe){
       if (p.alive === false) return;
 
+      const nowMs = Date.now();
+      const invuln = isInvuln(p, nowMs);
+
       const px = p.x - camX;
       const py = p.y - camY;
 
-      // ✅ invulnerability blink (server invulnUntil)
-      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-      const invuln = (until - Date.now()) > INVULN_SHOW_THRESHOLD_MS;
+      ctx.save();
 
-      // Blink by skipping some frames (simple + cheap)
-      const blinkOff = invuln && ((Date.now() % 240) < 110);
-      if (blinkOff) return;
+      // Blink by alpha (safer than skipping draw — avoids "teleport feel")
+      if (invuln) {
+        const blinkOn = (Math.floor(nowMs / INVULN_BLINK_MS) % 2) === 0;
+        ctx.globalAlpha = blinkOn ? 1 : INVULN_ALPHA_LOW;
+      }
 
       ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
       ctx.fillRect(px - 14, py - 14, 28, 28);
 
-      // outline when invuln (more readable than full alpha)
-      if (invuln) {
-        ctx.save();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(34,197,94,.95)";
-        ctx.strokeRect(px - 14, py - 14, 28, 28);
-        ctx.restore();
-      }
-
+      // Direction line (keep consistent with alpha)
       ctx.strokeStyle = "rgba(0,0,0,.35)";
       ctx.beginPath();
       ctx.moveTo(px, py);
       ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
       ctx.stroke();
+
+      // Shield outline + ring (always visible)
+      if (invuln) {
+        ctx.globalAlpha = 1;
+
+        // outline
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(34,197,94,.95)";
+        ctx.strokeRect(px - 14, py - 14, 28, 28);
+
+        // ring
+        const half = 14;
+        const r = half + SHIELD_RING_PAD;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(34,197,94,.75)";
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI*2);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      ctx.lineWidth = 1;
     }
 
     function drawPlayerLabel(p, camX, camY){
