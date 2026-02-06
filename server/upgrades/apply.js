@@ -1,29 +1,4 @@
-// server/upgrades/apply.js
-// Minimal rules for storing upgrades + offering from a fixed pool.
-// Effects come later.
 
-let C = { MAX_NONPERM_SLOTS: 3 };
-try {
-  C = require("../shared/constants");
-} catch (_) {
-  // fallback stays at 3
-}
-
-// IMPORTANT: avoid destructuring at module load time (helps with circular deps).
-function defs() {
-  return require("./definitions");
-}
-
-function ensureUpgradeState(player) {
-  if (!player.upgrades) {
-    player.upgrades = {
-      permanent: [], // array of ids
-      slots: [],     // array of { id, usesLeft }
-    };
-  }
-  if (!Array.isArray(player.upgrades.permanent)) player.upgrades.permanent = [];
-  if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
-}
 // server/upgrades/apply.js
 // Minimal rules for storing upgrades + offering from a fixed pool.
 // Effects come later.
