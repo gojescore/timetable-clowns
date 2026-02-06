@@ -580,7 +580,9 @@
     let pendingReplace = null;
     let activeRespawn = null;
 
+    // UI expects the SNAPSHOT shape: { permanent:[{id,count,info}], slots:[{id,info}] }
     let myServerUpgrades = { permanent: [], slots: [] };
+
     const INTERACT_RADIUS = 60;
 
     // ✅ cakes config (HUD starts with 7)
@@ -611,6 +613,7 @@
     updateHostModeUI();
 
     socket.on("connect", () => el.status.textContent = "Connected.");
+
     socket.on("WELCOME", ({ playerId }) => {
       myId = playerId;
       el.meId.textContent = playerId.slice(0,6);
@@ -663,7 +666,7 @@
           ? "All vs All: teams are automatic."
           : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF."));
 
-      renderPlayers(players);
+      renderPlayers(Array.isArray(players) ? players : []);
     });
 
     socket.on("JOIN_FAILED", ({ reason }) => {
@@ -672,7 +675,7 @@
 
     socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
       if (s) settings = s;
-      renderPlayers(players);
+      renderPlayers(Array.isArray(players) ? players : []);
     });
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
@@ -707,6 +710,7 @@
         el.hudLife.textContent = me.alive === false ? "0" : "1";
         el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
+        // ✅ IMPORTANT: only trust upgrades from STATE_SNAPSHOT (it contains info + correct shape)
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
@@ -877,10 +881,8 @@
         el.hudMoney.textContent = "$" + p.money;
       }
 
-      if (p.upgrades) {
-        myServerUpgrades = p.upgrades;
-        renderUpgradeBar();
-      }
+      // ✅ IMPORTANT: do NOT overwrite myServerUpgrades from UPGRADE_USED.
+      // Server sends an internal upgrade shape here; the next STATE_SNAPSHOT contains the correct UI shape + info.
 
       const name = p.used?.name || p.used?.id || "Upgrade";
       if (typeof p.paid === "number") showBubble(`Used: ${name} (-$${p.paid})`, 1300);
@@ -1018,6 +1020,18 @@
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
+    // ✅ keep client + server consistent if you listen for decline confirmation
+    socket.on("UPGRADE_DECLINED", (p) => {
+      if (!p) return;
+      if (p.ok) {
+        // If overlay is open, close it (safe no-op if already closed)
+        activeOfferId = null;
+        el.upgradeOverlay.classList.remove("show");
+        el.upgradeList.innerHTML = "";
+        el.upgradeMsg.textContent = "";
+      }
+    });
+
     function openReplaceAsk(payload) {
       pendingReplace = {
         stage: "ask",
@@ -1136,10 +1150,8 @@
           el.hudMoney.textContent = "$" + p.money;
         }
 
-        if (p.upgrades) {
-          myServerUpgrades = p.upgrades;
-          renderUpgradeBar();
-        }
+        // ✅ IMPORTANT: do NOT overwrite myServerUpgrades from UPGRADE_RESULT.
+        // Server sends internal upgrade storage shape; next STATE_SNAPSHOT has correct UI shape + info.
 
         closeDropPicker();
         setTimeout(closeUpgradeOffer, 450);
