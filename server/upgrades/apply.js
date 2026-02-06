@@ -1,9 +1,12 @@
 // server/upgrades/apply.js
 // Rules for storing upgrades + offering from a fixed pool.
-// IMPORTANT RULE UPDATE:
-// - Non-permanent (consumable) upgrades do NOT have usesLeft.
-// - They live in max 3 slots and cost money each time they are used (useCost).
-// - If slots are full, player can replace an existing slot item with the new one.
+// Effects come later.
+//
+// IMPORTANT RULES:
+// - Consumables: max 3 slots, NO duplicates by id.
+// - Permanents: stacking allowed (duplicates allowed).
+// - Money checks for permanent acquisition are handled by server/index.js,
+//   because it owns player.money and event responses.
 
 let C = { MAX_NONPERM_SLOTS: 3 };
 try {
@@ -20,8 +23,8 @@ function defs() {
 function ensureUpgradeState(player) {
   if (!player.upgrades) {
     player.upgrades = {
-      permanent: [], // array of ids
-      slots: [], // array of { id }
+      permanent: [], // array of ids (stacking allowed)
+      slots: [], // array of { id } (NO duplicates)
     };
   }
   if (!Array.isArray(player.upgrades.permanent)) player.upgrades.permanent = [];
@@ -52,7 +55,7 @@ function pickRandomUpgradePool(n = 9) {
   return arr.slice(0, want);
 }
 
-// Build offer options from a provided pool (fixed 9). If pool missing, fallback to all.
+// Build offer options from a provided pool. If pool missing, fallback to all.
 function buildOfferOptions(pool) {
   const list = Array.isArray(pool) && pool.length ? pool : getAllUpgradesSafe();
 
@@ -61,8 +64,8 @@ function buildOfferOptions(pool) {
     name: u.name,
     kind: u.kind,
     desc: u.desc || "",
-    // useCost is used when the upgrade is activated (server checks money then deducts)
     useCost: Number.isFinite(u.useCost) ? u.useCost : 0,
+    acquireCost: Number.isFinite(u.acquireCost) ? u.acquireCost : 0,
   }));
 }
 
@@ -75,17 +78,27 @@ function getUpgradeInfo(id) {
     kind: u.kind,
     desc: u.desc || "",
     useCost: Number.isFinite(u.useCost) ? u.useCost : 0,
+    acquireCost: Number.isFinite(u.acquireCost) ? u.acquireCost : 0,
   };
+}
+
+function hasConsumable(player, upgradeId) {
+  ensureUpgradeState(player);
+  const key = String(upgradeId || "");
+  return player.upgrades.slots.some((s) => String(s?.id || "") === key);
 }
 
 function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
   if (upgrade.kind === "permanent") {
-    if (player.upgrades.permanent.includes(upgrade.id)) {
-      return { ok: false, reason: "already_have" };
-    }
+    // stacking allowed, money check handled elsewhere
     return { ok: true };
+  }
+
+  // consumable: no duplicates
+  if (hasConsumable(player, upgrade.id)) {
+    return { ok: false, reason: "already_have" };
   }
 
   const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
@@ -95,7 +108,8 @@ function canTakeUpgrade(player, upgrade) {
   return { ok: true, mode: "add_new" };
 }
 
-// Apply selection when there IS room (or permanent)
+// Apply selection when there IS room (or permanent).
+// NOTE: permanent stacking allowed; consumable duplicates denied.
 function applyUpgradeSelection(player, upgradeId) {
   ensureUpgradeState(player);
 
@@ -114,7 +128,8 @@ function applyUpgradeSelection(player, upgradeId) {
   return { ok: true, applied: { kind: "consumable_add", id: up.id } };
 }
 
-// Replace an existing slot item with the new upgrade (server-enforced)
+// Replace an existing slot item with the new upgrade (server-enforced).
+// Still enforces "no duplicate consumables" across slots.
 function applyUpgradeReplace(player, upgradeId, dropId) {
   ensureUpgradeState(player);
 
@@ -125,6 +140,15 @@ function applyUpgradeReplace(player, upgradeId, dropId) {
   const dropKey = String(dropId || "");
   const idx = player.upgrades.slots.findIndex((s) => String(s?.id || "") === dropKey);
   if (idx === -1) return { ok: false, reason: "drop_not_found" };
+
+  // If trying to "replace" with the same id, treat as already_have (no-op / duplicate)
+  if (String(up.id) === dropKey) return { ok: false, reason: "already_have" };
+
+  // Enforce no duplicate consumables in OTHER slots
+  const alreadyElsewhere = player.upgrades.slots.some(
+    (s, i) => i !== idx && String(s?.id || "") === String(up.id)
+  );
+  if (alreadyElsewhere) return { ok: false, reason: "already_have" };
 
   player.upgrades.slots[idx] = { id: up.id };
   return {
