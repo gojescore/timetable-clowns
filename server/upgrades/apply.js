@@ -1,21 +1,27 @@
 // server/upgrades/apply.js
-// Rules for storing upgrades + offering from a fixed pool.
-// Effects come later.
+// Slot rules for upgrades (effects later).
 //
-// IMPORTANT RULES:
-// - Consumables: max 3 slots, NO duplicates by id.
-// - Permanents: stacking allowed (duplicates allowed).
-// - Money checks for permanent acquisition are handled by server/index.js,
-//   because it owns player.money and event responses.
+// IMPORTANT MODEL:
+// - player.upgrades.permSlots: max 3 entries, each { id, count }.
+//   Stacking = increment count for existing id.
+// - player.upgrades.consSlots: max 3 entries, each { id }.
+//   No duplicates by id.
+//
+// Money checks:
+// - Permanent acquisition cost is enforced in server/index.js (it owns player.money).
+// - Consumable use cost is enforced in server/index.js (useUpgradeSlot).
 
-let C = { MAX_NONPERM_SLOTS: 3 };
+let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
-  C = require("../shared/constants");
+  const shared = require("../shared/constants");
+  if (Number.isFinite(shared.MAX_PERM_SLOTS)) C.MAX_PERM_SLOTS = shared.MAX_PERM_SLOTS;
+  if (Number.isFinite(shared.MAX_CONS_SLOTS)) C.MAX_CONS_SLOTS = shared.MAX_CONS_SLOTS;
+  // Backward compat if you kept only MAX_NONPERM_SLOTS:
+  if (Number.isFinite(shared.MAX_NONPERM_SLOTS)) C.MAX_CONS_SLOTS = shared.MAX_NONPERM_SLOTS;
 } catch (_) {
-  // fallback stays at 3
+  // defaults stay
 }
 
-// IMPORTANT: avoid destructuring at module load time (helps with circular deps).
 function defs() {
   return require("./definitions");
 }
@@ -23,12 +29,12 @@ function defs() {
 function ensureUpgradeState(player) {
   if (!player.upgrades) {
     player.upgrades = {
-      permanent: [], // array of ids (stacking allowed)
-      slots: [], // array of { id } (NO duplicates)
+      permSlots: [], // [{id, count}]
+      consSlots: [], // [{id}]
     };
   }
-  if (!Array.isArray(player.upgrades.permanent)) player.upgrades.permanent = [];
-  if (!Array.isArray(player.upgrades.slots)) player.upgrades.slots = [];
+  if (!Array.isArray(player.upgrades.permSlots)) player.upgrades.permSlots = [];
+  if (!Array.isArray(player.upgrades.consSlots)) player.upgrades.consSlots = [];
 }
 
 function getUpgradeByIdSafe(id) {
@@ -46,7 +52,6 @@ function pickRandomUpgradePool(n = 9) {
   const all = getAllUpgradesSafe();
   const want = Math.max(0, Math.min(all.length, Math.floor(Number(n) || 0)));
 
-  // Fisher–Yates shuffle copy
   const arr = all.slice();
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -55,10 +60,8 @@ function pickRandomUpgradePool(n = 9) {
   return arr.slice(0, want);
 }
 
-// Build offer options from a provided pool. If pool missing, fallback to all.
 function buildOfferOptions(pool) {
   const list = Array.isArray(pool) && pool.length ? pool : getAllUpgradesSafe();
-
   return list.map((u) => ({
     id: u.id,
     name: u.name,
@@ -85,15 +88,29 @@ function getUpgradeInfo(id) {
 function hasConsumable(player, upgradeId) {
   ensureUpgradeState(player);
   const key = String(upgradeId || "");
-  return player.upgrades.slots.some((s) => String(s?.id || "") === key);
+  return player.upgrades.consSlots.some((s) => String(s?.id || "") === key);
+}
+
+function findPermanentSlot(player, upgradeId) {
+  ensureUpgradeState(player);
+  const key = String(upgradeId || "");
+  return player.upgrades.permSlots.findIndex((s) => String(s?.id || "") === key);
 }
 
 function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
   if (upgrade.kind === "permanent") {
-    // stacking allowed, money check handled elsewhere
-    return { ok: true };
+    // stacking always allowed if already present
+    const idx = findPermanentSlot(player, upgrade.id);
+    if (idx >= 0) return { ok: true, mode: "perm_stack" };
+
+    // otherwise must have a free permanent slot
+    const maxPerm = Number.isFinite(C.MAX_PERM_SLOTS) ? C.MAX_PERM_SLOTS : 3;
+    if (player.upgrades.permSlots.length >= maxPerm) {
+      return { ok: false, reason: "perm_slots_full" };
+    }
+    return { ok: true, mode: "perm_new" };
   }
 
   // consumable: no duplicates
@@ -101,15 +118,17 @@ function canTakeUpgrade(player, upgrade) {
     return { ok: false, reason: "already_have" };
   }
 
-  const maxSlots = Number.isFinite(C.MAX_NONPERM_SLOTS) ? C.MAX_NONPERM_SLOTS : 3;
-  if (player.upgrades.slots.length >= maxSlots) {
+  const maxCons = Number.isFinite(C.MAX_CONS_SLOTS) ? C.MAX_CONS_SLOTS : 3;
+  if (player.upgrades.consSlots.length >= maxCons) {
     return { ok: false, reason: "slots_full" };
   }
-  return { ok: true, mode: "add_new" };
+
+  return { ok: true, mode: "cons_add" };
 }
 
-// Apply selection when there IS room (or permanent).
-// NOTE: permanent stacking allowed; consumable duplicates denied.
+// Apply selection (storage only).
+// Permanent stacking increments count.
+// Consumable adds into consSlots (no duplicates).
 function applyUpgradeSelection(player, upgradeId) {
   ensureUpgradeState(player);
 
@@ -120,41 +139,43 @@ function applyUpgradeSelection(player, upgradeId) {
   if (!check.ok) return { ok: false, reason: check.reason };
 
   if (up.kind === "permanent") {
-    player.upgrades.permanent.push(up.id);
-    return { ok: true, applied: { kind: "permanent", id: up.id } };
+    const idx = findPermanentSlot(player, up.id);
+    if (idx >= 0) {
+      const cur = player.upgrades.permSlots[idx];
+      cur.count = Number.isFinite(cur.count) ? cur.count + 1 : 2;
+      return { ok: true, applied: { kind: "permanent_stack", id: up.id, count: cur.count } };
+    }
+    player.upgrades.permSlots.push({ id: up.id, count: 1 });
+    return { ok: true, applied: { kind: "permanent_new", id: up.id, count: 1 } };
   }
 
-  player.upgrades.slots.push({ id: up.id });
+  player.upgrades.consSlots.push({ id: up.id });
   return { ok: true, applied: { kind: "consumable_add", id: up.id } };
 }
 
-// Replace an existing slot item with the new upgrade (server-enforced).
-// Still enforces "no duplicate consumables" across slots.
-function applyUpgradeReplace(player, upgradeId, dropId) {
+// Replace a consumable slot item with a new consumable.
+// dropId is the EXISTING consumable id to drop.
+function applyConsumableReplace(player, upgradeId, dropId) {
   ensureUpgradeState(player);
 
   const up = getUpgradeByIdSafe(upgradeId);
   if (!up) return { ok: false, reason: "invalid_upgrade" };
-  if (up.kind === "permanent") return { ok: false, reason: "not_consumable" };
+  if (up.kind !== "consumable") return { ok: false, reason: "not_consumable" };
 
   const dropKey = String(dropId || "");
-  const idx = player.upgrades.slots.findIndex((s) => String(s?.id || "") === dropKey);
+  const idx = player.upgrades.consSlots.findIndex((s) => String(s?.id || "") === dropKey);
   if (idx === -1) return { ok: false, reason: "drop_not_found" };
 
-  // If trying to "replace" with the same id, treat as already_have (no-op / duplicate)
   if (String(up.id) === dropKey) return { ok: false, reason: "already_have" };
 
-  // Enforce no duplicate consumables in OTHER slots
-  const alreadyElsewhere = player.upgrades.slots.some(
+  // enforce no duplicates in other slots
+  const alreadyElsewhere = player.upgrades.consSlots.some(
     (s, i) => i !== idx && String(s?.id || "") === String(up.id)
   );
   if (alreadyElsewhere) return { ok: false, reason: "already_have" };
 
-  player.upgrades.slots[idx] = { id: up.id };
-  return {
-    ok: true,
-    applied: { kind: "consumable_replace", id: up.id, dropped: dropKey },
-  };
+  player.upgrades.consSlots[idx] = { id: up.id };
+  return { ok: true, applied: { kind: "consumable_replace", id: up.id, dropped: dropKey } };
 }
 
 module.exports = {
@@ -162,6 +183,11 @@ module.exports = {
   pickRandomUpgradePool,
   buildOfferOptions,
   applyUpgradeSelection,
-  applyUpgradeReplace,
+  applyConsumableReplace,
   getUpgradeInfo,
+
+  // optional helpers if you ever want them elsewhere
+  canTakeUpgrade,
+  hasConsumable,
+  findPermanentSlot,
 };
