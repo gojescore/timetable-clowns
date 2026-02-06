@@ -534,7 +534,7 @@ setInterval(() => {
           if (!p.alive) continue;
           if (p.id === b.ownerId) continue;
 
-          // ✅ Friendly fire is now a lobby option (teams mode only)
+          // ✅ Friendly fire is a lobby option (teams mode only)
           if (game.settings?.mode === GAME_MODE_TEAMS) {
             const friendlyFire = !!game.settings?.friendlyFire;
             if (!friendlyFire) {
@@ -638,7 +638,7 @@ io.on("connection", (socket) => {
 
     const mapChoice = String(payload.mapChoice || "map01");
 
-    // ✅ NEW: friendly fire option (only meaningful in teams mode)
+    // ✅ friendly fire option (only meaningful in teams mode)
     const friendlyFire = mode === GAME_MODE_TEAMS ? !!payload.friendlyFire : false;
 
     const code = createUniqueCode();
@@ -652,8 +652,6 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
-
-      // ✅ fixed upgrade pool for this match (set on startGame)
       upgradePool: null,
     };
 
@@ -845,7 +843,6 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    // ✅ pick a fixed pool once per match (3x3)
     game.upgradePool = upgrades.pickRandomUpgradePool(9);
 
     const world = getWorldForGame(game);
@@ -1006,8 +1003,6 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
 
       const offerId = makeOfferId();
-
-      // ✅ build from the fixed pool (3x3)
       const options = upgrades.buildOfferOptions(game.upgradePool);
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
@@ -1127,6 +1122,29 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // ✅ Permanent stacking allowed but costs money on acquisition
+    const info = upgrades.getUpgradeInfo(upgradeId);
+    if (!info) {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "invalid_upgrade" });
+      return;
+    }
+    if (!Number.isFinite(p.money)) p.money = 0;
+
+    if (info.kind === "permanent") {
+      const cost = Number.isFinite(info.acquireCost) ? info.acquireCost : 0;
+      if (p.money < cost) {
+        socket.emit("UPGRADE_RESULT", {
+          ok: false,
+          reason: "not_enough_money",
+          need: cost,
+          money: p.money,
+          requested: info,
+        });
+        return;
+      }
+      p.money -= cost;
+    }
+
     const res = upgrades.applyUpgradeSelection(p, upgradeId);
 
     if (!res.ok && res.reason === "slots_full") {
@@ -1137,9 +1155,15 @@ io.on("connection", (socket) => {
       socket.emit("UPGRADE_RESULT", {
         ok: false,
         reason: "slots_full",
-        requested: upgrades.getUpgradeInfo(upgradeId),
+        requested: info,
         slots,
+        money: p.money,
       });
+      return;
+    }
+
+    if (!res.ok && res.reason === "already_have") {
+      socket.emit("UPGRADE_RESULT", { ok: false, reason: "already_have", requested: info });
       return;
     }
 
@@ -1150,13 +1174,12 @@ io.on("connection", (socket) => {
 
     p.pendingUpgradeOffer = null;
 
-    const chosen = upgrades.getUpgradeInfo(upgradeId);
-
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen,
+      chosen: info,
       upgrades: p.upgrades,
+      money: p.money,
     });
   });
 
@@ -1205,6 +1228,7 @@ io.on("connection", (socket) => {
       chosen: upgrades.getUpgradeInfo(upgradeId),
       upgrades: p.upgrades,
       dropped: upgrades.getUpgradeInfo(dropId),
+      money: p.money,
     });
   });
 
@@ -1269,7 +1293,6 @@ io.on("connection", (socket) => {
 
     p.money -= useCost;
 
-    // Effects come later; for now we just charge money and acknowledge the activation.
     socket.emit("UPGRADE_USED", {
       ok: true,
       used: info,
