@@ -1,384 +1,266 @@
-# Timetable Clowns — PROTOCOL (Single Source of Truth)
+# Timetable Clowns — Protocol (Single Source of Truth)
 
 This file is the canonical reference for rules, architecture, and networking for the Timetable Clowns project.
-When starting a new ChatGPT thread, paste this file + STATE_OF_THE_GAME.md + the file you are editing.
-
----
-
-## 0) Goals (non-negotiable)
-
-- Multiplayer top-down practice game for times tables.
-- Server is authoritative: movement, collisions, machines, money, upgrades, death/respawn, bullets, pickups.
-- Client sends input and renders snapshots; server decides truth.
+When starting a NEW chat thread, paste:
+1) this file (PROTOCOL.md)
+2) STATE_OF_THE_GAME.md
+3) the file currently being edited
 
 ---
 
 ## 1) Game concept
-
 A silly top-down multiplayer game for practicing times tables.
 
 - 2–12 players in one match
 - Host creates a game and gets a join code
 - Guests join using the code
 - Host selects:
-  - mode: `ffa` or `teams`
-  - teams (teams mode only): `teamCount`
+  - game mode: FFA or Teams
   - timetable base (1–10)
-  - input mode (`kb` / `kbm` / `kbm_gamepad`)
-  - map choice (`map01` or `random`)
-  - friendly fire (teams mode only): `friendlyFire` (default OFF)
-- Players move around a map with rooms and corridors
+  - teams count (Teams only)
+  - friendly fire (Teams only)
+  - input mode (kb / kbm / controller later)
+  - map choice (map01 or random)
+  - session type: Standard or Timed
+  - timed minutes (Timed only)
+- Players move around a top-down map with rooms + corridors
 - Rooms contain machines 1–10 (one per room)
-- Machines must be completed in numeric order (1 → 2 → … → 10), **per player**
+- Machines must be completed in numeric order per player (1 → 2 → … → 10)
 
 ---
 
-## 2) Core gameplay rules (server enforced)
+## 2) Core gameplay rules (must be enforced)
 
-### 2.1 Movement + collisions
-- Server tick runs at fixed rate (e.g. 20 Hz) and uses `dt`.
-- Movement uses normalized direction vector so diagonals are not faster.
-- Collision is AABB against:
-  - walls
-  - solid machines
-- World clamp uses player half-size.
+### 2.1 Machines + progression
+- Interaction key: **E**
+- Interaction allowed if player is within **INTERACT_RADIUS**
+- Each player has their own machine progression:
+  - `nextMachineNum` starts at **1**
+  - You may only interact with `nextMachineNum`
+  - Correct answer increments `nextMachineNum`
+- Machines are *not global*; one player clearing machine 3 does not clear it for others
 
-### 2.2 Machines + progression
-Interaction key: `E`
+### 2.2 Math prompts
+- Prompt shown when a player interacts with the correct machine
+- Prompt formula:
+  - `base × machineNum = ?`
+- Server is authoritative:
+  - Server generates the prompt
+  - Server validates the answer
+- On submit:
+  - Server emits `ANSWER_RESULT { ok, correct }`
+- Client behavior:
+  - Prompt overlay blocks gameplay input
+  - Enter submits, Escape closes
 
-A player can interact only if:
-- player is alive
-- within `INTERACT_RADIUS` (default 60) of machine center
-- machine not already cleared for that player
-- `machine.num === player.nextMachineNum`
+### 2.3 Money + pickups
+- Each player starts with **$100**
+- Money pickups exist in the world:
+  - pickup type: `"money"`
+  - amount default: **100**
+- Players collect money by overlapping the pickup radius (server-side)
 
-On interact success:
-- server creates a `promptId` and stores `pendingPrompt` on player
-- server emits `MATH_PROMPT { promptId, base, machineNum }`
+### 2.4 Upgrades (buy vs use)
+Upgrades come in two kinds:
 
-On answer submit:
-- server validates `promptId` matches `pendingPrompt.id`
+**A) Permanent**
+- Purchased once and then stored as “permanent”
+- Can stack: same permanent can have `count: 2`, `count: 3`, etc.
+- Limited to **3 permanent types** at a time (max)
+- Cost field:
+  - `acquireCost`
 
-If correct:
-- mark machine cleared (per player)
-- increment `nextMachineNum` up to 10
-- award money and/or spawn pickups (economy)
-- create upgrade offer and emit `UPGRADE_OFFER`
+**B) Consumable**
+- Stored in **3 slots** (hotkeys 8/9/0)
+- Not paid when picked; paid when used
+- Cost field:
+  - `useCost`
+- Cannot hold more than 3 consumables:
+  - If full and player picks a new consumable, client must offer replace flow
+  - Replace flow chooses a `dropId` to discard
 
-If wrong:
-- emit `ANSWER_RESULT { ok:false, correct }`
-- optional penalty (economy)
+**Using consumables**
+- Hotkeys:
+  - Slot 0: key `8`
+  - Slot 1: key `9`
+  - Slot 2: key `0`
+- Server validates:
+  - slot not empty
+  - player alive
+  - no blocking overlays on server (offer open / prompt open)
+  - player has enough money for `useCost`
+- Server subtracts money and applies effect
 
-### 2.3 Combat + bullets
-- Shooting is controlled by `input.fire` (Space held on client).
-- Server applies dt-based cooldown per player.
-- Server spawns bullets with velocity from player `dirX/dirY`.
+### 2.5 Combat + death + respawn
+- Players can shoot projectiles (cakes) while holding Space (or input state `fire`)
+- Server authoritative for:
+  - projectile spawn + movement
+  - collisions
+  - damage/death
+- On death:
+  - player `alive=false`
+  - server emits `PLAYER_DIED` (at minimum)
+  - server emits `RESPAWN_OPTIONS` to the dead player
 
-Bullets:
-- move each tick
-- expire with TTL
-- collide with walls and machines (removed on hit)
-- collide with players (damage/kill rules below)
+**Respawn options**
+- Corners (always)
+- Cleared machines (optional rule if implemented)
+- On respawn:
+  - player becomes alive again
+  - player gets a brief invulnerability window:
+    - `invulnUntil` ms timestamp
+  - client shows invulnerability HUD and blink
 
-Friendly fire:
-- Default: OFF (same-team bullets do not kill teammates) when mode is `teams`.
-- In `ffa`, everyone is an enemy (except self).
-- Future modes may override this.
+**Killed-by info (NEW)**
+- When a player dies, the respawn screen MUST tell them who killed them (name)
+- Implemented by including:
+  - `killedBy: <killerName>` in `RESPAWN_OPTIONS`
 
-Ammo (“cakes”):
-- Players have `cakes` (ammo).
-- Shooting consumes 1 cake per shot.
-- Cakes can be refilled by design (currently: refilled on correct answer / respawn).
+---
 
-### 2.4 Death + respawn
-Players have `alive: boolean`.
+## 3) Session types + game end conditions (NEW)
 
-When a player is killed:
-- set `alive=false`
-- clear movement/fire input server-side
-- clear pending prompt/offer if desired
-- emit `PLAYER_DIED { playerId }` to room (optional)
-- emit `RESPAWN_OPTIONS { options[] }` to the dead player’s socket only
+### 3.1 Session type: Standard
+- Game ends when the current mode’s win condition is met:
+  - **Machine 10** is correctly answered (current game mode rule)
+- When game ends:
+  - server emits `GAME_ENDED` with reason `"machine10"`
 
-Dead players:
-- do not move, interact, shoot, or use upgrades
-- are not rendered by client (body + name hidden)
+### 3.2 Session type: Timed (NEW)
+- Host chooses:
+  - `sessionMode: "timed"`
+  - `sessionMinutes: N`
+- Server computes:
+  - `endAt = now + (sessionMinutes * 60 * 1000)`
+- Server includes:
+  - `endAt` in `GAME_STARTED` payload
+  - `endAt` (or repeated via snapshot) so clients can show timer HUD
+- Game ends when time is up:
+  - server emits `GAME_ENDED` with reason `"time"`
 
-On respawn selection:
-- client sends `chooseRespawn { spawnId }`
-- server validates spawnId is allowed and sets new position
-- set `alive=true`
-- apply invulnerability window:
-  - server sets `invulnUntil = Date.now() + RESPAWN_INVULN_MS`
-  - server ignores bullet hits while `Date.now() < invulnUntil`
-- emit `RESPAWN_RESULT { ok:true, spawnId? }`
+### 3.3 End screen UX requirements (NEW)
+When the game ends:
+- Client shows a larger end modal with:
+  - big winner banner
+  - leaderboard list
+- **Only option** on end screen: **Back to lobby**
+  - Implementation: reload page (safe and simple)
 
-### 2.5 Money + pickups
-- Each player starts with money (default 100).
-- Pickups exist in world and are included in snapshots:
-  - `pickups: [{ id, type:"money", x, y, amount? }, ...]`
-- When collected server-side:
-  - remove pickup from `game.pickups`
-  - add to `player.money`
+---
 
-### 2.6 Upgrades (IMPLEMENTED STORAGE + COST RULES)
+## 4) Leaderboard (NEW)
 
-#### 2.6.1 Categories + storage model (server)
-Upgrades are storage-only right now (effects later). They live on `player.upgrades`.
+### 4.1 What the leaderboard shows
+At minimum per player:
+- name
+- correct answers count
+- kills
+- deaths
+- money
 
-**Permanents**: `player.upgrades.permSlots` (max 3 entries)
-- Each entry: `{ id, count }`
-- Stacking allowed: picking the same permanent again increments `count`.
+### 4.2 Winner definition
+- For now, winner can be:
+  - best score according to server rule (e.g. highest correct answers; tie-break by kills; then money)
+  - OR winning team if Teams mode (server chooses the rule)
+- Server must specify:
+  - `winnerId` and `winnerName`
+  - `winnerTeamId` if Teams
 
-**Consumables**: `player.upgrades.consSlots` (max 3 entries)
-- Each entry: `{ id }` (optional `usesLeft` may exist later)
-- No duplicates by id.
+### 4.3 Leaderboard payload
+Server emits `GAME_ENDED` with:
+- `reason`: `"machine10"` or `"time"` (string)
+- `endedAt`: ms timestamp
+- `winnerId`: string
+- `winnerName`: string
+- `winnerTeamId`: number|null
+- `leaderboard`: array of rows sorted best-first:
+  - `{ id, name, correct, kills, deaths, money, teamId? }`
 
-Limits are `MAX_PERM_SLOTS=3`, `MAX_CONS_SLOTS=3` (can be overridden via shared/constants).
+Client highlights the winner row and renders the winner banner prominently.
 
-#### 2.6.2 Upgrade pool per match
-At game start, server picks a fixed random pool once:
-- `game.upgradePool = pickRandomUpgradePool(9)` (no duplicates)
+---
 
-Server offers options from this pool:
-- `buildOfferOptions(game.upgradePool) → UI-ready list including useCost/acquireCost`
+## 5) Networking (Socket.IO events)
 
-#### 2.6.3 Offer flow (after correct machine answer)
-Server emits:
-- `UPGRADE_OFFER { offerId, options[] }` to the player
-
-Client picks:
+### 5.1 Client → Server
+- `hello { name }`
+- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes }`
+- `joinGame { gameCode }`
+- `assignTeam { playerId, teamId }` (host only)
+- `startGame` (host only)
+- `input { up, down, left, right, fire }`
+- `tryInteract`
+- `submitAnswer { promptId, answer }`
 - `chooseUpgrade { offerId, upgradeId }`
-
-If consumable slots are full, server responds:
-- `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
-
-Client may replace:
-- `chooseUpgradeReplace { offerId, upgradeId, dropId }`
-
-Client may decline:
 - `declineUpgrade { offerId }`
-
-#### 2.6.4 Money enforcement (IMPORTANT)
-Money checks are enforced in `server/index.js` (not in apply.js):
-
-Permanent acquisition cost:
-- Charged when picking a permanent (`acquireCost`)
-- If insufficient money → `UPGRADE_RESULT { ok:false, reason:"not_enough_money", need }`
-
-Consumable use cost:
-- Charged when using slot 0..2 (`useCost`)
-- If insufficient money → `UPGRADE_USED { ok:false, reason:"not_enough_money", need }`
-
-#### 2.6.5 Using consumables (IMPLEMENTED)
-Client sends:
-- `useUpgradeSlot { slotIndex: 0..2 }`
-
-Server validates:
-- player alive
-- no prompt open
-- no upgrade offer open
-- slotIndex valid and slot exists
-- enough money to pay useCost
-
-Server emits:
-- `UPGRADE_USED { ok:true, used, upgrades?, money?, paid? }`
-- or `{ ok:false, reason }`
-
-Note: There is currently no depletion and no auto-removal on use. Consumables persist until replaced (effects later may add depletion).
-
-#### 2.6.6 Snapshot shape for upgrades (client rendering)
-Client renders upgrades from `STATE_SNAPSHOT.players[].upgrades` in UI-ready shape:
-
-- `upgrades: { permanent: [{ id, count, info }...], slots: [{ id, info, usesLeft? }...] }`
-
-`info` includes:
-- `{ id, name, kind, desc, useCost, acquireCost }`
-
----
-
-## 3) Client controls (current)
-
-- Move: WASD / Arrow keys
-- Interact: `E`
-- Shoot: hold Space
-- Use consumable upgrades: `8` / `9` / `0`
-- Debug fog: `V` (mask), `B` (edge ring)
-
-Client input payload:
-```js
-{ up:boolean, down:boolean, left:boolean, right:boolean, fire:boolean }
-
-4) Data model (canonical)
-4.1 Map
-
-world: { w, h }
-
-walls: [{ x, y, w, h }, ...]
-
-machines: [{ id, num, x, y }, ...] where x,y are centers
-
-Optional: spawn metadata for UI (server still sends respawn options explicitly)
-
-4.2 Player (snapshot shape)
-
-Minimum fields used by client:
-
-id, name, teamId
-
-x, y
-
-dirX, dirY
-
-nextMachineNum
-
-alive
-
-money
-
-cakes
-
-invulnUntil
-
-upgrades: { slots, permanent }
-
-4.3 Snapshot (STATE_SNAPSHOT)
-
-Client expects:
-
-players[] (required)
-
-world (optional but recommended)
-
-bullets[] (optional)
-
-pickups[] (optional)
-
-Recommended bullet shape:
-
-{ id?, ownerId, ownerTeamId?, x, y }
-
-Recommended pickup shape:
-
-{ id, type:"money", x, y, amount? }
-
-5) Networking events (canonical)
-5.1 Connection / identity
-
-Server → Client
-
-WELCOME { playerId }
-
-Client → Server
-
-hello { name }
-
-5.2 Lobby flow
-
-Client → Server
-
-createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode }
-
-joinGame { gameCode }
-
-assignTeam { playerId, teamId } (host only, teams mode)
-
-startGame {}
-
-Server → Client
-
-GAME_CREATED { gameCode }
-
-JOIN_SUCCESS { gameCode, players, teams?, settings }
-
-JOIN_FAILED { reason }
-
-LOBBY_UPDATE { players, settings }
-
-GAME_STARTED { map, settings }
-
-5.3 In-game
-
-Client → Server
-
-input InputState
-
-tryInteract {}
-
-submitAnswer { promptId, answer }
-
-chooseUpgrade { offerId, upgradeId }
-
-chooseUpgradeReplace { offerId, upgradeId, dropId }
-
-declineUpgrade { offerId }
-
-useUpgradeSlot { slotIndex }
-
-chooseRespawn { spawnId }
-
-Server → Client
-
-STATE_SNAPSHOT Snapshot
-
-MATH_PROMPT { promptId, base, machineNum }
-
-ANSWER_RESULT { ok, correct? }
-
-INTERACT_DENIED { reason, nextMachineNum?, tried? }
-
-UPGRADE_OFFER { offerId, options[] }
-
-UPGRADE_RESULT { ok, reason?, upgrades?, requested?, slots?, chosen?, applied?, need?, money? }
-
-UPGRADE_USED { ok, reason?, used?, upgrades?, money?, paid?, need? }
-
-UPGRADE_DECLINED { ok, reason? }
-
-RESPAWN_OPTIONS { options[] }
-
-RESPAWN_RESULT { ok, reason?, spawnId? }
-
-Optional: PLAYER_DIED { playerId }
-
-6) Constants (defaults)
-
-INTERACT_RADIUS = 60
-
-Player size: 28×28 (PLAYER_HALF = 14)
-
-Machine draw size: 20×20 (MACHINE_HALF = 10) for visuals
-
-Tick rate: 20 Hz (server)
-
-Fog-of-war is client-only (cone length/angle are client tuning)
+- `chooseUpgradeReplace { offerId, upgradeId, dropId }`
+- `useUpgradeSlot { slotIndex }`
+- `chooseRespawn { spawnId }`
+
+### 5.2 Server → Client
+Lobby:
+- `WELCOME { playerId }`
+- `GAME_CREATED { gameCode }`
+- `JOIN_SUCCESS { gameCode, players, settings }`
+- `JOIN_FAILED { reason }`
+- `LOBBY_UPDATE { players, settings }`
+
+Game start + snapshots:
+- `GAME_STARTED { map, settings, endAt? }`
+- `STATE_SNAPSHOT { time, world, players, pickups, bullets, endAt? }`
+
+Machines:
+- `MATH_PROMPT { promptId, base, machineNum }`
+- `ANSWER_RESULT { ok, correct }`
+- `INTERACT_DENIED { reason, nextMachineNum? }`
 
 Upgrades:
+- `UPGRADE_OFFER { offerId, options }`
+- `UPGRADE_RESULT { ok, reason?, money?, need?, requested?, slots? }`
+- `UPGRADE_DECLINED { ok }`
+- `UPGRADE_USED { ok, reason?, money?, need?, paid?, used? }`
 
-MAX_PERM_SLOTS = 3
+Death/respawn:
+- `PLAYER_DIED { playerId }`
+- `RESPAWN_OPTIONS { options, killedBy? }`  ✅ includes killer name when available
+- `RESPAWN_RESULT { ok, reason? }`
 
-MAX_CONS_SLOTS = 3
+Game end:
+- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }` ✅ NEW
 
-Combat:
+---
 
-MAX_CAKES = 7
+## 6) Client UI constraints
+- Client must block movement/shooting while overlays are open:
+  - math prompt
+  - upgrade offer
+  - replace/drop picker
+  - respawn picker
+  - end screen
+- End screen:
+  - only action: “Back to lobby” (reload)
+- Timer HUD:
+  - visible only if `endAt` is provided
+- Respawn overlay:
+  - shows “Killed by: <name>” when provided
 
-RESPAWN_INVULN = 0.6s (server sets invulnUntil in ms epoch)
+---
 
-Bullet TTL + speed are server-defined
+## 7) Authoritative server model (non-negotiable)
+- Server owns:
+  - player movement
+  - collisions
+  - shooting and projectile simulation
+  - pickups
+  - machine rules + math validation
+  - money balances
+  - upgrades
+  - death + respawn + invulnerability
+  - session timer + end-of-game decision
+  - leaderboard computation + winner selection
+- Client is rendering + input only:
+  - sends inputState
+  - renders snapshots
+  - shows overlays based on server events
 
-7) “Do not break” checklist
-
-STATE_SNAPSHOT must always include players[].
-
-Each player must include:
-
-id,x,y,dirX,dirY,alive,money,upgrades,cakes,invulnUntil
-
-GAME_STARTED.map.walls must be rectangles {x,y,w,h} (client fog uses them).
-
-Machine prompt uses promptId roundtrip.
-
-Upgrade offer uses offerId roundtrip.
-
-Respawn uses spawnId from server-provided options.
+---
