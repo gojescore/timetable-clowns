@@ -28,7 +28,6 @@ const UPGRADES = [
     id: "cake_surprise",
     name: "Cake Surprise",
     kind: "consumable",
-    maxUses: 3,
     useCost: 100,
     desc: "Place a mine on roads. (effect later)",
   },
@@ -36,7 +35,6 @@ const UPGRADES = [
     id: "rubber_chicken",
     name: "Rubber Chicken",
     kind: "consumable",
-    maxUses: 3,
     useCost: 100,
     desc: "Fast melee dash. (effect later)",
   },
@@ -44,7 +42,6 @@ const UPGRADES = [
     id: "banana_shot",
     name: "Banana Shot",
     kind: "consumable",
-    maxUses: 3,
     useCost: 100,
     desc: "Ricochet bananas. (effect later)",
   },
@@ -52,7 +49,6 @@ const UPGRADES = [
     id: "big_nose",
     name: "Big Nose",
     kind: "consumable",
-    maxUses: 1, // disappears after first hit (later)
     useCost: 0, // acquiring is free; using is automatic on hit later
     desc: "+1 life shield. (effect later)",
   },
