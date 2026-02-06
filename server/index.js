@@ -42,7 +42,15 @@ const MACHINE_HALF = 10;
 
 // Shooting / bullets
 const BULLET_SPEED = 780;
-const BULLET_TTL = 1.2;
+
+// ✅ FIX: TTL was too short for a 2400px-wide world.
+// Old: 1.2s => ~936px max range. New: 3.0s => ~2340px max range.
+const BULLET_TTL = 3.0;
+
+// ✅ Optional safety: ignore wall/machine collision for first 50ms
+// to avoid "spawn inside solid => instant delete" when hugging walls.
+const BULLET_SPAWN_GRACE = 0.05; // seconds
+
 const BULLET_HIT_R_WALL = 4;
 const CAKE_HIT_R_PLAYER = 12;
 
@@ -412,8 +420,13 @@ setInterval(() => {
         const ndx = dx / dlen;
         const ndy = dy / dlen;
 
-        const spawnX = p.x + ndx * (PLAYER_HALF + 6);
-        const spawnY = p.y + ndy * (PLAYER_HALF + 6);
+        // ✅ spawn in front of player
+        let spawnX = p.x + ndx * (PLAYER_HALF + 6);
+        let spawnY = p.y + ndy * (PLAYER_HALF + 6);
+
+        // ✅ clamp spawn inside world so it can't be insta-culled
+        spawnX = clamp(spawnX, 1, world.w - 1);
+        spawnY = clamp(spawnY, 1, world.h - 1);
 
         const b = {
           id: makeBulletId(),
@@ -424,6 +437,9 @@ setInterval(() => {
           vx: ndx * BULLET_SPEED,
           vy: ndy * BULLET_SPEED,
           ttl: BULLET_TTL,
+
+          // ✅ track age for grace collision window
+          age: 0,
         };
 
         if (!Array.isArray(game.bullets)) game.bullets = [];
@@ -467,57 +483,67 @@ setInterval(() => {
         b.x = nextX;
         b.y = nextY;
 
+        // ✅ age update (used for grace period)
+        b.age = (Number.isFinite(b.age) ? b.age : 0) + stepDt;
+
         if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
 
+        // ✅ grace period: skip wall/machine collision very briefly
+        const inGrace = b.age < BULLET_SPAWN_GRACE;
+
         // wall hit
-        let hitWall = false;
-        if (Array.isArray(game.map?.walls)) {
-          for (const w of game.map.walls) {
-            if (
-              b.x >= w.x - BULLET_HIT_R_WALL &&
-              b.x <= w.x + w.w + BULLET_HIT_R_WALL &&
-              b.y >= w.y - BULLET_HIT_R_WALL &&
-              b.y <= w.y + w.h + BULLET_HIT_R_WALL
-            ) {
-              hitWall = true;
-              break;
+        if (!inGrace) {
+          let hitWall = false;
+          if (Array.isArray(game.map?.walls)) {
+            for (const w of game.map.walls) {
+              if (
+                b.x >= w.x - BULLET_HIT_R_WALL &&
+                b.x <= w.x + w.w + BULLET_HIT_R_WALL &&
+                b.y >= w.y - BULLET_HIT_R_WALL &&
+                b.y <= w.y + w.h + BULLET_HIT_R_WALL
+              ) {
+                hitWall = true;
+                break;
+              }
             }
           }
-        }
-        if (hitWall) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
+          if (hitWall) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
         }
 
         // machine hit
-        let hitMachine = false;
-        if (Array.isArray(game.map?.machines)) {
-          for (const m of game.map.machines) {
-            const bx = m.x - MACHINE_HALF;
-            const by = m.y - MACHINE_HALF;
-            const bw = MACHINE_HALF * 2;
-            const bh = MACHINE_HALF * 2;
+        if (!inGrace) {
+          let hitMachine = false;
+          if (Array.isArray(game.map?.machines)) {
+            for (const m of game.map.machines) {
+              const bx = m.x - MACHINE_HALF;
+              const by = m.y - MACHINE_HALF;
+              const bw = MACHINE_HALF * 2;
+              const bh = MACHINE_HALF * 2;
 
-            if (
-              b.x >= bx - BULLET_HIT_R_WALL &&
-              b.x <= bx + bw + BULLET_HIT_R_WALL &&
-              b.y >= by - BULLET_HIT_R_WALL &&
-              b.y <= by + bh + BULLET_HIT_R_WALL
-            ) {
-              hitMachine = true;
-              break;
+              if (
+                b.x >= bx - BULLET_HIT_R_WALL &&
+                b.x <= bx + bw + BULLET_HIT_R_WALL &&
+                b.y >= by - BULLET_HIT_R_WALL &&
+                b.y <= by + bh + BULLET_HIT_R_WALL
+              ) {
+                hitMachine = true;
+                break;
+              }
             }
           }
-        }
-        if (hitMachine) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
+          if (hitMachine) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
         }
 
         // player hit (segment sweep)
@@ -1156,7 +1182,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  // ✅ Respawn handler (was missing in your pasted end)
+  // ✅ Respawn handler
   socket.on("chooseRespawn", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
