@@ -42,7 +42,7 @@ const MACHINE_HALF = 10;
 
 // Shooting / bullets
 const BULLET_SPEED = 780;
-const BULLET_TTL = 1.2;
+const BULLET_TTL = 2;
 const BULLET_HIT_R_WALL = 4;
 const CAKE_HIT_R_PLAYER = 12;
 
