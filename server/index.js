@@ -46,7 +46,7 @@ const BULLET_SPEED = 780;
 // You confirmed 2.0 works for you (range ≈ 1560px at 780px/s)
 const BULLET_TTL = 2.0;
 
-// Separate radii for nicer tuning
+// Separate radii for tuning
 const BULLET_HIT_R_WALL = 4;
 const BULLET_HIT_R_MACHINE = 6;
 
@@ -59,6 +59,12 @@ const CORNER_PAD = 80;
 
 // Cakes (ammo)
 const MAX_CAKES = 7;
+
+// Timed session defaults
+const SESSION_STANDARD = "standard";
+const SESSION_TIMED = "timed";
+const MIN_SESSION_MIN = 1;
+const MAX_SESSION_MIN = 60;
 
 // In-memory game store
 const games = Object.create(null);
@@ -164,6 +170,8 @@ function snapshotForGame(game) {
   return {
     time: Date.now(),
     world,
+    phase: game.phase,
+    endAt: Number.isFinite(game.endAt) ? game.endAt : null,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
     bullets: Array.isArray(game.bullets)
       ? game.bullets.map((b) => ({
@@ -203,6 +211,13 @@ function snapshotForGame(game) {
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
+
+        // stats (for leaderboard)
+        stats: {
+          kills: p.stats?.kills || 0,
+          deaths: p.stats?.deaths || 0,
+          correct: p.stats?.correct || 0,
+        },
       };
     }),
   };
@@ -246,47 +261,47 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
   return dist2(px, py, cx, cy) <= r * r;
 }
 
-// ✅ Sweep segment vs expanded AABB (for wall/machine hits) — slab method
-function segmentIntersectsAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
-  const minX = rx;
-  const maxX = rx + rw;
-  const minY = ry;
-  const maxY = ry + rh;
+// ✅ Sweep segment vs AABB returning earliest hit t (0..1), slab method.
+function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
+  const minX = rx, maxX = rx + rw;
+  const minY = ry, maxY = ry + rh;
 
   const dx = x2 - x1;
   const dy = y2 - y1;
 
   let tmin = 0;
   let tmax = 1;
+
   const EPS = 1e-12;
 
   // X slab
   if (Math.abs(dx) < EPS) {
-    if (x1 < minX || x1 > maxX) return false;
+    if (x1 < minX || x1 > maxX) return null;
   } else {
-    const invDx = 1 / dx;
-    let tx1 = (minX - x1) * invDx;
-    let tx2 = (maxX - x1) * invDx;
-    if (tx1 > tx2) [tx1, tx2] = [tx2, tx1];
-    tmin = Math.max(tmin, tx1);
-    tmax = Math.min(tmax, tx2);
-    if (tmin > tmax) return false;
+    const inv = 1 / dx;
+    let t1 = (minX - x1) * inv;
+    let t2 = (maxX - x1) * inv;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
   }
 
   // Y slab
   if (Math.abs(dy) < EPS) {
-    if (y1 < minY || y1 > maxY) return false;
+    if (y1 < minY || y1 > maxY) return null;
   } else {
-    const invDy = 1 / dy;
-    let ty1 = (minY - y1) * invDy;
-    let ty2 = (maxY - y1) * invDy;
-    if (ty1 > ty2) [ty1, ty2] = [ty2, ty1];
-    tmin = Math.max(tmin, ty1);
-    tmax = Math.min(tmax, ty2);
-    if (tmin > tmax) return false;
+    const inv = 1 / dy;
+    let t1 = (minY - y1) * inv;
+    let t2 = (maxY - y1) * inv;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
   }
 
-  return true;
+  if (tmin < 0 || tmin > 1) return null;
+  return { t: tmin };
 }
 
 function makePromptId() {
@@ -373,6 +388,47 @@ function forceToValidPos(game, x, y) {
 }
 
 // --------------------
+// Leaderboard / End game
+// --------------------
+function buildLeaderboard(game) {
+  return [...game.players.values()]
+    .map((pl) => ({
+      id: pl.id,
+      name: pl.name,
+      money: Number.isFinite(pl.money) ? pl.money : 0,
+      correct: pl.stats?.correct || 0,
+      kills: pl.stats?.kills || 0,
+      deaths: pl.stats?.deaths || 0,
+    }))
+    .sort(
+      (a, b) =>
+        (b.correct - a.correct) ||
+        (b.kills - a.kills) ||
+        (b.money - a.money) ||
+        (a.deaths - b.deaths)
+    );
+}
+
+function endGame(io, game, reason, extra = {}) {
+  if (!game || game.phase !== "running") return;
+
+  game.phase = "ended";
+  game.endedAt = Date.now();
+
+  const payload = {
+    reason,
+    endedAt: game.endedAt,
+    leaderboard: buildLeaderboard(game),
+    ...extra,
+  };
+
+  io.to(game.code).emit("GAME_ENDED", payload);
+
+  // Optional: send one final snapshot so clients can freeze HUD state
+  io.to(game.code).emit("STATE_SNAPSHOT", snapshotForGame(game));
+}
+
+// --------------------
 // Express + HTTP + Socket.IO (✅ only once)
 // --------------------
 const app = express();
@@ -396,6 +452,16 @@ setInterval(() => {
   for (const code of Object.keys(games)) {
     const game = games[code];
     if (!game || game.phase !== "running") continue;
+
+    // ✅ timed end check
+    if (
+      game.settings?.sessionMode === SESSION_TIMED &&
+      Number.isFinite(game.endAt) &&
+      now >= game.endAt
+    ) {
+      endGame(io, game, "time");
+      continue;
+    }
 
     const world = getWorldForGame(game);
 
@@ -464,8 +530,7 @@ setInterval(() => {
         let spawnX = p.x + ndx * (PLAYER_HALF + 6);
         let spawnY = p.y + ndy * (PLAYER_HALF + 6);
 
-        // Spawn safety: if spawn is inside expanded wall/machine, push forward a bit.
-        // If still colliding, skip spawning (don’t consume ammo).
+        // Spawn safety: push forward if inside wall/machine
         const pushSteps = 6;
         const pushStepLen = 6;
         let okSpawn = true;
@@ -503,8 +568,7 @@ setInterval(() => {
         }
 
         for (let k = 0; k < pushSteps; k++) {
-          const bad =
-            pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
+          const bad = pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
           if (!bad) break;
           spawnX += ndx * pushStepLen;
           spawnY += ndy * pushStepLen;
@@ -512,6 +576,7 @@ setInterval(() => {
         }
 
         if (!okSpawn) {
+          // Don’t consume ammo; treat like “blocked shot”
           p.fireCd = FIRE_COOLDOWN;
           continue;
         }
@@ -565,18 +630,16 @@ setInterval(() => {
         const nextX = prevX + b.vx * stepDt;
         const nextY = prevY + b.vy * stepDt;
 
-        b.x = nextX;
-        b.y = nextY;
-
-        // arena bounds
-        if (b.x < 0 || b.x > world.w || b.y < 0 || b.y > world.h) {
+        // arena bounds (note: bounds are 0..world.w/h, players are centered)
+        if (nextX < 0 || nextX > world.w || nextY < 0 || nextY > world.h) {
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
 
-        // WALL HIT (swept segment vs expanded wall rect)
-        let hitWall = false;
+        // ✅ earliest wall/machine hit t
+        let bestT = null;
+
         if (Array.isArray(game.map?.walls)) {
           for (const w of game.map.walls) {
             const rx = w.x - BULLET_HIT_R_WALL;
@@ -584,20 +647,11 @@ setInterval(() => {
             const rw = w.w + BULLET_HIT_R_WALL * 2;
             const rh = w.h + BULLET_HIT_R_WALL * 2;
 
-            if (segmentIntersectsAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh)) {
-              hitWall = true;
-              break;
-            }
+            const hit = segmentHitAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh);
+            if (hit && (bestT === null || hit.t < bestT)) bestT = hit.t;
           }
         }
-        if (hitWall) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
-        }
 
-        // MACHINE HIT (swept segment vs expanded machine rect)
-        let hitMachine = false;
         if (Array.isArray(game.map?.machines)) {
           for (const m of game.map.machines) {
             const bx = m.x - MACHINE_HALF;
@@ -610,17 +664,24 @@ setInterval(() => {
             const rw = bw + BULLET_HIT_R_MACHINE * 2;
             const rh = bh + BULLET_HIT_R_MACHINE * 2;
 
-            if (segmentIntersectsAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh)) {
-              hitMachine = true;
-              break;
-            }
+            const hit = segmentHitAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh);
+            if (hit && (bestT === null || hit.t < bestT)) bestT = hit.t;
           }
         }
-        if (hitMachine) {
+
+        if (bestT !== null) {
+          // place bullet at impact point for correctness (even if we remove it)
+          b.x = prevX + (nextX - prevX) * bestT;
+          b.y = prevY + (nextY - prevY) * bestT;
+
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
+
+        // move if no wall/machine hit
+        b.x = nextX;
+        b.y = nextY;
 
         // player hit (segment sweep)
         let hitPlayer = null;
@@ -656,6 +717,20 @@ setInterval(() => {
           game.bullets.splice(i, 1);
           removed = true;
 
+          const shooter = game.players.get(b.ownerId) || null;
+
+          // stats
+          if (shooter) {
+            if (!shooter.stats) shooter.stats = { kills: 0, deaths: 0, correct: 0 };
+            shooter.stats.kills += 1;
+          }
+          if (!hitPlayer.stats) hitPlayer.stats = { kills: 0, deaths: 0, correct: 0 };
+          hitPlayer.stats.deaths += 1;
+
+          // killed-by info
+          hitPlayer.killedByName = shooter ? shooter.name : "Unknown";
+          hitPlayer.killedById = shooter ? shooter.id : null;
+
           hitPlayer.alive = false;
           hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
           hitPlayer.fireCd = 0;
@@ -670,6 +745,7 @@ setInterval(() => {
           };
 
           io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
+            killedBy: hitPlayer.killedByName || "Unknown",
             options: opts.map((o) => ({
               id: o.id,
               label: o.label,
@@ -728,18 +804,38 @@ io.on("connection", (socket) => {
     const mapChoice = String(payload.mapChoice || "map01");
     const friendlyFire = mode === GAME_MODE_TEAMS ? !!payload.friendlyFire : false;
 
+    // ✅ session settings
+    const sessionModeRaw = String(payload.sessionMode || SESSION_STANDARD).toLowerCase();
+    const sessionMode = sessionModeRaw === SESSION_TIMED ? SESSION_TIMED : SESSION_STANDARD;
+    const sessionMinutes = clampInt(payload.sessionMinutes, MIN_SESSION_MIN, MAX_SESSION_MIN, 5);
+
     const code = createUniqueCode();
 
     const game = {
       code,
       hostPlayerId: session.playerId,
       phase: "lobby",
-      settings: { tableBase, mode, teamCount, inputMode, mapChoice, friendlyFire },
+      settings: {
+        tableBase,
+        mode,
+        teamCount,
+        inputMode,
+        mapChoice,
+        friendlyFire,
+
+        sessionMode,
+        sessionMinutes,
+      },
       map: null,
       players: new Map(),
       pickups: [],
       bullets: [],
       upgradePool: null,
+
+      // for timed sessions
+      startedAt: null,
+      endAt: null,
+      endedAt: null,
     };
 
     const hostPlayer = {
@@ -770,6 +866,12 @@ io.on("connection", (socket) => {
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
+
+      // ✅ stats
+      stats: { kills: 0, deaths: 0, correct: 0 },
+
+      killedByName: null,
+      killedById: null,
     };
 
     if (game.settings.mode === GAME_MODE_FFA) hostPlayer.teamId = 0;
@@ -831,6 +933,12 @@ io.on("connection", (socket) => {
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
+
+      // ✅ stats
+      stats: { kills: 0, deaths: 0, correct: 0 },
+
+      killedByName: null,
+      killedById: null,
     };
 
     if (game.settings.mode === GAME_MODE_FFA) {
@@ -927,13 +1035,26 @@ io.on("connection", (socket) => {
 
       p.cakes = MAX_CAKES;
 
+      // reset killed-by info when match starts
+      p.killedByName = null;
+      p.killedById = null;
+
       economy.ensurePlayerEconomy(p);
       upgrades.ensureUpgradeState(p);
+      if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
     }
 
     game.pickups = [];
     game.bullets = [];
+
     game.phase = "running";
+    game.startedAt = Date.now();
+
+    if (game.settings.sessionMode === SESSION_TIMED) {
+      game.endAt = game.startedAt + (game.settings.sessionMinutes * 60 * 1000);
+    } else {
+      game.endAt = null;
+    }
 
     io.to(code).emit("GAME_STARTED", {
       map: {
@@ -944,6 +1065,7 @@ io.on("connection", (socket) => {
         machines: map.machines,
       },
       settings: game.settings,
+      endAt: Number.isFinite(game.endAt) ? game.endAt : null,
     });
 
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -1042,6 +1164,9 @@ io.on("connection", (socket) => {
     p.pendingPrompt = null;
 
     if (ok) {
+      if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
+      p.stats.correct += 1;
+
       p.clearedMachines.add(pending.machineId);
       p.lastCorrectMachineId = pending.machineId;
 
@@ -1054,6 +1179,12 @@ io.on("connection", (socket) => {
       socket.emit("ANSWER_RESULT", { ok: true });
 
       economy.awardCorrectAnswer(game, p.id);
+
+      // ✅ End condition: machine 10 solved
+      if (pending.machineNum === 10) {
+        endGame(io, game, "machine10", { winnerId: p.id, winnerName: p.name });
+        return;
+      }
 
       upgrades.ensureUpgradeState(p);
 
@@ -1102,8 +1233,7 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id)
-      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1174,8 +1304,7 @@ io.on("connection", (socket) => {
     if (!offer) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "no_offer" });
 
     const offerId = String(payload.offerId || "");
-    if (offerId !== offer.id)
-      return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
+    if (offerId !== offer.id) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "bad_offer_id" });
 
     const upgradeId = String(payload.upgradeId || "");
     if (!offer.options.includes(upgradeId)) {
@@ -1299,6 +1428,10 @@ io.on("connection", (socket) => {
     p.pendingPrompt = null;
     p.pendingUpgradeOffer = null;
     p.pendingRespawn = null;
+
+    // clear killed-by label once respawned
+    p.killedByName = null;
+    p.killedById = null;
 
     socket.emit("RESPAWN_RESULT", { ok: true });
   });
