@@ -1,12 +1,9 @@
 // server/upgrades/definitions.js
 // Data-only list. Tweak names + costs here.
 //
-// RULES:
-// - Non-permanent upgrades (kind:"consumable") live in max 3 slots.
-//   They do NOT have uses; each activation costs money (useCost).
-//   You cannot hold duplicates of the same consumable id.
-// - Permanent upgrades (kind:"permanent") CAN stack (duplicates allowed),
-//   but they cost money upon acquisition (acquireCost).
+// Slot model:
+// - Permanents: 3 reserved slots (stacking allowed via count), pay acquireCost each time.
+// - Consumables: 3 action slots (8/9/0), no duplicates, pay useCost each time you use.
 
 const UPGRADES = [
   // ---------- Permanent (stacking, costs on acquisition) ----------
@@ -32,8 +29,7 @@ const UPGRADES = [
     desc: "See further. (effect later)",
   },
 
-  // ---------- Non-permanent / slot-based ----------
-  // NOTE: held in max 3 slots. Using costs money (useCost).
+  // ---------- Consumable (action slots 8/9/0) ----------
   {
     id: "cake_surprise",
     name: "Cake Surprise",
