@@ -16,6 +16,8 @@
       --bad:#ef4444;
       --coin:#f4b000;
       --money:#22c55e;
+      --gold:#f6c451;
+      --gold2:#f1b547;
     }
     *{box-sizing:border-box}
     body{
@@ -243,6 +245,7 @@
       z-index:50;
     }
     .overlay.show{display:flex}
+
     .modal{
       width:min(640px, 100%);
       background:var(--panel);
@@ -312,8 +315,8 @@
     /* ✅ Leaderboard */
     .boardGrid{
       display:grid;
-      grid-template-columns: 40px 1fr 90px 80px 80px 80px;
-      gap:8px;
+      grid-template-columns: 40px 1fr 90px 80px 80px 90px;
+      gap:10px;
       align-items:center;
       margin-top:10px;
     }
@@ -328,7 +331,7 @@
       margin-bottom:8px;
     }
     .boardRow{
-      padding:8px 0;
+      padding:10px 0;
       border-bottom:1px solid rgba(255,255,255,.08);
     }
     .rank{
@@ -354,11 +357,89 @@
       white-space:nowrap;
     }
 
+    /* ✅ Big end modal */
+    .modal.modalEnd{
+      width:min(920px, 100%);
+      padding:20px;
+      border-radius:18px;
+    }
+    .endTop{
+      display:flex;
+      gap:14px;
+      align-items:flex-start;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    .endTitle{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      min-width: 260px;
+    }
+    .endTitle h3{
+      margin:0;
+      font-size:20px;
+      letter-spacing:.2px;
+    }
+    .winnerBanner{
+      margin-top:10px;
+      padding:12px 14px;
+      border-radius:14px;
+      border:1px solid rgba(246,196,81,.45);
+      background: linear-gradient(180deg, rgba(246,196,81,.20), rgba(0,0,0,.12));
+      box-shadow: 0 16px 40px rgba(0,0,0,.35);
+    }
+    .winnerBanner .label{
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      color:rgba(230,237,247,.75);
+      font-weight:900;
+    }
+    .winnerBanner .who{
+      font-size:32px;
+      font-weight:1000;
+      margin-top:4px;
+      line-height:1.05;
+    }
+    .winnerBanner .sub{
+      margin-top:6px;
+      font-size:13px;
+      color:rgba(230,237,247,.75);
+      font-weight:800;
+    }
+
+    .boardRow.winner{
+      border-bottom-color: rgba(246,196,81,.35);
+      background: rgba(246,196,81,.08);
+      border-radius: 12px;
+      padding:12px 10px;
+      box-shadow: 0 10px 26px rgba(0,0,0,.22);
+    }
+    .boardRow.winner .rank{
+      color: var(--gold);
+      text-shadow: 0 2px 0 rgba(0,0,0,.35);
+    }
+    .boardRow.winner .boardName{
+      color: rgba(255,255,255,.98);
+    }
+
+    /* ✅ Only one end option: back to lobby (reload) */
+    .endActionsSolo{
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      margin-top:14px;
+      flex-wrap:wrap;
+    }
+
     @media (max-width: 980px){
       .gameLayout{ grid-template-columns: 1fr; }
       .sidePanel{ flex-direction:row; flex-wrap:wrap; }
       .sidePanel > *{ flex:1 1 240px; }
       .canvasWrap{ height: calc(100vh - 120px); }
+      .modal.modalEnd{ width:min(720px, 100%); }
+      .winnerBanner .who{ font-size:26px; }
     }
   </style>
 </head>
@@ -576,19 +657,26 @@
 
   <!-- ✅ Game ended / Leaderboard overlay -->
   <div class="overlay" id="endOverlay">
-    <div class="modal">
-      <h3>Game ended</h3>
-      <div class="row" style="align-items:center; margin-top:8px">
-        <div>
-          <span class="reasonPill" id="endReason">reason</span>
-          <span class="pill" id="endWinner" style="margin-left:8px">Winner: —</span>
+    <div class="modal modalEnd">
+      <div class="endTop">
+        <div class="endTitle">
+          <h3>🏁 Game ended</h3>
+          <div>
+            <span class="reasonPill" id="endReason">ended: —</span>
+            <span class="muted" id="endWhen" style="margin-left:10px"></span>
+          </div>
+
+          <div class="winnerBanner" id="winnerBanner">
+            <div class="label">Winner</div>
+            <div class="who" id="endWinnerBig">—</div>
+            <div class="sub" id="endWinnerSub">—</div>
+          </div>
         </div>
-        <div style="text-align:right">
-          <span class="muted" id="endWhen">—</span>
-        </div>
+
+        <div style="min-width:260px; flex:1 1 auto"></div>
       </div>
 
-      <div class="boardHead boardGrid" style="margin-top:12px">
+      <div class="boardHead boardGrid" style="margin-top:14px">
         <div>#</div>
         <div>Player</div>
         <div class="cellRight">Correct</div>
@@ -599,9 +687,9 @@
 
       <div id="endBoard"></div>
 
-      <div class="actions">
-        <button class="primary" id="endCloseBtn">Close</button>
-        <button class="danger" id="endBackBtn" title="Safe: reload page">Back / Reload</button>
+      <!-- ✅ ONLY OPTION: back to lobby -->
+      <div class="endActionsSolo">
+        <button class="primary" id="endBackBtn" title="Back to lobby (reload)">Back to lobby</button>
       </div>
 
       <div class="msg" id="endMsg"></div>
@@ -649,11 +737,9 @@
       hudLife: document.getElementById("hudLife"),
       hudCakes: document.getElementById("hudCakes"),
 
-      // ✅ Added
       hudInvuln: document.getElementById("hudInvuln"),
       hudInvulnText: document.getElementById("hudInvulnText"),
 
-      // ✅ Added
       hudTimer: document.getElementById("hudTimer"),
       hudTimerText: document.getElementById("hudTimerText"),
 
@@ -689,24 +775,21 @@
       respawnCloseBtn: document.getElementById("respawnCloseBtn"),
       respawnMsg: document.getElementById("respawnMsg"),
 
-      // ✅ end screen
+      // ✅ end screen (solo button)
       endOverlay: document.getElementById("endOverlay"),
       endBoard: document.getElementById("endBoard"),
-      endCloseBtn: document.getElementById("endCloseBtn"),
       endBackBtn: document.getElementById("endBackBtn"),
       endReason: document.getElementById("endReason"),
-      endWinner: document.getElementById("endWinner"),
       endWhen: document.getElementById("endWhen"),
       endMsg: document.getElementById("endMsg"),
+      endWinnerBig: document.getElementById("endWinnerBig"),
+      endWinnerSub: document.getElementById("endWinnerSub"),
+      winnerBanner: document.getElementById("winnerBanner"),
     };
 
     el.leaveLobby.addEventListener("click", () => location.reload());
     el.leaveGame.addEventListener("click", () => location.reload());
     el.endBackBtn.addEventListener("click", () => location.reload());
-    el.endCloseBtn.addEventListener("click", () => {
-      el.endOverlay.classList.remove("show");
-      el.endMsg.textContent = "";
-    });
 
     let myId = null;
     let isHost = false;
@@ -741,7 +824,6 @@
       return String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
     }
     function updateTimerHudFromSnapshot(snap){
-      // use endAt from snapshot (authoritative) if present
       const endAt = Number.isFinite(snap?.endAt) ? snap.endAt : (Number.isFinite(gameEndAt) ? gameEndAt : null);
       if (!endAt) {
         el.hudTimer.classList.add("hidden");
@@ -804,7 +886,6 @@
     el.mode.addEventListener("change", updateHostModeUI);
 
     function updateSessionUI(){
-      // show minutes only if timed
       const timed = (el.sessionMode && el.sessionMode.value === "timed");
       if (el.sessionMinutes) el.sessionMinutes.classList.toggle("hidden", !timed);
     }
@@ -844,8 +925,6 @@
           tableBase: Number(el.tableBase.value),
           mapChoice: el.mapChoice.value,
           inputMode: el.inputMode.value,
-
-          // ✅ NEW
           sessionMode,
           sessionMinutes,
         });
@@ -905,10 +984,8 @@
       el.hudLife.textContent = "1";
       el.hudCakes.textContent = String(MAX_CAKES);
 
-      // ✅ reset invuln UI on start
       el.hudInvuln.classList.add("hidden");
 
-      // ✅ timer init
       gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
       if (gameEndAt) {
         el.hudTimer.classList.remove("hidden");
@@ -920,7 +997,6 @@
       myServerUpgrades = { permanent: [], slots: [] };
       renderUpgradeBar();
 
-      // close end overlay if it was open for any reason
       el.endOverlay.classList.remove("show");
     });
 
@@ -928,7 +1004,6 @@
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
 
-      // ✅ keep timer synced
       updateTimerHudFromSnapshot(snap);
 
       const me = snap.players?.find(p => p.id === myId);
@@ -937,16 +1012,14 @@
         el.hudLife.textContent = me.alive === false ? "0" : "1";
         el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
-        // ✅ invuln HUD (updates at snapshot rate; frame loop also calls it)
         updateInvulnHudFromMe(me);
 
-        // ✅ IMPORTANT: only trust upgrades from STATE_SNAPSHOT (it contains info + correct shape)
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
       }
     });
 
-    // ✅ GAME_ENDED + leaderboard overlay
+    // ✅ GAME_ENDED + bigger leaderboard + winner highlight
     socket.on("GAME_ENDED", (p = {}) => {
       // stop gameplay input effects immediately
       inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
@@ -954,7 +1027,6 @@
 
       closePrompt();
       closeDropPicker();
-      // (closeUpgradeOffer calls decline; not needed at game end, just close UI)
       activeOfferId = null;
       el.upgradeOverlay.classList.remove("show");
       el.upgradeList.innerHTML = "";
@@ -963,9 +1035,6 @@
       const reason = String(p.reason || "unknown");
       el.endReason.textContent = "ended: " + reason;
 
-      if (p.winnerName) el.endWinner.textContent = "Winner: " + p.winnerName;
-      else el.endWinner.textContent = "Winner: —";
-
       if (Number.isFinite(p.endedAt)) {
         const d = new Date(p.endedAt);
         el.endWhen.textContent = d.toLocaleString();
@@ -973,13 +1042,34 @@
         el.endWhen.textContent = "";
       }
 
+      const winnerName = p.winnerName || "—";
+      const winnerTeam = (p.winnerTeamId === null || p.winnerTeamId === undefined) ? null : Number(p.winnerTeamId);
+
+      // Big winner banner
+      el.endWinnerBig.textContent = winnerName;
+      if (winnerTeam === null || Number.isNaN(winnerTeam)) {
+        el.endWinnerSub.textContent = "Winner (FFA)";
+      } else {
+        el.endWinnerSub.textContent = "Team " + (winnerTeam + 1) + " 🏆";
+      }
+
       const board = Array.isArray(p.leaderboard) ? p.leaderboard : [];
       el.endBoard.innerHTML = "";
+
+      // highlight: either matching winnerId, or rank #1 fallback
+      const winnerId = p.winnerId || null;
 
       for (let i = 0; i < board.length; i++) {
         const r = board[i] || {};
         const row = document.createElement("div");
         row.className = "boardRow boardGrid";
+
+        const isWinnerRow =
+          (winnerId && r.id === winnerId) ||
+          (!winnerId && i === 0) ||
+          (r.name && r.name === winnerName);
+
+        if (isWinnerRow) row.classList.add("winner");
 
         const cRank = document.createElement("div");
         cRank.className = "rank";
@@ -1150,13 +1240,13 @@
         }
       }
 
-      // End overlay: Escape closes
+      // End overlay: only allow Enter/Escape to go back
       if (el.endOverlay.classList.contains("show")) {
-        if (e.key === "Escape") {
+        if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
-          el.endOverlay.classList.remove("show");
-          return;
+          location.reload();
         }
+        return;
       }
 
       // Block gameplay hotkeys while UI is up
@@ -1342,7 +1432,6 @@
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
-    // ✅ keep client + server consistent if you listen for decline confirmation
     socket.on("UPGRADE_DECLINED", (p) => {
       if (!p) return;
       if (p.ok) {
@@ -1476,7 +1565,6 @@
         return;
       }
 
-      // errors
       let msg = "Cannot pick: " + (p.reason || "unknown");
       if (p.reason === "not_enough_money") msg = `Not enough money. Need $${p.need}.`;
       if (p.reason === "already_have") msg = "You already have that consumable.";
@@ -1490,7 +1578,6 @@
       const options = Array.isArray(payload?.options) ? payload.options : [];
       activeRespawn = { options };
 
-      // ✅ show killed-by message if provided by server
       if (payload?.killedBy) {
         el.respawnMsg.textContent = "Killed by: " + payload.killedBy;
         el.respawnMsg.className = "msg bad";
@@ -1551,7 +1638,6 @@
       activeRespawn = null;
       el.respawnOverlay.classList.remove("show");
       el.respawnList.innerHTML = "";
-      // keep respawnMsg cleared
       el.respawnMsg.textContent = "";
       el.respawnMsg.className = "msg";
     }
@@ -1598,7 +1684,6 @@
 
       const hotkeys = ["8", "9", "0"];
 
-      // Consumables (3)
       for (let i = 0; i < 3; i++) {
         const s = cons[i];
 
@@ -1647,7 +1732,6 @@
         el.upgradeSlotsCons.appendChild(slot);
       }
 
-      // Permanents (3 types max, can stack with count)
       for (let i = 0; i < 3; i++) {
         const p = perm[i];
 
@@ -2026,7 +2110,6 @@
       ctx.lineWidth = 1;
     }
 
-    // ✅ cakes rendered as emoji projectiles
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
@@ -2040,8 +2123,6 @@
         if (!b) continue;
         const x = b.x - camX;
         const y = b.y - camY;
-
-        // Slightly dim non-self bullets
         ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
         ctx.fillText("🍰", x, y);
       }
@@ -2076,18 +2157,15 @@
       const px = p.x - camX;
       const py = p.y - camY;
 
-      // ✅ invulnerability blink (server invulnUntil)
       const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
       const invuln = (until - Date.now()) > INVULN_SHOW_THRESHOLD_MS;
 
-      // Blink by skipping some frames (simple + cheap)
       const blinkOff = invuln && ((Date.now() % 240) < 110);
       if (blinkOff) return;
 
       ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
       ctx.fillRect(px - 14, py - 14, 28, 28);
 
-      // outline when invuln (more readable than full alpha)
       if (invuln) {
         ctx.save();
         ctx.lineWidth = 3;
@@ -2173,10 +2251,7 @@
 
       const me = lastSnapshot.players.find(p => p.id === myId);
 
-      // ✅ invuln HUD updated every frame for smooth countdown
       updateInvulnHudFromMe(me);
-
-      // ✅ timer HUD updated every frame for smooth countdown
       updateTimerHudFrame();
 
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
@@ -2192,7 +2267,6 @@
 
       drawWalls(camX, camY);
       drawMachines(camX, camY);
-
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
@@ -2244,6 +2318,20 @@
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
+
+    // ===== Helpers for UI closing =====
+    function closeDropPicker() {
+      pendingReplace = null;
+      el.dropOverlay.classList.remove("show");
+      el.dropList.innerHTML = "";
+      el.dropMsg.textContent = "";
+    }
+    function closePrompt() {
+      activePromptId = null;
+      el.overlay.classList.remove("show");
+      el.answer.value = "";
+      el.msg.textContent = "";
+    }
 
     // initial render
     renderUpgradeBar();
