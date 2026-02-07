@@ -1,3 +1,9 @@
+
+---
+
+# ✅ STATE_OF_THE_GAME.md (FULL, corrected, not shortened)
+
+```md
 # Timetable Clowns — State of the Game (Restart Kit)
 
 When starting a NEW chat thread, paste:
@@ -6,6 +12,11 @@ When starting a NEW chat thread, paste:
 3) the file currently being edited
 
 Last updated: 2026-02-07
+
+---
+
+## 🔒 One-liner that prevents future confusion
+**Client may display upgrades, but must never compute gameplay modifiers from them; modifiers come only from `player.mods`.**
 
 ---
 
@@ -144,99 +155,171 @@ Host sends these settings on `createGame`:
 
 ---
 
-## Server-sent MODS migration status (CURRENT)
+## Server-sent MODS migration status (CURRENT) — 🔒 LOCKED
 
 ### Goal (architecture)
 - Server computes gameplay modifiers (“mods”) from upgrades
 - Client uses only `me.mods` for rendering decisions (fog cone, etc.)
 - Client must NOT derive effects from upgrade stacks
 
-### Server reality
-- `server/upgrades/apply.js` contains logic to compute modifiers (mods)
-- **Next required step**: attach mods to each player in `STATE_SNAPSHOT`
+### CURRENT (reality)
+- Server already has upgrades and their stacking counts.
+- Client currently computes fog-of-war cone using permanent stacks (`big_eyes`, `giraffoscope`) directly from `player.upgrades`.
+- This is legacy behavior and expected until mods are attached to snapshots.
 
-### Client reality
-- Client still computes fog effects by reading:
-  - `me.upgrades.permanent` stack counts for `big_eyes` and `giraffoscope`
-- **Next required step**: switch fog to use `me.mods` instead
+### NEXT REQUIRED STEP
+Server must attach computed mods to each player in `STATE_SNAPSHOT`:
 
-### Mods shape (wire contract to implement)
-`players[].mods`:
-- `speedMult` (default 1)
-- `visionLenAdd` (default 0, pixels)
-- `fovAddDeg` (default 0, degrees)
+- `speedMult` (default 1.0)
+- `visionLenAdd` (default 0)
+- `fovAddDeg` (default 0)
 
----
+### AFTER THAT
+Client fog-of-war must read only `me.mods`:
 
-## Current constants (server/index.js)
+- `visionLen = BASE_VISION_LEN + mods.visionLenAdd`
+- `coneDeg = CONE_ANGLE_BASE_DEG + mods.fovAddDeg`
+
+Client stops reading upgrade stacks for fog math.
+
+### Snapshot shape (target)
+```js
+players: [{
+  id, name, teamId,
+  x, y, dirX, dirY,
+  money, cakes, alive, invulnUntil,
+  nextMachineNum,
+  upgrades: { permanent:[...], slots:[...] },   // still sent for UI
+  mods: { speedMult, visionLenAdd, fovAddDeg }, // NEW authoritative computed effects
+  stats: { kills, deaths, correct }
+}]
+
+Mods shape (wire contract to implement)
+
+players[].mods:
+
+speedMult (default 1)
+
+visionLenAdd (default 0, pixels)
+
+fovAddDeg (default 0, degrees)
+
+Current constants (server/index.js)
 
 Movement:
-- `TICK_HZ = 20`
-- `PLAYER_SPEED = 220`
-- `PLAYER_HALF = 14`
+
+TICK_HZ = 20
+
+PLAYER_SPEED = 220
+
+PLAYER_HALF = 14
 
 Interaction:
-- `INTERACT_RADIUS = 60`
-- `MACHINE_HALF = 10`
+
+INTERACT_RADIUS = 60
+
+MACHINE_HALF = 10
 
 Bullets:
-- `BULLET_SPEED = 780`
-- `BULLET_TTL = 2.0`
-- `BULLET_HIT_R_WALL = 4`
-- `BULLET_HIT_R_MACHINE = 6`
-- `CAKE_HIT_R_PLAYER = 12`
-- `FIRE_COOLDOWN = 0.5`
+
+BULLET_SPEED = 780
+
+BULLET_TTL = 2.0
+
+BULLET_HIT_R_WALL = 4
+
+BULLET_HIT_R_MACHINE = 6
+
+CAKE_HIT_R_PLAYER = 12
+
+FIRE_COOLDOWN = 0.5
 
 Respawn:
-- `RESPAWN_INVULN = 0.6`
-- `CORNER_PAD = 80`
+
+RESPAWN_INVULN = 0.6
+
+CORNER_PAD = 80
 
 Ammo:
-- `MAX_CAKES = 7`
+
+MAX_CAKES = 7
 
 Timed sessions:
-- `MIN_SESSION_MIN = 1`
-- `MAX_SESSION_MIN = 60`
+
+MIN_SESSION_MIN = 1
+
+MAX_SESSION_MIN = 60
 
 Win modes:
-- `WIN_MODE_STANDARD = "standard"`
-- `WIN_MODE_MONEY = "money"`
 
----
+WIN_MODE_STANDARD = "standard"
 
-## Wire protocol snapshot (current reality)
+WIN_MODE_MONEY = "money"
+
+Wire protocol snapshot (current reality)
 
 Server → Client events:
-- `WELCOME`
-- `GAME_CREATED`
-- `JOIN_SUCCESS`
-- `JOIN_FAILED`
-- `LOBBY_UPDATE`
-- `GAME_STARTED`
-- `STATE_SNAPSHOT`
-- `MATH_PROMPT`
-- `ANSWER_RESULT`
-- `INTERACT_DENIED`
-- `UPGRADE_OFFER`
-- `UPGRADE_RESULT`
-- `UPGRADE_DECLINED`
-- `UPGRADE_USED`
-- `PLAYER_DIED`
-- `RESPAWN_OPTIONS`
-- `RESPAWN_RESULT`
-- `GAME_ENDED`
+
+WELCOME
+
+GAME_CREATED
+
+JOIN_SUCCESS
+
+JOIN_FAILED
+
+LOBBY_UPDATE
+
+GAME_STARTED
+
+STATE_SNAPSHOT
+
+MATH_PROMPT
+
+ANSWER_RESULT
+
+INTERACT_DENIED
+
+UPGRADE_OFFER
+
+UPGRADE_RESULT
+
+UPGRADE_DECLINED
+
+UPGRADE_USED
+
+PLAYER_DIED
+
+RESPAWN_OPTIONS
+
+RESPAWN_RESULT
+
+GAME_ENDED
 
 Client → Server events:
-- `hello`
-- `createGame`
-- `joinGame`
-- `assignTeam`
-- `startGame`
-- `input`
-- `tryInteract`
-- `submitAnswer`
-- `chooseUpgrade`
-- `declineUpgrade`
-- `chooseUpgradeReplace`
-- `useUpgradeSlot`
-- `chooseRespawn`
+
+hello
+
+createGame
+
+joinGame
+
+assignTeam
+
+startGame
+
+input
+
+tryInteract
+
+submitAnswer
+
+chooseUpgrade
+
+declineUpgrade
+
+chooseUpgradeReplace
+
+useUpgradeSlot
+
+chooseRespawn
