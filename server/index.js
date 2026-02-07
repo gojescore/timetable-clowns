@@ -70,6 +70,10 @@ const MAX_SESSION_MIN = 60;
 const WIN_MODE_STANDARD = "standard"; // your current behavior
 const WIN_MODE_MONEY = "money"; // money wins when time ends
 
+// ✅ Mines
+const MINE_STEP_ON_TRIGGER_R = 32; // enemy-only trigger radius
+const MINE_BLAST_R = 90; // kills everyone inside
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -188,16 +192,6 @@ function snapshotForGame(game) {
     phase: game.phase,
     endAt: Number.isFinite(game.endAt) ? game.endAt : null,
     pickups: Array.isArray(game.pickups) ? game.pickups : [],
-    bullets: Array.isArray(game.bullets)
-      ? game.bullets.map((b) => ({
-          id: b.id,
-          ownerId: b.ownerId,
-          ownerTeamId: b.ownerTeamId,
-          x: b.x,
-          y: b.y,
-        }))
-      : [],
-    // ✅ NEW: mines in snapshots (client can render later)
     mines: Array.isArray(game.mines)
       ? game.mines.map((m) => ({
           id: m.id,
@@ -205,9 +199,19 @@ function snapshotForGame(game) {
           ownerTeamId: m.ownerTeamId,
           x: m.x,
           y: m.y,
-          radius: m.radius,
-          armedAt: m.armedAt,
-          expiresAt: m.expiresAt,
+          armed: Number.isFinite(m.armedAt) ? nowMs >= m.armedAt : true,
+          triggerR: Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R,
+          blastR: Number.isFinite(m.blastR) ? m.blastR : MINE_BLAST_R,
+          r: Number.isFinite(m.r) ? m.r : 26, // visual radius
+        }))
+      : [],
+    bullets: Array.isArray(game.bullets)
+      ? game.bullets.map((b) => ({
+          id: b.id,
+          ownerId: b.ownerId,
+          ownerTeamId: b.ownerTeamId,
+          x: b.x,
+          y: b.y,
         }))
       : [],
     players: [...game.players.values()].map((p) => {
@@ -357,7 +361,6 @@ function makeOfferId() {
 function makeBulletId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
-// ✅ NEW: mine ids
 function makeMineId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
@@ -892,109 +895,116 @@ setInterval(() => {
       if (removed) continue;
     }
 
-    // ✅ NEW: mines (Cake Surprise) tick + detonation
+    // ---- mines ----
     if (!Array.isArray(game.mines)) game.mines = [];
 
-    for (let mi = game.mines.length - 1; mi >= 0; mi--) {
-      const m = game.mines[mi];
+    for (let i = game.mines.length - 1; i >= 0; i--) {
+      const m = game.mines[i];
       if (!m) {
-        game.mines.splice(mi, 1);
+        game.mines.splice(i, 1);
         continue;
       }
 
       // expire
       if (Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
-        game.mines.splice(mi, 1);
+        game.mines.splice(i, 1);
         continue;
       }
 
       // not armed yet
       if (Number.isFinite(m.armedAt) && now < m.armedAt) continue;
 
-      // check players in radius
-      let hitPlayer = null;
+      const triggerR = Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R;
+      const blastR = Number.isFinite(m.blastR) ? m.blastR : MINE_BLAST_R;
+
+      const triggerR2 = triggerR * triggerR;
+      const blastR2 = blastR * blastR;
+
+      // Find an enemy inside trigger radius (allies cannot trigger)
+      let triggeredBy = null;
 
       for (const p of game.players.values()) {
-        if (!p.alive) continue;
+        if (!p || !p.alive) continue;
 
-        // friendly fire rules
+        // owner never triggers their own mine
+        if (p.id === m.ownerId) continue;
+
+        // allies cannot trigger (NO friendly trigger)
         if (game.settings?.mode === GAME_MODE_TEAMS) {
-          const friendlyFire = !!game.settings?.friendlyFire;
-          if (!friendlyFire) {
-            let ownerTeam = m.ownerTeamId;
-            if (ownerTeam === undefined || ownerTeam === null) {
-              const owner = game.players.get(m.ownerId);
-              ownerTeam = owner ? owner.teamId : ownerTeam;
-            }
-            if (ownerTeam !== undefined && ownerTeam !== null && p.teamId === ownerTeam) continue;
-          }
+          const pt = p.teamId;
+          const ot = m.ownerTeamId;
+          if (ot !== null && ot !== undefined && pt === ot) continue;
         }
 
-        if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
-
-        const r = Number.isFinite(m.radius) ? m.radius : 24;
-        if (dist2(p.x, p.y, m.x, m.y) <= r * r) {
-          hitPlayer = p;
+        if (dist2(p.x, p.y, m.x, m.y) <= triggerR2) {
+          triggeredBy = p;
           break;
         }
       }
 
-      if (!hitPlayer) continue;
+      if (!triggeredBy) continue;
 
-      // mine triggers once
-      game.mines.splice(mi, 1);
+      // Explosion: kills EVERYONE in blast radius (including allies + owner)
+      const deaths = [];
 
-      const owner = game.players.get(m.ownerId) || null;
+      for (const p of game.players.values()) {
+        if (!p || !p.alive) continue;
 
-      // shield blocks death (same behavior as bullets)
-      upgrades.ensureEffectState(hitPlayer);
-      if ((hitPlayer.effects.shield | 0) > 0) {
-        hitPlayer.effects.shield = (hitPlayer.effects.shield | 0) - 1;
-        hitPlayer.invulnUntil = now + 250;
+        // Note: invuln applies (dash invuln, respawn invuln, etc.)
+        if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
-        io.to(code).emit("PLAYER_SHIELDED", {
-          playerId: hitPlayer.id,
-          by: owner ? owner.id : null,
-          shieldLeft: hitPlayer.effects.shield | 0,
+        if (dist2(p.x, p.y, m.x, m.y) <= blastR2) {
+          deaths.push(p);
+        }
+      }
+
+      // remove mine first (so it cannot chain-trigger twice)
+      game.mines.splice(i, 1);
+
+      // apply deaths
+      for (const victim of deaths) {
+        victim.alive = false;
+        victim.input = { up: false, down: false, left: false, right: false, fire: false };
+        victim.fireCd = 0;
+        victim.cakes = 0;
+        victim.pendingPrompt = null;
+        victim.pendingUpgradeOffer = null;
+
+        if (!victim.stats) victim.stats = { kills: 0, deaths: 0, correct: 0 };
+        victim.stats.deaths += 1;
+
+        // attribution (optional): say mine owner killed them
+        const owner = game.players.get(m.ownerId) || null;
+        victim.killedByName = owner ? owner.name : "Mine";
+        victim.killedById = owner ? owner.id : null;
+
+        const opts = buildRespawnOptions(game, victim);
+        victim.pendingRespawn = {
+          options: opts.map((o) => o.id),
+          createdAt: now,
+        };
+
+        io.to(victim.socketId).emit("RESPAWN_OPTIONS", {
+          killedBy: victim.killedByName || "Mine",
+          options: opts.map((o) => ({
+            id: o.id,
+            label: o.label,
+            kind: o.kind,
+          })),
         });
-        continue;
+
+        io.to(code).emit("PLAYER_DIED", { playerId: victim.id });
       }
 
-      // stats
-      if (owner) {
-        if (!owner.stats) owner.stats = { kills: 0, deaths: 0, correct: 0 };
-        owner.stats.kills += 1;
-      }
-      if (!hitPlayer.stats) hitPlayer.stats = { kills: 0, deaths: 0, correct: 0 };
-      hitPlayer.stats.deaths += 1;
-
-      // killed-by info
-      hitPlayer.killedByName = owner ? owner.name : "Unknown";
-      hitPlayer.killedById = owner ? owner.id : null;
-
-      hitPlayer.alive = false;
-      hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
-      hitPlayer.fireCd = 0;
-      hitPlayer.cakes = 0;
-      hitPlayer.pendingPrompt = null;
-      hitPlayer.pendingUpgradeOffer = null;
-
-      const opts = buildRespawnOptions(game, hitPlayer);
-      hitPlayer.pendingRespawn = {
-        options: opts.map((o) => o.id),
-        createdAt: now,
-      };
-
-      io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
-        killedBy: hitPlayer.killedByName || "Unknown",
-        options: opts.map((o) => ({
-          id: o.id,
-          label: o.label,
-          kind: o.kind,
-        })),
+      // optional fx event for client particles/sound
+      io.to(code).emit("MINE_EXPLODED", {
+        id: m.id,
+        x: m.x,
+        y: m.y,
+        blastR,
+        triggeredBy: triggeredBy ? triggeredBy.id : null,
+        ownerId: m.ownerId || null,
       });
-
-      io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
     }
 
     // economy + broadcast
@@ -1064,8 +1074,8 @@ io.on("connection", (socket) => {
       map: null,
       players: new Map(),
       pickups: [],
+      mines: [], // ✅ mines live here
       bullets: [],
-      mines: [], // ✅ NEW
       upgradePool: null,
 
       startedAt: null,
@@ -1278,8 +1288,8 @@ io.on("connection", (socket) => {
     }
 
     game.pickups = [];
+    game.mines = []; // ✅ reset mines
     game.bullets = [];
-    game.mines = []; // ✅ NEW
 
     game.phase = "running";
     game.startedAt = Date.now();
@@ -1623,7 +1633,7 @@ io.on("connection", (socket) => {
       return socket.emit("UPGRADE_USED", { ok: false, reason: res.reason || "use_failed" });
     }
 
-    // apply actions (now supports invuln + mines)
+    // apply actions
     if (Array.isArray(res.actions)) {
       for (const a of res.actions) {
         if (!a || typeof a.type !== "string") continue;
@@ -1633,84 +1643,44 @@ io.on("connection", (socket) => {
           if (Number.isFinite(untilMs)) p.invulnUntil = Math.max(p.invulnUntil || 0, untilMs);
         }
 
-        // ✅ NEW: mine spawn action from apply.js (Cake Surprise)
         if (a.type === "spawn_mine_at_player") {
-          const params = a.params || {};
-          const radius = Number.isFinite(params.radius) ? params.radius : 24;
-          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : 20;
-          const armDelaySec = Number.isFinite(params.armDelaySec) ? params.armDelaySec : 0.6;
-
           if (!Array.isArray(game.mines)) game.mines = [];
 
-          // Try to place at/near player, avoiding walls/machines (simple point-vs-expanded-AABB)
-          const tries = 16;
-          const step = 18;
+          const params = a.params || {};
+          const armDelaySec = Number.isFinite(params.armDelaySec) ? params.armDelaySec : 0.6;
+          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : 25;
 
-          function pointBlocked(x, y, r) {
-            // walls
-            if (Array.isArray(game.map?.walls)) {
-              for (const w of game.map.walls) {
-                const rx = w.x - r;
-                const ry = w.y - r;
-                const rw = w.w + r * 2;
-                const rh = w.h + r * 2;
-                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
-              }
-            }
-            // machines
-            if (Array.isArray(game.map?.machines)) {
-              for (const mm of game.map.machines) {
-                const bx = mm.x - MACHINE_HALF;
-                const by = mm.y - MACHINE_HALF;
-                const bw = MACHINE_HALF * 2;
-                const bh = MACHINE_HALF * 2;
-
-                const rx = bx - r;
-                const ry = by - r;
-                const rw = bw + r * 2;
-                const rh = bh + r * 2;
-                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
-              }
-            }
-            return false;
-          }
-
-          let placed = null;
-
-          // try player position first
-          if (!pointBlocked(p.x, p.y, radius)) {
-            placed = { x: p.x, y: p.y };
-          } else {
-            for (let t = 0; t < tries; t++) {
-              const ang = (t / tries) * Math.PI * 2;
-              const x = p.x + Math.cos(ang) * step;
-              const y = p.y + Math.sin(ang) * step;
-              if (!pointBlocked(x, y, radius)) {
-                placed = { x, y };
-                break;
-              }
-            }
-          }
-
-          if (!placed) {
-            // no safe place -> refund and fail
-            p.money += useCost;
-            return socket.emit("UPGRADE_USED", { ok: false, reason: "mine_no_space" });
-          }
-
-          game.mines.push({
+          const mine = {
             id: makeMineId(),
             ownerId: p.id,
             ownerTeamId: p.teamId,
-            x: placed.x,
-            y: placed.y,
-            radius,
+            x: p.x,
+            y: p.y,
+
+            r: Number.isFinite(params.radius) ? params.radius : 26, // visual radius
+
+            triggerR: Number.isFinite(params.triggerRadius) ? params.triggerRadius : MINE_STEP_ON_TRIGGER_R,
+            blastR: Number.isFinite(params.blastRadius) ? params.blastRadius : MINE_BLAST_R,
+
             armedAt: nowMs + Math.floor(armDelaySec * 1000),
             expiresAt: nowMs + Math.floor(ttlSec * 1000),
+          };
+
+          game.mines.push(mine);
+
+          io.to(code).emit("MINE_PLACED", {
+            id: mine.id,
+            ownerId: mine.ownerId,
+            x: mine.x,
+            y: mine.y,
+            armedAt: mine.armedAt,
+            triggerR: mine.triggerR,
+            blastR: mine.blastR,
+            r: mine.r,
           });
         }
 
-        // Other action types (banana_shot) can be wired next (incremental).
+        // Other action types (banana_shot etc.) will be wired later.
       }
     }
 
