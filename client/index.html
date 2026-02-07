@@ -2045,9 +2045,13 @@ function getConeAngleDegForMe(me){
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
       visCtx.fillStyle = "rgba(255,255,255,1)";
+      const giraffeStacks = getPermCountFromMe(meObj, "giraffoscope");
+      const visionLen = Math.min(VISION_LEN_MAX, BASE_VISION_LEN + giraffeStacks * VISION_LEN_PER_STACK);
+
       const okCone = fillConeFromPlayerApex(
-        visCtx, meX, meY, ang, half, VISION_LEN, segs, cornerAngles
-      );
+      visCtx, meX, meY, ang, half, visionLen, segs, cornerAngles
+);
+
 
       visCtx.beginPath();
       visCtx.arc(meX, meY, 2, 0, Math.PI*2);
