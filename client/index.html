@@ -719,10 +719,7 @@
       mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
 
-      // ✅ new: win mode
       winMode: document.getElementById("winMode"),
-
-      // ✅ new: session
       sessionMode: document.getElementById("sessionMode"),
       sessionMinutes: document.getElementById("sessionMinutes"),
 
@@ -784,7 +781,6 @@
       respawnCloseBtn: document.getElementById("respawnCloseBtn"),
       respawnMsg: document.getElementById("respawnMsg"),
 
-      // ✅ end screen (solo button)
       endOverlay: document.getElementById("endOverlay"),
       endBoard: document.getElementById("endBoard"),
       endBackBtn: document.getElementById("endBackBtn"),
@@ -814,16 +810,12 @@
     let pendingReplace = null;
     let activeRespawn = null;
 
-    // UI expects the SNAPSHOT shape: { permanent:[{id,count,info}], slots:[{id,info}] }
+    // SNAPSHOT shape: { permanent:[{id,count,info}], slots:[{id,info}] }
     let myServerUpgrades = { permanent: [], slots: [] };
 
     const INTERACT_RADIUS = 60;
-
-    // ✅ cakes config (HUD starts with 7)
     const MAX_CAKES = 7;
-
-    // ✅ invuln UI tuning
-    const INVULN_SHOW_THRESHOLD_MS = 80; // show only if > 0.08s remaining
+    const INVULN_SHOW_THRESHOLD_MS = 80;
 
     // ✅ timed session UI/runtime
     let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
@@ -841,13 +833,8 @@
       }
       gameEndAt = endAt;
       const msLeft = endAt - Date.now();
-      if (msLeft > 0) {
-        el.hudTimer.classList.remove("hidden");
-        el.hudTimerText.textContent = formatMMSS(msLeft);
-      } else {
-        el.hudTimer.classList.remove("hidden");
-        el.hudTimerText.textContent = "00:00";
-      }
+      el.hudTimer.classList.remove("hidden");
+      el.hudTimerText.textContent = msLeft > 0 ? formatMMSS(msLeft) : "00:00";
     }
     function updateTimerHudFrame(){
       if (!Number.isFinite(gameEndAt)) return;
@@ -1035,7 +1022,6 @@
 
     // ✅ GAME_ENDED + bigger leaderboard + TEAM winner highlight
     socket.on("GAME_ENDED", (p = {}) => {
-      // stop gameplay input effects immediately
       inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
       sendInput();
 
@@ -1060,7 +1046,6 @@
       const winnerTeam = (p.winnerTeamId === null || p.winnerTeamId === undefined) ? null : Number(p.winnerTeamId);
       const winMode = String(p.winMode || (settings?.winMode || "standard"));
 
-      // Big winner banner: highlight TEAM strongly in teams
       if (winnerTeam === null || Number.isNaN(winnerTeam)) {
         el.winnerLabel.textContent = "Winner";
         el.endWinnerBig.textContent = winnerName;
@@ -1082,9 +1067,6 @@
         const row = document.createElement("div");
         row.className = "boardRow boardGrid";
 
-        // ✅ highlight logic:
-        // - teams: highlight every row in winnerTeamId
-        // - ffa: highlight winnerId / first row fallback
         const isWinnerRow =
           (winnerTeam !== null && !Number.isNaN(winnerTeam))
             ? (Number(r.teamId) === winnerTeam)
@@ -1204,6 +1186,11 @@
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
     }
+    function isTypingInForm(e){
+      const t = e.target;
+      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+      return (tag === "input" || tag === "textarea" || tag === "select");
+    }
     function sendInput(){
       socket.emit("input", inputState);
     }
@@ -1211,11 +1198,7 @@
     function setKey(e, isDown){
       if (!isGameRunning()) return;
       if (isUiBlockingInput()) return;
-
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
+      if (isTypingInForm(e)) return;
 
       const k = e.key.toLowerCase();
       let used = true;
@@ -1230,48 +1213,15 @@
       if (used) { e.preventDefault(); sendInput(); }
     }
 
+    // Movement ONLY
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
 
-    window.addEventListener("keydown", (e) => {
-      if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
-
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
-
-      if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
-    });
-
-    // ✅ single keydown handler for:
-    // - drop overlay 8/9/0
-    // - upgrade overlay Escape
-    // - upgrade slot usage 8/9/0
+    // Non-movement hotkeys in ONE place (prevents nested/duplicate handlers)
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
-      // Drop overlay choose stage: 8/9/0 selects what to drop
-      if (el.dropOverlay.classList.contains("show") && pendingReplace?.stage === "choose") {
-        if (e.key === "8" || e.key === "9" || e.key === "0") {
-          e.preventDefault();
-          const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
-          chooseDropByIndex(slotIndex);
-          return;
-        }
-      }
-
-      // Upgrade picker open: Escape closes and declines offer server-side
-      if (el.upgradeOverlay.classList.contains("show")) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          closeUpgradeOffer();
-          return;
-        }
-      }
-
-      // End overlay: only allow Enter/Escape to go back
+      // end overlay: only allow Enter/Escape to go back
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
@@ -1280,32 +1230,79 @@
         return;
       }
 
-      // Block gameplay hotkeys while UI is up
-      if (isUiBlockingInput()) return;
+      // Drop overlay: Y/N / Escape, and 8/9/0 selection in choose stage
+      if (el.dropOverlay.classList.contains("show")) {
+        const k = e.key.toLowerCase();
 
-      // Ignore typing in inputs
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
+        if (pendingReplace?.stage === "ask") {
+          if (k === "y") { e.preventDefault(); enterReplaceChooseStage(); return; }
+          if (k === "n" || k === "escape") { e.preventDefault(); declineReplace(); return; }
+          return;
+        }
+
+        if (pendingReplace?.stage === "choose") {
+          if (e.key === "8" || e.key === "9" || e.key === "0") {
+            e.preventDefault();
+            const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
+            chooseDropByIndex(slotIndex);
+            return;
+          }
+          if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
+          return;
+        }
+
+        return;
+      }
+
+      // Upgrade picker open: Escape closes and declines offer server-side
+      if (el.upgradeOverlay.classList.contains("show")) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeUpgradeOffer();
+        }
+        return;
+      }
+
+      // Respawn overlay open: no gameplay hotkeys
+      if (el.respawnOverlay.classList.contains("show")) return;
+
+      // Prompt open: no gameplay hotkeys (movement already blocked by isUiBlockingInput in setKey)
+      if (el.overlay.classList.contains("show")) return;
+
+      // ignore typing in inputs
+      if (isTypingInForm(e)) return;
+
+      const k = e.key.toLowerCase();
+
+      // Interact
+      if (k === "e") {
+        e.preventDefault();
+        socket.emit("tryInteract");
+        return;
+      }
+
+      // Debug
+      if (k === "v") {
+        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
+        e.preventDefault();
+        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
+        return;
+      }
+      if (k === "b") {
+        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
+        e.preventDefault();
+        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
+        return;
+      }
+
+      // Block gameplay hotkeys while any UI is up (extra safety)
+      if (isUiBlockingInput()) return;
 
       // Use upgrade slots 8/9/0 (consumables only)
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
         socket.emit("useUpgradeSlot", { slotIndex });
-      }
-    });
-
-    window.addEventListener("keydown", (e) => {
-      if (!el.dropOverlay.classList.contains("show")) return;
-
-      const k = e.key.toLowerCase();
-      if (pendingReplace?.stage === "ask") {
-        if (k === "y") { e.preventDefault(); enterReplaceChooseStage(); return; }
-        if (k === "n" || k === "escape") { e.preventDefault(); declineReplace(); return; }
-      } else if (pendingReplace?.stage === "choose") {
-        if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
       }
     });
 
@@ -1353,6 +1350,7 @@
       el.overlay.classList.remove("show");
       el.answer.value = "";
       el.msg.textContent = "";
+      el.msg.className = "msg";
     }
     function submitPrompt() {
       const val = el.answer.value.trim();
@@ -1453,11 +1451,11 @@
       if (activeOfferId) {
         socket.emit("declineUpgrade", { offerId: activeOfferId });
       }
-
       activeOfferId = null;
       el.upgradeOverlay.classList.remove("show");
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
+      el.upgradeMsg.className = "msg";
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
@@ -1470,6 +1468,7 @@
         el.upgradeOverlay.classList.remove("show");
         el.upgradeList.innerHTML = "";
         el.upgradeMsg.textContent = "";
+        el.upgradeMsg.className = "msg";
       }
     });
 
@@ -1567,6 +1566,7 @@
       el.dropOverlay.classList.remove("show");
       el.dropList.innerHTML = "";
       el.dropMsg.textContent = "";
+      el.dropMsg.className = "msg";
     }
 
     el.dropCancelBtn.addEventListener("click", () => closeDropPicker());
@@ -1875,31 +1875,34 @@
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
-const BASE_VISION_LEN = 420;
+    // ✅ BASE values (client)
+    const BASE_VISION_LEN = 420;
+    const CONE_ANGLE_BASE_DEG = 92;
+    const CONE_ANGLE_MAX_DEG = 160;
+    const VISION_LEN_MAX = 2400;
 
-// ✅ Giraffoscope stacks: longer cone per stack
-const VISION_LEN_PER_STACK = 80;  // "much longer" each time
-const VISION_LEN_MAX = 2000;       // safety cap so it doesn't get crazy
-
-
-// ✅ Glasses (big_eyes) effect: widen cone per stack
-const CONE_ANGLE_BASE_DEG = 92;
-const CONE_ANGLE_PER_STACK_DEG = 10;
-const CONE_ANGLE_MAX_DEG = 160;
-
-function getPermCountFromMe(me, upgradeId){
-  const perm = me?.upgrades?.permanent;
-  if (!Array.isArray(perm)) return 0;
-  const row = perm.find(x => x && x.id === upgradeId);
-  return Number.isFinite(row?.count) ? row.count : 0;
-}
-
-function getConeAngleDegForMe(me){
-  const stacks = getPermCountFromMe(me, "big_eyes"); // ✅ still the id
-  const deg = CONE_ANGLE_BASE_DEG + stacks * CONE_ANGLE_PER_STACK_DEG;
-  return Math.min(CONE_ANGLE_MAX_DEG, deg);
-}
-
+    // ✅ prefer server-computed mods (snapshot.players[].mods)
+    function getModsForMe(me){
+      const m = me?.mods;
+      if (!m) return { fovAdd: 0, visionLenAdd: 0, visionMult: 1, speedMult: 1 };
+      return {
+        fovAdd: Number.isFinite(m.fovAdd) ? m.fovAdd : 0,              // radians
+        visionLenAdd: Number.isFinite(m.visionLenAdd) ? m.visionLenAdd : 0, // pixels
+        visionMult: Number.isFinite(m.visionMult) ? m.visionMult : 1,
+        speedMult: Number.isFinite(m.speedMult) ? m.speedMult : 1,
+      };
+    }
+    function getConeAngleDegForMe(me){
+      const mods = getModsForMe(me);
+      const addDeg = (mods.fovAdd || 0) * (180 / Math.PI);
+      const deg = CONE_ANGLE_BASE_DEG + addDeg;
+      return Math.max(20, Math.min(CONE_ANGLE_MAX_DEG, deg));
+    }
+    function getVisionLenForMe(me){
+      const mods = getModsForMe(me);
+      const len = (BASE_VISION_LEN + (mods.visionLenAdd || 0)) * (mods.visionMult || 1);
+      return Math.max(120, Math.min(VISION_LEN_MAX, len));
+    }
 
     const EDGE_BLUR_PX = 14;
     const EDGE_STRENGTH = 0.75;
@@ -2011,13 +2014,14 @@ function getConeAngleDegForMe(me){
       return true;
     }
 
-    function renderFogMask(meWorldX, meWorldY, dirX, dirY, camX, camY) {
+    function renderFogMask(meObj, camX, camY) {
       if (!FOG_ENABLED) return;
+      if (!meObj) return;
 
       resizeFogCanvases();
 
-      const meX = meWorldX - camX;
-      const meY = meWorldY - camY;
+      const meX = meObj.x - camX;
+      const meY = meObj.y - camY;
 
       const segsWorld = segsFromWalls(mapData?.walls || []);
       const segs = segsWorld.map(s => ({
@@ -2025,19 +2029,19 @@ function getConeAngleDegForMe(me){
         bx: s.bx - camX, by: s.by - camY
       }));
 
-      const dx = (typeof dirX === "number") ? dirX : 0;
-      const dy = (typeof dirY === "number") ? dirY : 0;
+      const dx = (typeof meObj.dirX === "number") ? meObj.dirX : 0;
+      const dy = (typeof meObj.dirY === "number") ? meObj.dirY : 0;
 
       const hasDir = (dx*dx + dy*dy) > 0.0001;
       if (hasDir) lastFacingAng = Math.atan2(dy, dx);
 
       const ang = lastFacingAng;
-      const meObj = lastSnapshot?.players?.find(p => p.id === myId);
+
       const coneDeg = getConeAngleDegForMe(meObj);
       const half = (coneDeg * Math.PI / 180) / 2;
 
-
-      const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
+      const cornerAngles = getWallCornerAngles(meObj.x, meObj.y);
+      const visionLen = getVisionLenForMe(meObj);
 
       visCtx.save();
       visCtx.globalCompositeOperation = "source-over";
@@ -2045,13 +2049,9 @@ function getConeAngleDegForMe(me){
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
       visCtx.fillStyle = "rgba(255,255,255,1)";
-      const giraffeStacks = getPermCountFromMe(meObj, "giraffoscope");
-      const visionLen = Math.min(VISION_LEN_MAX, BASE_VISION_LEN + giraffeStacks * VISION_LEN_PER_STACK);
-
       const okCone = fillConeFromPlayerApex(
-      visCtx, meX, meY, ang, half, visionLen, segs, cornerAngles
-);
-
+        visCtx, meX, meY, ang, half, visionLen, segs, cornerAngles
+      );
 
       visCtx.beginPath();
       visCtx.arc(meX, meY, 2, 0, Math.PI*2);
@@ -2289,22 +2289,6 @@ function getConeAngleDegForMe(me){
       ctx.lineWidth = 1;
     }
 
-    window.addEventListener("keydown", (e) => {
-      if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
-
-      if (e.key.toLowerCase() === "v") {
-        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
-        e.preventDefault();
-        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
-      }
-      if (e.key.toLowerCase() === "b") {
-        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
-        e.preventDefault();
-        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
-      }
-    });
-
     function draw(){
       if (!lastSnapshot) return;
 
@@ -2335,10 +2319,7 @@ function getConeAngleDegForMe(me){
       }
 
       if (me) {
-        const dirX = (typeof me.dirX === "number") ? me.dirX : 1;
-        const dirY = (typeof me.dirY === "number") ? me.dirY : 0;
-
-        renderFogMask(me.x, me.y, dirX, dirY, camX, camY);
+        renderFogMask(me, camX, camY);
 
         if (DEBUG_SHOW_VIS) {
           ctx.save();
@@ -2379,20 +2360,6 @@ function getConeAngleDegForMe(me){
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
-
-    // ===== Helpers for UI closing =====
-    function closeDropPicker() {
-      pendingReplace = null;
-      el.dropOverlay.classList.remove("show");
-      el.dropList.innerHTML = "";
-      el.dropMsg.textContent = "";
-    }
-    function closePrompt() {
-      activePromptId = null;
-      el.overlay.classList.remove("show");
-      el.answer.value = "";
-      el.msg.textContent = "";
-    }
 
     // initial render
     renderUpgradeBar();
