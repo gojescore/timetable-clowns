@@ -134,6 +134,22 @@ Host sends these settings on `createGame`:
     - server returns `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
     - client shows replace UI and can send `chooseUpgradeReplace`
 
+#### Permanent fog upgrades (implemented)
+Two permanent upgrades affect fog-of-war rendering:
+
+**Glasses (`big_eyes`)**
+- Widens fog cone angle
+- Stacks linearly (client uses stack count from snapshot)
+
+**Giraffoscope**
+- Increases fog cone length
+- Stacks linearly (client uses stack count from snapshot)
+
+Client fog currently computes:
+- `coneAngleDeg = BASE + stacks(big_eyes) * perStack`
+- `visionLen = BASE + stacks(giraffoscope) * perStack`
+(with caps to avoid extreme values)
+
 ### Death + respawn
 - Players can be killed by bullets
 - On death:
@@ -206,7 +222,7 @@ Host sends these settings on `createGame`:
 
 ### Consumable effects / usesLeft semantics (depends on upgrades module decisions)
 - `useUpgradeSlot` charges money and emits `UPGRADE_USED`
-- If you want gameplay effects (speed, vision, etc.), implement server-side effects in upgrades module and reflect any “usesLeft” decrement/removal rules consistently in snapshots.
+- If you want gameplay effects (speed, vision beyond fog, etc.), implement server-side effects in upgrades module and reflect any “usesLeft” decrement/removal rules consistently in snapshots.
 
 ### Optional: richer end-of-game flows
 - Host ends match early
