@@ -1668,16 +1668,7 @@ io.on("connection", (socket) => {
 
           game.mines.push(mine);
 
-          io.to(code).emit("MINE_PLACED", {
-            id: mine.id,
-            ownerId: mine.ownerId,
-            x: mine.x,
-            y: mine.y,
-            armedAt: mine.armedAt,
-            triggerR: mine.triggerR,
-            blastR: mine.blastR,
-            r: mine.r,
-          });
+
         }
 
         // Other action types (banana_shot etc.) will be wired later.
