@@ -66,9 +66,9 @@ const SESSION_TIMED = "timed";
 const MIN_SESSION_MIN = 1;
 const MAX_SESSION_MIN = 60;
 
-// ✅ Win modes (NEW)
+// ✅ Win modes
 const WIN_MODE_STANDARD = "standard"; // your current behavior
-const WIN_MODE_MONEY = "money";       // money wins when time ends
+const WIN_MODE_MONEY = "money"; // money wins when time ends
 
 // In-memory game store
 const games = Object.create(null);
@@ -135,18 +135,14 @@ function removePlayerFromGame(io, game, playerId) {
   emitLobbyUpdate(io, game);
 }
 
-// ✅ NEW: movement speed affected by permanent upgrades (XL Shoes)
-function getMoveSpeed(player) {
+// ✅ Movement speed uses server-side computed mods (XL shoes later, dash, etc.)
+function getMoveSpeed(player, nowMs) {
   const base = PLAYER_SPEED;
-
-  const slots = player?.upgrades?.permSlots;
-  if (!Array.isArray(slots)) return base;
-
-  const xl = slots.find((s) => s.id === "xl_shoes");
-  const count = Number.isFinite(xl?.count) ? xl.count : 0;
-
-  // +10% per stack
-  return base * (1 + 0.10 * count);
+  upgrades.ensureUpgradeState(player);
+  upgrades.ensureEffectState(player);
+  const mods = upgrades.computePlayerMods(player, nowMs);
+  const mult = Number.isFinite(mods?.speedMult) ? mods.speedMult : 1.0;
+  return base * mult;
 }
 
 // --- Collision helpers (AABB)
@@ -203,9 +199,9 @@ function snapshotForGame(game) {
       : [],
     players: [...game.players.values()].map((p) => {
       upgrades.ensureUpgradeState(p);
-      upgrades.ensureEffectState(p); // ✅ ensures p.effects exists before computing mods
+      upgrades.ensureEffectState(p);
 
-      const mods = upgrades.computePlayerMods(p, nowMs); // ✅ NEW: expose computed mods in snapshot
+      const mods = upgrades.computePlayerMods(p, nowMs);
 
       const perm = (p.upgrades.permSlots || []).map((s) => ({
         id: s.id,
@@ -231,14 +227,13 @@ function snapshotForGame(game) {
         money: typeof p.money === "number" ? p.money : 0,
         upgrades: { permanent: perm, slots: cons },
 
-        // ✅ NEW: upgrade/fx modifiers for client-side fog + cone later
+        // ✅ NEW: upgrade/fx modifiers for client-side fog rendering
         mods,
 
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
 
-        // stats (for leaderboard)
         stats: {
           kills: p.stats?.kills || 0,
           deaths: p.stats?.deaths || 0,
@@ -289,8 +284,10 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, r) {
 
 // ✅ Sweep segment vs AABB returning earliest hit t (0..1), slab method.
 function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
-  const minX = rx, maxX = rx + rw;
-  const minY = ry, maxY = ry + rh;
+  const minX = rx,
+    maxX = rx + rw;
+  const minY = ry,
+    maxY = ry + rh;
 
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -307,7 +304,11 @@ function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
     const inv = 1 / dx;
     let t1 = (minX - x1) * inv;
     let t2 = (maxX - x1) * inv;
-    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
     tmin = Math.max(tmin, t1);
     tmax = Math.min(tmax, t2);
     if (tmin > tmax) return null;
@@ -320,7 +321,11 @@ function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
     const inv = 1 / dy;
     let t1 = (minY - y1) * inv;
     let t2 = (maxY - y1) * inv;
-    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
     tmin = Math.max(tmin, t1);
     tmax = Math.min(tmax, t2);
     if (tmin > tmax) return null;
@@ -385,10 +390,6 @@ function buildRespawnOptions(game, player) {
   return [...corners, ...machines];
 }
 
-function findRespawnById(options, spawnId) {
-  return options.find((o) => o.id === spawnId) || null;
-}
-
 function forceToValidPos(game, x, y) {
   const world = getWorldForGame(game);
   const minX = PLAYER_HALF;
@@ -424,23 +425,11 @@ function getWinMode(game) {
 function compareRowsForGame(game, a, b) {
   const winMode = getWinMode(game);
 
-  // Money mode: money decides first
   if (winMode === WIN_MODE_MONEY) {
-    return (
-      (b.money - a.money) ||
-      (b.correct - a.correct) ||
-      (b.kills - a.kills) ||
-      (a.deaths - b.deaths)
-    );
+    return (b.money - a.money) || (b.correct - a.correct) || (b.kills - a.kills) || (a.deaths - b.deaths);
   }
 
-  // Standard mode: your existing sorting
-  return (
-    (b.correct - a.correct) ||
-    (b.kills - a.kills) ||
-    (b.money - a.money) ||
-    (a.deaths - b.deaths)
-  );
+  return (b.correct - a.correct) || (b.kills - a.kills) || (b.money - a.money) || (a.deaths - b.deaths);
 }
 
 function buildLeaderboard(game) {
@@ -458,7 +447,6 @@ function buildLeaderboard(game) {
 }
 
 function computeTeamWinner(game, leaderboard) {
-  // Team aggregates: sum money/correct/kills/deaths
   const byTeam = new Map();
 
   for (const row of leaderboard) {
@@ -474,46 +462,28 @@ function computeTeamWinner(game, leaderboard) {
 
   const teams = [...byTeam.values()];
   if (!teams.length) {
-    // fallback: treat as FFA
     const top = leaderboard[0] || null;
-    return {
-      winnerTeamId: null,
-      winnerId: top ? top.id : null,
-      winnerName: top ? top.name : null,
-    };
+    return { winnerTeamId: null, winnerId: top ? top.id : null, winnerName: top ? top.name : null };
   }
 
   teams.sort((a, b) => compareRowsForGame(game, a, b));
 
   const winnerTeamId = teams[0].teamId;
-
-  // representative player (so UI can still highlight a row if it wants)
   const topPlayer = leaderboard.find((r) => r.teamId === winnerTeamId) || leaderboard[0] || null;
 
-  return {
-    winnerTeamId,
-    winnerId: topPlayer ? topPlayer.id : null,
-    winnerName: topPlayer ? topPlayer.name : null,
-  };
+  return { winnerTeamId, winnerId: topPlayer ? topPlayer.id : null, winnerName: topPlayer ? topPlayer.name : null };
 }
 
 function computeWinners(game, extra = {}) {
-  // Always returns { winnerId, winnerName, winnerTeamId } (values may be null, but keys always present)
   const leaderboard = buildLeaderboard(game);
 
-  // If caller explicitly forced winnerId/winnerName (machine10), respect that.
   const forcedWinnerId = extra && typeof extra.winnerId === "string" ? extra.winnerId : null;
   const forcedWinnerName = extra && typeof extra.winnerName === "string" ? extra.winnerName : null;
 
-  // In TEAMS, even a forced winner should produce a winnerTeamId
   if (forcedWinnerId) {
     const pl = game.players.get(forcedWinnerId) || null;
-
-    // ✅ In Teams mode: winnerTeamId is the team of the forced winner
     const winnerTeamId =
-      game.settings?.mode === GAME_MODE_TEAMS
-        ? (pl && Number.isFinite(pl.teamId) ? pl.teamId : null)
-        : null;
+      game.settings?.mode === GAME_MODE_TEAMS ? (pl && Number.isFinite(pl.teamId) ? pl.teamId : null) : null;
 
     return {
       leaderboard,
@@ -523,19 +493,13 @@ function computeWinners(game, extra = {}) {
     };
   }
 
-  // Otherwise compute winner from leaderboard (FFA) or team aggregates (Teams)
   if (game.settings?.mode === GAME_MODE_TEAMS) {
     const t = computeTeamWinner(game, leaderboard);
     return { leaderboard, winnerId: t.winnerId, winnerName: t.winnerName, winnerTeamId: t.winnerTeamId };
   }
 
   const top = leaderboard[0] || null;
-  return {
-    leaderboard,
-    winnerId: top ? top.id : null,
-    winnerName: top ? top.name : null,
-    winnerTeamId: null,
-  };
+  return { leaderboard, winnerId: top ? top.id : null, winnerName: top ? top.name : null, winnerTeamId: null };
 }
 
 function endGame(io, game, reason, extra = {}) {
@@ -547,31 +511,24 @@ function endGame(io, game, reason, extra = {}) {
   const winners = computeWinners(game, extra);
 
   const payload = {
-    // allow extra info, but prevent overriding canonical end fields
     ...extra,
-
     reason,
     endedAt: game.endedAt,
 
-    // ✅ ALWAYS present + protected
     winnerId: winners.winnerId,
     winnerName: winners.winnerName,
     winnerTeamId: winners.winnerTeamId,
 
     leaderboard: winners.leaderboard,
-
-    // helpful to show on end screen if you want
     winMode: getWinMode(game),
   };
 
   io.to(game.code).emit("GAME_ENDED", payload);
-
-  // Optional: send one final snapshot so clients can freeze HUD state
   io.to(game.code).emit("STATE_SNAPSHOT", snapshotForGame(game));
 }
 
 // --------------------
-// Express + HTTP + Socket.IO (✅ only once)
+// Express + HTTP + Socket.IO
 // --------------------
 const app = express();
 const server = http.createServer(app);
@@ -596,12 +553,7 @@ setInterval(() => {
     if (!game || game.phase !== "running") continue;
 
     // ✅ timed end check
-    if (
-      game.settings?.sessionMode === SESSION_TIMED &&
-      Number.isFinite(game.endAt) &&
-      now >= game.endAt
-    ) {
-      // winner selection depends on settings.winMode (standard/money)
+    if (game.settings?.sessionMode === SESSION_TIMED && Number.isFinite(game.endAt) && now >= game.endAt) {
       endGame(io, game, "time");
       continue;
     }
@@ -617,7 +569,8 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
@@ -631,8 +584,8 @@ setInterval(() => {
         p.dirY = vy;
       }
 
-      // ✅ NEW: upgrade-driven speed (XL shoes stacks)
-      const speed = getMoveSpeed(p);
+      // ✅ NEW: speed from server-computed mods (perm + dash, etc.)
+      const speed = getMoveSpeed(p, now);
 
       const nextX = p.x + vx * speed * dt;
       const nextY = p.y + vy * speed * dt;
@@ -721,7 +674,6 @@ setInterval(() => {
         }
 
         if (!okSpawn) {
-          // Don’t consume ammo; treat like “blocked shot”
           p.fireCd = FIRE_COOLDOWN;
           continue;
         }
@@ -761,7 +713,10 @@ setInterval(() => {
         continue;
       }
 
-      const travel = BULLET_SPEED * dt;
+      // ✅ use bullet’s actual speed (supports special shots later)
+      const bSpeed = Math.hypot(b.vx || 0, b.vy || 0) || BULLET_SPEED;
+      const travel = bSpeed * dt;
+
       const maxStep = 10;
       const steps = Math.max(1, Math.ceil(travel / maxStep));
       const stepDt = dt / steps;
@@ -815,7 +770,6 @@ setInterval(() => {
         }
 
         if (bestT !== null) {
-          // place bullet at impact point for correctness (even if we remove it)
           b.x = prevX + (nextX - prevX) * bestT;
           b.y = prevY + (nextY - prevY) * bestT;
 
@@ -863,6 +817,21 @@ setInterval(() => {
           removed = true;
 
           const shooter = game.players.get(b.ownerId) || null;
+
+          // ✅ Shield handling (consumable/permanent effects may set p.effects.shield)
+          upgrades.ensureEffectState(hitPlayer);
+          if ((hitPlayer.effects.shield | 0) > 0) {
+            hitPlayer.effects.shield = (hitPlayer.effects.shield | 0) - 1;
+            // brief invuln so you can “feel” the shield
+            hitPlayer.invulnUntil = now + 250;
+
+            io.to(code).emit("PLAYER_SHIELDED", {
+              playerId: hitPlayer.id,
+              by: shooter ? shooter.id : null,
+              shieldLeft: hitPlayer.effects.shield | 0,
+            });
+            break;
+          }
 
           // stats
           if (shooter) {
@@ -936,25 +905,20 @@ io.on("connection", (socket) => {
     const modeRaw = String(payload.mode || GAME_MODE_FFA).toLowerCase();
     const mode = modeRaw === GAME_MODE_TEAMS ? GAME_MODE_TEAMS : GAME_MODE_FFA;
 
-    const teamCount =
-      mode === GAME_MODE_TEAMS ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2) : 0;
+    const teamCount = mode === GAME_MODE_TEAMS ? clampInt(payload.teamCount, MIN_TEAMS, MAX_TEAMS, 2) : 0;
 
     const inputMode =
-      payload.inputMode === "kb" ||
-      payload.inputMode === "kbm" ||
-      payload.inputMode === "kbm_gamepad"
+      payload.inputMode === "kb" || payload.inputMode === "kbm" || payload.inputMode === "kbm_gamepad"
         ? payload.inputMode
         : "kbm";
 
     const mapChoice = String(payload.mapChoice || "map01");
     const friendlyFire = mode === GAME_MODE_TEAMS ? !!payload.friendlyFire : false;
 
-    // ✅ session settings
     const sessionModeRaw = String(payload.sessionMode || SESSION_STANDARD).toLowerCase();
     const sessionMode = sessionModeRaw === SESSION_TIMED ? SESSION_TIMED : SESSION_STANDARD;
     const sessionMinutes = clampInt(payload.sessionMinutes, MIN_SESSION_MIN, MAX_SESSION_MIN, 5);
 
-    // ✅ win mode (NEW) - defaults to standard
     const winModeRaw = String(payload.winMode || WIN_MODE_STANDARD).toLowerCase();
     const winMode = winModeRaw === WIN_MODE_MONEY ? WIN_MODE_MONEY : WIN_MODE_STANDARD;
 
@@ -971,11 +935,8 @@ io.on("connection", (socket) => {
         inputMode,
         mapChoice,
         friendlyFire,
-
         sessionMode,
         sessionMinutes,
-
-        // ✅ NEW
         winMode,
       },
       map: null,
@@ -984,7 +945,6 @@ io.on("connection", (socket) => {
       bullets: [],
       upgradePool: null,
 
-      // for timed sessions
       startedAt: null,
       endAt: null,
       endedAt: null,
@@ -1019,7 +979,6 @@ io.on("connection", (socket) => {
 
       cakes: MAX_CAKES,
 
-      // ✅ stats
       stats: { kills: 0, deaths: 0, correct: 0 },
 
       killedByName: null,
@@ -1030,7 +989,7 @@ io.on("connection", (socket) => {
 
     economy.ensurePlayerEconomy(hostPlayer);
     upgrades.ensureUpgradeState(hostPlayer);
-    upgrades.ensureEffectState(hostPlayer); // ✅ NEW: ensure effects exist from the beginning
+    upgrades.ensureEffectState(hostPlayer);
 
     game.players.set(session.playerId, hostPlayer);
     games[code] = game;
@@ -1087,7 +1046,6 @@ io.on("connection", (socket) => {
 
       cakes: MAX_CAKES,
 
-      // ✅ stats
       stats: { kills: 0, deaths: 0, correct: 0 },
 
       killedByName: null,
@@ -1095,9 +1053,7 @@ io.on("connection", (socket) => {
     };
 
     if (game.settings.mode === GAME_MODE_FFA) {
-      const used = new Set(
-        [...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x))
-      );
+      const used = new Set([...game.players.values()].map((p) => p.teamId).filter((x) => Number.isFinite(x)));
       let tid = 0;
       while (used.has(tid)) tid++;
       joinPlayer.teamId = tid;
@@ -1105,7 +1061,7 @@ io.on("connection", (socket) => {
 
     economy.ensurePlayerEconomy(joinPlayer);
     upgrades.ensureUpgradeState(joinPlayer);
-    upgrades.ensureEffectState(joinPlayer); // ✅ NEW: ensure effects exist from the beginning
+    upgrades.ensureEffectState(joinPlayer);
 
     game.players.set(session.playerId, joinPlayer);
 
@@ -1189,13 +1145,12 @@ io.on("connection", (socket) => {
 
       p.cakes = MAX_CAKES;
 
-      // reset killed-by info when match starts
       p.killedByName = null;
       p.killedById = null;
 
       economy.ensurePlayerEconomy(p);
       upgrades.ensureUpgradeState(p);
-      upgrades.ensureEffectState(p); // ✅ NEW: ensure effects exist from match start too
+      upgrades.ensureEffectState(p);
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
     }
 
@@ -1206,7 +1161,7 @@ io.on("connection", (socket) => {
     game.startedAt = Date.now();
 
     if (game.settings.sessionMode === SESSION_TIMED) {
-      game.endAt = game.startedAt + (game.settings.sessionMinutes * 60 * 1000);
+      game.endAt = game.startedAt + game.settings.sessionMinutes * 60 * 1000;
     } else {
       game.endAt = null;
     }
@@ -1372,7 +1327,7 @@ io.on("connection", (socket) => {
     }
 
     p.pendingUpgradeOffer = null;
-    socket.emit("UPGRADE_DECLINED", { ok: true });
+    socket.emit("UPGRADE_DECLINED", { ok: true, offerId: offer.id });
   });
 
   socket.on("chooseUpgrade", (payload = {}) => {
@@ -1489,6 +1444,7 @@ io.on("connection", (socket) => {
     });
   });
 
+  // ✅ Consumable use: charge money + apply effect actions (shield/dash/etc.)
   socket.on("useUpgradeSlot", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -1503,6 +1459,7 @@ io.on("connection", (socket) => {
     if (p.pendingUpgradeOffer) return socket.emit("UPGRADE_USED", { ok: false, reason: "offer_open" });
 
     upgrades.ensureUpgradeState(p);
+    upgrades.ensureEffectState(p);
 
     const slotIndex = Number(payload.slotIndex);
     if (!Number.isFinite(slotIndex) || slotIndex < 0 || slotIndex > 2) {
@@ -1529,7 +1486,33 @@ io.on("connection", (socket) => {
       return socket.emit("UPGRADE_USED", { ok: false, reason: "not_enough_money", need: useCost });
     }
 
+    // charge
     p.money -= useCost;
+
+    // apply effect (server-authoritative)
+    const nowMs = Date.now();
+    const res = upgrades.applyConsumableUse(p, s.id, { nowMs });
+
+    if (!res.ok) {
+      // refund if effect cannot be applied
+      p.money += useCost;
+      return socket.emit("UPGRADE_USED", { ok: false, reason: res.reason || "use_failed" });
+    }
+
+    // apply actions (incremental: we support invuln action now; spawn actions later)
+    if (Array.isArray(res.actions)) {
+      for (const a of res.actions) {
+        if (!a || typeof a.type !== "string") continue;
+
+        if (a.type === "set_invuln_until") {
+          const untilMs = Number(a.untilMs);
+          if (Number.isFinite(untilMs)) p.invulnUntil = Math.max(p.invulnUntil || 0, untilMs);
+        }
+
+        // Other action types (mines/banana_shot) will be wired later (incremental).
+        // For now they are ignored safely.
+      }
+    }
 
     socket.emit("UPGRADE_USED", {
       ok: true,
@@ -1537,6 +1520,7 @@ io.on("connection", (socket) => {
       upgrades: p.upgrades,
       money: p.money,
       paid: useCost,
+      changed: res.changed || null,
     });
   });
 
@@ -1584,7 +1568,6 @@ io.on("connection", (socket) => {
     p.pendingUpgradeOffer = null;
     p.pendingRespawn = null;
 
-    // clear killed-by label once respawned
     p.killedByName = null;
     p.killedById = null;
 
@@ -1603,7 +1586,7 @@ io.on("connection", (socket) => {
 });
 
 // --------------------
-// Start server (✅ only once)
+// Start server
 // --------------------
 server.listen(PORT, () => {
   console.log(`timetable-clowns server running on http://localhost:${PORT}`);
