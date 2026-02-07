@@ -997,14 +997,7 @@ setInterval(() => {
       }
 
       // optional fx event for client particles/sound
-      io.to(code).emit("MINE_EXPLODED", {
-        id: m.id,
-        x: m.x,
-        y: m.y,
-        blastR,
-        triggeredBy: triggeredBy ? triggeredBy.id : null,
-        ownerId: m.ownerId || null,
-      });
+
     }
 
     // economy + broadcast
