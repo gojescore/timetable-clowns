@@ -11,8 +11,8 @@
 // - Permanent acquisition cost is enforced in server/index.js (it owns player.money).
 // - Consumable use cost is enforced in server/index.js (useUpgradeSlot).
 //
-// NEW (effects phase):
-// - computePlayerMods(player): returns deterministic modifiers from permanents + temp effects.
+// Effects phase:
+// - computePlayerMods(player): deterministic modifiers from permanents + temp effects.
 // - ensureEffectState(player): stores temp states like dash/shield.
 // - applyConsumableUse(player, upgradeId, ctx): returns "actions" for server to apply.
 
@@ -42,7 +42,7 @@ function ensureUpgradeState(player) {
   if (!Array.isArray(player.upgrades.consSlots)) player.upgrades.consSlots = [];
 }
 
-// NEW: where we keep temporary effect state
+// Temporary effect state (server-owned)
 function ensureEffectState(player) {
   if (!player.effects) {
     player.effects = {
@@ -50,8 +50,6 @@ function ensureEffectState(player) {
       dash: null,
       // shield points: blocks a death (server decides how)
       shield: 0,
-      // mines placed by this player (optional bookkeeping)
-      // mines: [], // keep on world state instead, but leaving hook here
     };
   }
   if (typeof player.effects.shield !== "number") player.effects.shield = 0;
@@ -117,7 +115,7 @@ function findPermanentSlot(player, upgradeId) {
   return player.upgrades.permSlots.findIndex((s) => String(s?.id || "") === key);
 }
 
-// ✅ helper: get permanent stack count by id (safe)
+// Safe permanent stack count by id
 function getPermCount(player, upgradeId) {
   ensureUpgradeState(player);
   const key = String(upgradeId || "");
@@ -211,8 +209,15 @@ function applyConsumableReplace(player, upgradeId, dropId) {
  * EFFECTS PHASE HELPERS
  * ------------------------------------------------------------------ */
 
-// ✅ Fog length tuning (server -> client mods)
-const VISION_LEN_PER_STACK = 80; // ✅ you said 80 is good
+// Incremental, explicit mappings (safe even if definitions.js has no "effect" fields yet)
+
+// ✅ Giraffoscope: +80px fog cone length per stack
+const VISION_LEN_PER_STACK = 80;
+
+// ✅ Big Eyes: widen fog cone angle by +10 degrees per stack
+// (client can convert mods.fovAdd (radians) into degrees if it wants, or just add radians to its cone math)
+const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
+const DEG2RAD = Math.PI / 180;
 
 // Compute deterministic modifiers from permanents + temp effects.
 // Server can call this each tick, or compute-on-demand for snapshots.
@@ -223,14 +228,14 @@ function computePlayerMods(player, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
 
   let speedMult = 1.0;
-  let fovAdd = 0.0;
+  let fovAdd = 0.0;      // radians (additive)
   let visionMult = 1.0;
 
-  // ✅ NEW: additive vision length (pixels) for fog cone
+  // Additive fog cone length (pixels)
   // (client should do: BASE_VISION_LEN + mods.visionLenAdd)
   let visionLenAdd = 0;
 
-  // permanents driven by definition effects (existing system)
+  // 1) Generic effects from definitions.js (if you use that schema)
   for (const slot of player.upgrades.permSlots) {
     const id = String(slot?.id || "");
     const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
@@ -262,10 +267,17 @@ function computePlayerMods(player, nowMs) {
     }
   }
 
-  // ✅ Explicit mapping: giraffoscope increases cone LENGTH by +80px per stack
-  // (independent of definitions.js effect schema — safe + incremental)
+  // 2) Explicit incremental mapping: giraffoscope -> length add
   const giraffeStacks = getPermCount(player, "giraffoscope");
-  visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
+  if (giraffeStacks > 0) {
+    visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
+  }
+
+  // 3) Explicit incremental mapping: big_eyes -> fov add (radians)
+  const bigEyesStacks = getPermCount(player, "big_eyes");
+  if (bigEyesStacks > 0) {
+    fovAdd += bigEyesStacks * (BIG_EYES_FOV_ADD_DEG_PER_STACK * DEG2RAD);
+  }
 
   // temporary dash effect
   const dash = player.effects.dash;
@@ -273,20 +285,16 @@ function computePlayerMods(player, nowMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
-  // clamp to avoid insane values
+  // clamps to avoid insane values
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
   visionMult = Math.max(0.75, Math.min(visionMult, 3.0));
   fovAdd = Math.max(0.0, Math.min(fovAdd, 1.2)); // ~69 degrees extra
-
-  // ✅ clamp additive length too (so it never explodes)
-  visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400)); // 30 stacks -> 2400px cap
+  visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
 
   return {
     speedMult,
     fovAdd,
     visionMult,
-
-    // ✅ NEW
     visionLenAdd,
 
     shield: player.effects.shield | 0,
@@ -296,7 +304,7 @@ function computePlayerMods(player, nowMs) {
 
 // Apply a consumable effect.
 // This does NOT charge money (server/index.js does that).
-// It returns { ok, actions, changed } so server/index.js can apply actions to world/state.
+// Returns { ok, actions, changed } so server/index.js can apply actions to world/state.
 function applyConsumableUse(player, upgradeId, ctx) {
   ensureUpgradeState(player);
   ensureEffectState(player);
@@ -345,8 +353,6 @@ function applyConsumableUse(player, upgradeId, ctx) {
     }
 
     case "spawn_mine": {
-      // We do not store mines on the player; keep mines in world state.
-      // The server will take this action and spawn a mine at player's position (if legal).
       actions.push({
         type: "spawn_mine_at_player",
         upgradeId: up.id,
@@ -361,7 +367,6 @@ function applyConsumableUse(player, upgradeId, ctx) {
     }
 
     case "banana_shot": {
-      // Server should spawn a special projectile with bounce counter.
       actions.push({
         type: "spawn_banana_shot",
         upgradeId: up.id,
@@ -388,8 +393,6 @@ function removeConsumableById(player, upgradeId) {
   const idx = player.upgrades.consSlots.findIndex((s) => String(s?.id || "") === key);
   if (idx >= 0) player.upgrades.consSlots.splice(idx, 1);
 }
-
-/* ------------------------------------------------------------------ */
 
 module.exports = {
   ensureUpgradeState,
