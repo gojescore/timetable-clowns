@@ -23,6 +23,7 @@ A silly top-down multiplayer game for practicing times tables.
   - map choice (map01 or random)
   - session type: Standard or Timed
   - timed minutes (Timed only)
+  - win mode: Standard or Money (Timed sessions only decide winner via winMode, standard sessions still end on Machine 10)
 - Players move around a top-down map with rooms + corridors
 - Rooms contain machines 1–10 (one per room)
 - Machines must be completed in numeric order per player (1 → 2 → … → 10)
@@ -37,8 +38,11 @@ A silly top-down multiplayer game for practicing times tables.
 - Each player has their own machine progression:
   - `nextMachineNum` starts at **1**
   - You may only interact with `nextMachineNum`
-  - Correct answer increments `nextMachineNum`
+  - Correct answer increments `nextMachineNum` (caps at 10)
 - Machines are *not global*; one player clearing machine 3 does not clear it for others
+- Server denies interaction if:
+  - machine already cleared by that player (`reason:"already_cleared"`)
+  - wrong order (`reason:"wrong_order"`)
 
 ### 2.2 Math prompts
 - Prompt shown when a player interacts with the correct machine
@@ -48,7 +52,7 @@ A silly top-down multiplayer game for practicing times tables.
   - Server generates the prompt
   - Server validates the answer
 - On submit:
-  - Server emits `ANSWER_RESULT { ok, correct }`
+  - Server emits `ANSWER_RESULT { ok, correct? }`
 - Client behavior:
   - Prompt overlay blocks gameplay input
   - Enter submits, Escape closes
@@ -57,14 +61,15 @@ A silly top-down multiplayer game for practicing times tables.
 - Each player starts with **$100**
 - Money pickups exist in the world:
   - pickup type: `"money"`
-  - amount default: **100**
+  - amount default: **100** (economy module)
 - Players collect money by overlapping the pickup radius (server-side)
 
 ### 2.4 Upgrades (buy vs use)
 Upgrades come in two kinds:
 
 **A) Permanent**
-- Purchased once and then stored as “permanent”
+- Purchased (money removed on selection)
+- Stored as “permanent”
 - Can stack: same permanent can have `count: 2`, `count: 3`, etc.
 - Limited to **3 permanent types** at a time (max)
 - Cost field:
@@ -76,8 +81,8 @@ Upgrades come in two kinds:
 - Cost field:
   - `useCost`
 - Cannot hold more than 3 consumables:
-  - If full and player picks a new consumable, client must offer replace flow
-  - Replace flow chooses a `dropId` to discard
+  - If full and player picks a new consumable, server returns `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
+  - Client must offer replace flow and send `chooseUpgradeReplace { dropId }`
 
 **Using consumables**
 - Hotkeys:
@@ -87,9 +92,12 @@ Upgrades come in two kinds:
 - Server validates:
   - slot not empty
   - player alive
-  - no blocking overlays on server (offer open / prompt open)
+  - no server-side blockers:
+    - no prompt open (`pendingPrompt`)
+    - no upgrade offer open (`pendingUpgradeOffer`)
   - player has enough money for `useCost`
-- Server subtracts money and applies effect
+- Server subtracts money and emits `UPGRADE_USED { ok:true, paid, used, money }`
+- (Consumable “effects” are defined by upgrades module; networking contract stays the same.)
 
 ### 2.5 Combat + death + respawn
 - Players can shoot projectiles (cakes) while holding Space (or input state `fire`)
@@ -97,107 +105,134 @@ Upgrades come in two kinds:
   - projectile spawn + movement
   - collisions
   - damage/death
+- Shooting restrictions:
+  - blocked while prompt is open
+  - blocked while upgrade offer is open
+  - consumes 1 cake per shot
 - On death:
   - player `alive=false`
-  - server emits `PLAYER_DIED` (at minimum)
-  - server emits `RESPAWN_OPTIONS` to the dead player
+  - server emits `PLAYER_DIED { playerId }` to the room
+  - server emits `RESPAWN_OPTIONS` to the dead player (private)
 
 **Respawn options**
 - Corners (always)
-- Cleared machines (optional rule if implemented)
+- Cleared machines (implemented as optional spawn points based on player’s `clearedMachines` set)
 - On respawn:
   - player becomes alive again
   - player gets a brief invulnerability window:
-    - `invulnUntil` ms timestamp
+    - `invulnUntil` = ms timestamp in the future
   - client shows invulnerability HUD and blink
 
-**Killed-by info (NEW)**
-- When a player dies, the respawn screen MUST tell them who killed them (name)
-- Implemented by including:
-  - `killedBy: <killerName>` in `RESPAWN_OPTIONS`
+**Killed-by info**
+- When a player dies, respawn screen must show who killed them
+- Implemented via:
+  - `RESPAWN_OPTIONS { killedBy: <killerName>, options:[...] }`
 
 ---
 
-## 3) Session types + game end conditions (NEW)
+## 3) Session types + game end conditions
 
 ### 3.1 Session type: Standard
-- Game ends when the current mode’s win condition is met:
-  - **Machine 10** is correctly answered (current game mode rule)
-- When game ends:
-  - server emits `GAME_ENDED` with reason `"machine10"`
+- Game ends when **Machine 10** is correctly answered by some player
+- Server emits:
+  - `GAME_ENDED { reason:"machine10", ... }`
+- Winner is the player who solved machine 10:
+  - `winnerId = that player`
+  - `winnerName = that player name`
+  - In Teams mode, `winnerTeamId` is that player’s team
 
-### 3.2 Session type: Timed (NEW)
+### 3.2 Session type: Timed
 - Host chooses:
   - `sessionMode: "timed"`
   - `sessionMinutes: N`
-- Server computes:
-  - `endAt = now + (sessionMinutes * 60 * 1000)`
+- Server computes at game start:
+  - `endAt = startedAt + (sessionMinutes * 60 * 1000)`
 - Server includes:
-  - `endAt` in `GAME_STARTED` payload
-  - `endAt` (or repeated via snapshot) so clients can show timer HUD
+  - `endAt` in `GAME_STARTED`
+  - `endAt` in `STATE_SNAPSHOT` (so client timer stays correct)
 - Game ends when time is up:
-  - server emits `GAME_ENDED` with reason `"time"`
+  - server emits `GAME_ENDED { reason:"time", ... }`
 
-### 3.3 End screen UX requirements (NEW)
+### 3.3 Win mode (winner calculation policy)
+Win mode affects leaderboard sorting and timed-session winner selection.
+
+- `winMode: "standard"` (default)
+  - Sort by: `correct desc`, then `kills desc`, then `money desc`, then `deaths asc`
+- `winMode: "money"`
+  - Sort by: `money desc`, then `correct desc`, then `kills desc`, then `deaths asc`
+
+**FFA**
+- Winner is top row of the sorted leaderboard.
+
+**Teams**
+- Server aggregates per-team totals (sum of money/correct/kills/deaths) and sorts teams using the same winMode ordering.
+- Server returns:
+  - `winnerTeamId` (the winning team)
+  - representative `winnerId/winnerName` (top player on that team for UI convenience)
+
+---
+
+## 4) End screen UX requirements
+
 When the game ends:
-- Client shows a larger end modal with:
-  - big winner banner
+- Client shows a large end modal with:
+  - big winner banner (TEAM winner emphasized in Teams)
   - leaderboard list
 - **Only option** on end screen: **Back to lobby**
-  - Implementation: reload page (safe and simple)
+  - Implementation: reload page (safe/simple)
 
 ---
 
-## 4) Leaderboard (NEW)
+## 5) Leaderboard
 
-### 4.1 What the leaderboard shows
-At minimum per player:
-- name
-- correct answers count
-- kills
-- deaths
-- money
+### 5.1 What the leaderboard shows
+Per player row:
+- `name`
+- `correct`
+- `kills`
+- `deaths`
+- `money`
+- `teamId` (Teams mode and also present in FFA as a unique id)
 
-### 4.2 Winner definition
-- For now, winner can be:
-  - best score according to server rule (e.g. highest correct answers; tie-break by kills; then money)
-  - OR winning team if Teams mode (server chooses the rule)
-- Server must specify:
-  - `winnerId` and `winnerName`
-  - `winnerTeamId` if Teams
-
-### 4.3 Leaderboard payload
+### 5.2 Leaderboard payload
 Server emits `GAME_ENDED` with:
-- `reason`: `"machine10"` or `"time"` (string)
+- `reason`: `"machine10"` or `"time"`
 - `endedAt`: ms timestamp
-- `winnerId`: string
-- `winnerName`: string
+- `winnerId`: string|null
+- `winnerName`: string|null
 - `winnerTeamId`: number|null
 - `leaderboard`: array of rows sorted best-first:
-  - `{ id, name, correct, kills, deaths, money, teamId? }`
+  - `{ id, name, teamId, correct, kills, deaths, money }`
+- `winMode`: `"standard"` or `"money"`
 
-Client highlights the winner row and renders the winner banner prominently.
+Client highlighting rules:
+- Teams: highlight every row with `teamId === winnerTeamId`
+- FFA: highlight winner row (by `winnerId`; fallback to first row)
 
 ---
 
-## 5) Networking (Socket.IO events)
+## 6) Networking (Socket.IO events)
 
-### 5.1 Client → Server
+### 6.1 Client → Server
 - `hello { name }`
-- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes }`
+- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes, winMode }`
 - `joinGame { gameCode }`
-- `assignTeam { playerId, teamId }` (host only)
+- `assignTeam { playerId, teamId }` (host only; Teams mode only)
 - `startGame` (host only)
 - `input { up, down, left, right, fire }`
 - `tryInteract`
 - `submitAnswer { promptId, answer }`
+
+Upgrades:
 - `chooseUpgrade { offerId, upgradeId }`
 - `declineUpgrade { offerId }`
 - `chooseUpgradeReplace { offerId, upgradeId, dropId }`
 - `useUpgradeSlot { slotIndex }`
+
+Respawn:
 - `chooseRespawn { spawnId }`
 
-### 5.2 Server → Client
+### 6.2 Server → Client
 Lobby:
 - `WELCOME { playerId }`
 - `GAME_CREATED { gameCode }`
@@ -207,60 +242,59 @@ Lobby:
 
 Game start + snapshots:
 - `GAME_STARTED { map, settings, endAt? }`
-- `STATE_SNAPSHOT { time, world, players, pickups, bullets, endAt? }`
+- `STATE_SNAPSHOT { time, world, phase, endAt?, pickups, bullets, players }`
 
 Machines:
 - `MATH_PROMPT { promptId, base, machineNum }`
-- `ANSWER_RESULT { ok, correct }`
-- `INTERACT_DENIED { reason, nextMachineNum? }`
+- `ANSWER_RESULT { ok, correct? }`
+- `INTERACT_DENIED { reason, nextMachineNum, tried }`
 
 Upgrades:
 - `UPGRADE_OFFER { offerId, options }`
-- `UPGRADE_RESULT { ok, reason?, money?, need?, requested?, slots? }`
-- `UPGRADE_DECLINED { ok }`
+- `UPGRADE_RESULT { ok, reason?, money?, need?, requested?, slots?, upgrades? }`
+- `UPGRADE_DECLINED { ok, reason? }`
 - `UPGRADE_USED { ok, reason?, money?, need?, paid?, used? }`
 
 Death/respawn:
 - `PLAYER_DIED { playerId }`
-- `RESPAWN_OPTIONS { options, killedBy? }`  ✅ includes killer name when available
+- `RESPAWN_OPTIONS { killedBy?, options:[{id,label,kind}] }`
 - `RESPAWN_RESULT { ok, reason? }`
 
 Game end:
-- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }` ✅ NEW
+- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard, winMode }`
 
 ---
 
-## 6) Client UI constraints
+## 7) Client UI constraints
 - Client must block movement/shooting while overlays are open:
   - math prompt
   - upgrade offer
   - replace/drop picker
   - respawn picker
   - end screen
-- End screen:
-  - only action: “Back to lobby” (reload)
 - Timer HUD:
   - visible only if `endAt` is provided
 - Respawn overlay:
   - shows “Killed by: <name>” when provided
+- End screen:
+  - only action: “Back to lobby” (reload)
 
 ---
 
-## 7) Authoritative server model (non-negotiable)
-- Server owns:
-  - player movement
-  - collisions
-  - shooting and projectile simulation
-  - pickups
-  - machine rules + math validation
-  - money balances
-  - upgrades
-  - death + respawn + invulnerability
-  - session timer + end-of-game decision
-  - leaderboard computation + winner selection
-- Client is rendering + input only:
-  - sends inputState
-  - renders snapshots
-  - shows overlays based on server events
+## 8) Authoritative server model (non-negotiable)
+Server owns:
+- player movement
+- collisions
+- shooting and projectile simulation
+- pickups + economy
+- machine rules + math validation
+- money balances
+- upgrades state + validation
+- death + respawn + invulnerability
+- session timer + end-of-game decision
+- leaderboard computation + winner selection
 
----
+Client is rendering + input only:
+- sends inputState
+- renders snapshots
+- shows overlays based on server events
