@@ -2027,7 +2027,10 @@ function getConeAngleDegForMe(me){
       if (hasDir) lastFacingAng = Math.atan2(dy, dx);
 
       const ang = lastFacingAng;
-      const half = (CONE_ANGLE_DEG * Math.PI / 180) / 2;
+      const meObj = lastSnapshot?.players?.find(p => p.id === myId);
+      const coneDeg = getConeAngleDegForMe(meObj);
+      const half = (coneDeg * Math.PI / 180) / 2;
+
 
       const cornerAngles = getWallCornerAngles(meWorldX, meWorldY);
 
