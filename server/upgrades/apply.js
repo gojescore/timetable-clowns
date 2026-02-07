@@ -217,8 +217,6 @@ function applyConsumableReplace(player, upgradeId, dropId) {
  * EFFECTS PHASE HELPERS
  * ------------------------------------------------------------------ */
 
-// Incremental, explicit mappings (safe even if definitions.js has no "effect" fields yet)
-
 // ✅ Giraffoscope: +80px fog cone length per stack
 const VISION_LEN_PER_STACK = 80;
 
@@ -228,7 +226,7 @@ const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
 const RAD2DEG = 180 / Math.PI;
 
 // Compute deterministic modifiers from permanents + temp effects.
-// Server can call this each tick, or compute-on-demand for snapshots.
+// 🔒 Protocol wants ONLY: { speedMult, visionLenAdd, fovAddDeg }
 function computePlayerMods(player, nowMs) {
   ensureUpgradeState(player);
   ensureEffectState(player);
@@ -236,15 +234,10 @@ function computePlayerMods(player, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
 
   let speedMult = 1.0;
-
-  // 🔒 Protocol wants DEGREES on the wire
   let fovAddDeg = 0.0;
-
-  // Additive fog cone length (pixels)
-  // Client should do: BASE_VISION_LEN + mods.visionLenAdd
   let visionLenAdd = 0;
 
-  // 1) Generic effects from definitions.js (optional schema support)
+  // 1) Optional schema support from definitions.js (permanent effects)
   for (const slot of player.upgrades.permSlots) {
     const id = String(slot?.id || "");
     const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
@@ -275,41 +268,32 @@ function computePlayerMods(player, nowMs) {
         fovAddDeg += addRadPerStack * RAD2DEG * c;
       }
     }
-
-    // NOTE: We deliberately do NOT output vision multipliers in mods.
-    // (Keeps the mods wire contract locked and minimal.)
-    // If you later want vision multipliers, add a new explicit mods field in PROTOCOL first.
   }
 
-  // 2) Explicit incremental mapping: giraffoscope -> length add
+  // 2) Explicit mapping: giraffoscope -> vision length add (pixels)
   const giraffeStacks = getPermCount(player, "giraffoscope");
   if (giraffeStacks > 0) {
     visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
   }
 
-  // 3) Explicit incremental mapping: big_eyes -> fov add (degrees)
+  // 3) Explicit mapping: big_eyes -> fov add (degrees)
   const bigEyesStacks = getPermCount(player, "big_eyes");
   if (bigEyesStacks > 0) {
     fovAddDeg += bigEyesStacks * BIG_EYES_FOV_ADD_DEG_PER_STACK;
   }
 
-  // temporary dash effect (speed only; other dash metadata stays server-side in player.effects)
+  // 4) Temporary dash effect (speed only)
   const dash = player.effects.dash;
   if (dash && Number.isFinite(dash.untilMs) && now < dash.untilMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
-  // clamps to avoid insane values
+  // clamps
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
-  fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70)); // cap extra FOV
+  fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
 
-  // 🔒 LOCKED RETURN SHAPE (Protocol)
-  return {
-    speedMult,
-    visionLenAdd,
-    fovAddDeg,
-  };
+  return { speedMult, visionLenAdd, fovAddDeg };
 }
 
 // Apply a consumable effect.
@@ -354,7 +338,6 @@ function applyConsumableUse(player, upgradeId, ctx) {
 
       player.effects.dash = { untilMs, speedMult, cooldownUntilMs, invulnDuring };
 
-      // If you want invulnerability, server/index.js can merge with invulnUntil:
       if (invulnDuring) {
         actions.push({ type: "set_invuln_until", untilMs });
       }
