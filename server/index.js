@@ -66,6 +66,10 @@ const SESSION_TIMED = "timed";
 const MIN_SESSION_MIN = 1;
 const MAX_SESSION_MIN = 60;
 
+// ✅ Win modes (NEW)
+const WIN_MODE_STANDARD = "standard"; // your current behavior
+const WIN_MODE_MONEY = "money";       // money wins when time ends
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -390,6 +394,33 @@ function forceToValidPos(game, x, y) {
 // --------------------
 // Leaderboard / End game
 // --------------------
+function getWinMode(game) {
+  const raw = String(game?.settings?.winMode || WIN_MODE_STANDARD).toLowerCase();
+  return raw === WIN_MODE_MONEY ? WIN_MODE_MONEY : WIN_MODE_STANDARD;
+}
+
+function compareRowsForGame(game, a, b) {
+  const winMode = getWinMode(game);
+
+  // Money mode: money decides first
+  if (winMode === WIN_MODE_MONEY) {
+    return (
+      (b.money - a.money) ||
+      (b.correct - a.correct) ||
+      (b.kills - a.kills) ||
+      (a.deaths - b.deaths)
+    );
+  }
+
+  // Standard mode: your existing sorting
+  return (
+    (b.correct - a.correct) ||
+    (b.kills - a.kills) ||
+    (b.money - a.money) ||
+    (a.deaths - b.deaths)
+  );
+}
+
 function buildLeaderboard(game) {
   return [...game.players.values()]
     .map((pl) => ({
@@ -401,19 +432,11 @@ function buildLeaderboard(game) {
       kills: pl.stats?.kills || 0,
       deaths: pl.stats?.deaths || 0,
     }))
-    .sort(
-      (a, b) =>
-        (b.correct - a.correct) ||
-        (b.kills - a.kills) ||
-        (b.money - a.money) ||
-        (a.deaths - b.deaths)
-    );
+    .sort((a, b) => compareRowsForGame(game, a, b));
 }
 
 function computeTeamWinner(game, leaderboard) {
-  // Returns { winnerTeamId, winnerId, winnerName }
-  // - winnerTeamId is based on TEAM aggregate score
-  // - winnerId/winnerName is the best player (first in leaderboard) from that winning team
+  // Team aggregates: sum money/correct/kills/deaths
   const byTeam = new Map();
 
   for (const row of leaderboard) {
@@ -438,17 +461,11 @@ function computeTeamWinner(game, leaderboard) {
     };
   }
 
-  teams.sort(
-    (a, b) =>
-      (b.correct - a.correct) ||
-      (b.kills - a.kills) ||
-      (b.money - a.money) ||
-      (a.deaths - b.deaths)
-  );
+  teams.sort((a, b) => compareRowsForGame(game, a, b));
 
   const winnerTeamId = teams[0].teamId;
 
-  // pick top player from that team (so client can highlight a row)
+  // representative player (so UI can still highlight a row if it wants)
   const topPlayer = leaderboard.find((r) => r.teamId === winnerTeamId) || leaderboard[0] || null;
 
   return {
@@ -466,9 +483,11 @@ function computeWinners(game, extra = {}) {
   const forcedWinnerId = extra && typeof extra.winnerId === "string" ? extra.winnerId : null;
   const forcedWinnerName = extra && typeof extra.winnerName === "string" ? extra.winnerName : null;
 
-  // Winner team is derived from winnerId when possible (for machine10 in Teams mode)
+  // In TEAMS, even a forced winner should produce a winnerTeamId
   if (forcedWinnerId) {
     const pl = game.players.get(forcedWinnerId) || null;
+
+    // ✅ In Teams mode: winnerTeamId is the team of the forced winner
     const winnerTeamId =
       game.settings?.mode === GAME_MODE_TEAMS
         ? (pl && Number.isFinite(pl.teamId) ? pl.teamId : null)
@@ -506,20 +525,21 @@ function endGame(io, game, reason, extra = {}) {
   const winners = computeWinners(game, extra);
 
   const payload = {
-    // allow extra info (endedBy, winnerReason, etc.)
-    // NOTE: we spread extras FIRST so they can NEVER override the canonical winner/leaderboard fields below.
+    // allow extra info, but prevent overriding canonical end fields
     ...extra,
 
     reason,
     endedAt: game.endedAt,
 
-    // ✅ ALWAYS present + protected from overwrite
+    // ✅ ALWAYS present + protected
     winnerId: winners.winnerId,
     winnerName: winners.winnerName,
     winnerTeamId: winners.winnerTeamId,
 
-    // ✅ ALWAYS includes teamId per row now
     leaderboard: winners.leaderboard,
+
+    // helpful to show on end screen if you want
+    winMode: getWinMode(game),
   };
 
   io.to(game.code).emit("GAME_ENDED", payload);
@@ -559,6 +579,7 @@ setInterval(() => {
       Number.isFinite(game.endAt) &&
       now >= game.endAt
     ) {
+      // winner selection depends on settings.winMode (standard/money)
       endGame(io, game, "time");
       continue;
     }
@@ -908,6 +929,10 @@ io.on("connection", (socket) => {
     const sessionMode = sessionModeRaw === SESSION_TIMED ? SESSION_TIMED : SESSION_STANDARD;
     const sessionMinutes = clampInt(payload.sessionMinutes, MIN_SESSION_MIN, MAX_SESSION_MIN, 5);
 
+    // ✅ win mode (NEW) - defaults to standard
+    const winModeRaw = String(payload.winMode || WIN_MODE_STANDARD).toLowerCase();
+    const winMode = winModeRaw === WIN_MODE_MONEY ? WIN_MODE_MONEY : WIN_MODE_STANDARD;
+
     const code = createUniqueCode();
 
     const game = {
@@ -924,6 +949,9 @@ io.on("connection", (socket) => {
 
         sessionMode,
         sessionMinutes,
+
+        // ✅ NEW
+        winMode,
       },
       map: null,
       players: new Map(),
@@ -1506,7 +1534,7 @@ io.on("connection", (socket) => {
 
     const opts = buildRespawnOptions(game, p);
     const spawnId = String(payload.spawnId || "");
-    const chosen = findRespawnById(opts, spawnId);
+    const chosen = opts.find((o) => o.id === spawnId) || null;
 
     if (!chosen || !pending.options.includes(chosen.id)) {
       socket.emit("RESPAWN_RESULT", { ok: false, reason: "invalid_spawn" });
