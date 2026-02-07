@@ -5,7 +5,7 @@ When starting a NEW chat thread, paste:
 2) PROTOCOL.md
 3) the file currently being edited
 
-Last updated: 2026-02-06
+Last updated: 2026-02-07
 
 ---
 
@@ -41,6 +41,14 @@ timetable-clowns/
   - >= 2 players
   - Teams mode: all players must have teamId
 
+### Session settings (Standard / Timed)
+- Host can choose:
+  - sessionMode: `"standard"` or `"timed"`
+  - sessionMinutes (1..60, used if timed)
+- Server computes `endAt` at game start (timed only)
+- Server includes `endAt` in `GAME_STARTED`
+- Server repeats `endAt` in `STATE_SNAPSHOT`
+
 ### Map (map01)
 - `map01` = “Training Hall (10 rooms)”
 - World size: `{ w: 2400, h: 1600 }`
@@ -63,7 +71,7 @@ timetable-clowns/
 ### Shooting / bullets (cakes)
 - Shooting is server authoritative
 - Bullet speed: `BULLET_SPEED = 780 px/s`
-- Bullet TTL: `BULLET_TTL = 2.0` (user-confirmed range feels right)
+- Bullet TTL: `BULLET_TTL = 2.0`
 - Bullet removal happens on:
   - TTL expiry
   - world bounds exit
@@ -73,7 +81,7 @@ timetable-clowns/
 - Bullet collision tuning:
   - `BULLET_HIT_R_WALL = 4`
   - `BULLET_HIT_R_MACHINE = 6`
-  - `CAKE_HIT_R_PLAYER = 12` (player hit radius padding)
+  - `CAKE_HIT_R_PLAYER = 12`
 - Sub-stepping is used to avoid tunneling on fast bullets:
   - travel distance split into steps (max step length ~10px)
 
@@ -119,7 +127,7 @@ timetable-clowns/
   - Consumables slots (8/9/0)
   - Permanents with stacking count
 
-### Death + respawn
+### Death + respawn (includes killed-by)
 - Players can be killed by bullets
 - On death:
   - server marks player dead and emits `PLAYER_DIED { playerId }` to room
@@ -127,10 +135,35 @@ timetable-clowns/
 - Respawn options:
   - corners always
   - cleared machines as optional spawn points (implemented as a Set per player)
+- Killed-by name:
+  - `RESPAWN_OPTIONS { killedBy, options }` includes killer name when known
+  - client renders “Killed by: <name>”
 - Invulnerability after respawn:
   - `RESPAWN_INVULN = 0.6s`
   - server sets `invulnUntil` timestamp
   - client shows invuln HUD pill + blink effect
+
+### Game end + leaderboard (implemented)
+Game ends when:
+1) **Machine 10** is correctly answered (standard session)
+2) **Time runs out** (timed session)
+
+Server emits:
+- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
+
+Leaderboard rows include:
+- `{ id, name, teamId, correct, kills, deaths, money }`
+
+Winner fields are **always present**:
+- `winnerId` / `winnerName` always included (may be null if something truly weird happens, but keys exist)
+- `winnerTeamId` is:
+  - `null` in FFA
+  - set in Teams mode (team aggregate scoring)
+
+Client UX:
+- Large end modal
+- Winner banner big + winner row highlighted
+- **Only action**: “Back to lobby” (reload)
 
 ### Client rendering + UI (client/index.html)
 - Canvas rendering with camera centered on “me”
@@ -140,11 +173,13 @@ timetable-clowns/
   - life
   - cakes
   - invulnerability countdown
+  - timer (timed sessions only)
 - Overlays implemented:
   - math prompt
   - upgrade picker
   - backpack full replace picker
-  - respawn picker
+  - respawn picker (includes killed-by)
+  - end screen / leaderboard
 - Input handling:
   - movement WASD/arrow
   - shooting hold space
@@ -153,46 +188,6 @@ timetable-clowns/
   - client blocks gameplay input while overlays are open
 - Known safety constraint:
   - Avoid nested duplicate `window.addEventListener("keydown", ...)` patterns (previous bug class)
-
----
-
-## What is NOT implemented yet (next work)
-
-### Game end + leaderboard (planned, not yet wired)
-Requested behavior:
-- Game ends when:
-  1) **Machine 10** is correctly answered (standard session)
-  2) **Time runs out** (timed session)
-- When ended:
-  - show a large winning modal
-  - winning team / winner is visually highlighted
-  - only action: “Back to lobby” (reload)
-- Requires new server event:
-  - `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
-- Requires stats tracking on server:
-  - correct answers count
-  - kills, deaths
-  - money (already present)
-  - teamId
-
-### Killed-by name on respawn screen (planned, not yet wired)
-Requested behavior:
-- Respawn overlay must tell dead player who killed them (killer name)
-- Requires:
-  - server to track last killer for the death event
-  - include `killedBy: <name>` (or killerId + name) in `RESPAWN_OPTIONS`
-  - client to render it in respawn modal text
-
-### Timed session setting (planned, not yet wired)
-Requested behavior:
-- Host chooses in lobby:
-  - session type: Standard / Timed
-  - minutes (Timed only)
-- Server sets `endAt`
-- Client shows timer (HUD or in end screen)
-- Needs new settings fields:
-  - `sessionMode` and `sessionMinutes`
-  - propagate in `GAME_CREATED / JOIN_SUCCESS / LOBBY_UPDATE / GAME_STARTED`
 
 ---
 
@@ -213,7 +208,7 @@ Bullets:
 - `BULLET_HIT_R_WALL = 4`
 - `BULLET_HIT_R_MACHINE = 6`
 - `CAKE_HIT_R_PLAYER = 12`
-- `FIRE_COOLDOWN` (current value in file; previously tuned)
+- `FIRE_COOLDOWN` (current value in file)
 
 Respawn:
 - `RESPAWN_INVULN = 0.6`
@@ -221,6 +216,12 @@ Respawn:
 
 Ammo:
 - `MAX_CAKES = 7`
+
+Session:
+- `SESSION_STANDARD = "standard"`
+- `SESSION_TIMED = "timed"`
+- `MIN_SESSION_MIN = 1`
+- `MAX_SESSION_MIN = 60`
 
 ---
 
@@ -232,8 +233,8 @@ Server → Client events in use:
 - `JOIN_SUCCESS { gameCode, players, settings }`
 - `JOIN_FAILED { reason }`
 - `LOBBY_UPDATE { players, settings }`
-- `GAME_STARTED { map, settings }`
-- `STATE_SNAPSHOT { time, world, pickups, bullets, players }`
+- `GAME_STARTED { map, settings, endAt? }`
+- `STATE_SNAPSHOT { time, world, pickups, bullets, players, endAt? }`
 - `MATH_PROMPT { promptId, base, machineNum }`
 - `ANSWER_RESULT { ok, correct? }`
 - `INTERACT_DENIED { reason, nextMachineNum, tried }`
@@ -242,12 +243,13 @@ Server → Client events in use:
 - `UPGRADE_DECLINED { ok }`
 - `UPGRADE_USED { ok, reason?, ... }`
 - `PLAYER_DIED { playerId }`
-- `RESPAWN_OPTIONS { options }`
+- `RESPAWN_OPTIONS { options, killedBy? }`
 - `RESPAWN_RESULT { ok, reason? }`
+- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
 
 Client → Server events in use:
 - `hello { name }`
-- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode }`
+- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes }`
 - `joinGame { gameCode }`
 - `assignTeam { playerId, teamId }`
 - `startGame`
@@ -260,21 +262,13 @@ Client → Server events in use:
 - `useUpgradeSlot { slotIndex }`
 - `chooseRespawn { spawnId }`
 
-Planned additions (not implemented yet):
-- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
-- `RESPAWN_OPTIONS` adds `killedBy`
-- `createGame` adds session settings:
-  - `sessionMode`, `sessionMinutes`
-- `GAME_STARTED` adds `endAt`
-- `STATE_SNAPSHOT` optionally repeats `endAt` for UI convenience
-
 ---
 
 ## Known issues / pitfalls
 - If bullets appear to “vanish immediately”, common cause is spawning inside an expanded collision rect:
   - solved by spawn push-forward safety check (already in server file)
 - If bullets pass through walls, common cause is discrete movement without sweep:
-  - current server uses swept segment vs expanded AABB (should be reliable)
+  - current server uses swept segment vs expanded AABB
 - Input handling bugs can occur if multiple nested key listeners are used:
   - keep input listeners flat and guard with “UI blocking” checks
 - School PCs / performance:
@@ -284,25 +278,8 @@ Planned additions (not implemented yet):
 
 ## Next concrete tasks (recommended order)
 
-1) Add session settings in lobby + server:
-   - Standard vs Timed + minutes
-   - compute `endAt`
-
-2) Add game end detection:
-   - machine10 reason OR time-up reason
-   - emit `GAME_ENDED`
-
-3) Add stats tracking + leaderboard
-   - correct answers, kills, deaths, money
-   - compute winner (team vs ffa)
-
-4) Add killed-by info in respawn overlay
-   - server: include killer name
-   - client: render in respawn modal
-
-5) Client end screen UX:
-   - bigger modal
-   - winner highlight
-   - only action: back to lobby (reload)
-
----
+1) (Optional cleanup) Reduce/merge multiple keydown handlers in client to one flat handler
+2) Decide final Teams winner UX:
+   - show “Team X” as the big winner name instead of best player name
+   - and/or highlight all rows for winning team
+3) Flesh out upgrade effects (speed, vision, etc.)
