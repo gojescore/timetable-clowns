@@ -5,9 +5,13 @@
 // - Permanents: 3 reserved slots (stacking allowed via count), pay acquireCost each time.
 // - Consumables: 3 action slots (8/9/0), no duplicates, pay useCost each time you use.
 //
-// Effects model (new):
-// - Permanents contribute to computed player "mods" (speed/fov/vision etc).
-// - Consumables define effectType + params, executed by upgrades module when used.
+// IMPORTANT (matches apply.js):
+// - XL Shoes uses effect.type="speed_mult" (generic).
+// - Big Eyes + Giraffoscope are computed by explicit mapping inside apply.js
+//   (to keep the mods contract locked and avoid double-counting).
+//
+// Locked mods contract is enforced in apply.js:
+//   computePlayerMods() -> { speedMult, visionLenAdd, fovAddDeg }
 
 const UPGRADES = [
   // ---------- Permanent (stacking, costs on acquisition) ----------
@@ -31,13 +35,8 @@ const UPGRADES = [
     kind: "permanent",
     acquireCost: 150,
     desc: "Wider view cone.",
-    effect: {
-      type: "fov_add",
-      // Add radians to the view cone half-angle (or whatever you use client-side).
-      // Tune based on your current fog cone implementation.
-      addRadiansPerStack: 0.18,
-      maxStacks: 6,
-    },
+    // NOTE: no effect here on purpose.
+    // apply.js adds fovAddDeg per stack for big_eyes.
   },
   {
     id: "giraffoscope",
@@ -45,12 +44,8 @@ const UPGRADES = [
     kind: "permanent",
     acquireCost: 150,
     desc: "See further.",
-    effect: {
-      type: "vision_mult",
-      // Multiply vision distance / fog reveal radius.
-      perStackMult: 1.15,
-      maxStacks: 6,
-    },
+    // NOTE: no effect here on purpose.
+    // apply.js adds visionLenAdd (pixels) per stack for giraffoscope.
   },
 
   // ---------- Consumable (action slots 8/9/0) ----------
@@ -62,8 +57,6 @@ const UPGRADES = [
     desc: "Place a mine on roads.",
     effect: {
       type: "spawn_mine",
-      // Mine behavior is server-owned; client just renders it from snapshot later.
-      // You can start by making mines explode on contact or proximity.
       radius: 26,
       damage: 1,
       ttlSec: 25,
@@ -78,10 +71,9 @@ const UPGRADES = [
     desc: "Fast dash forward (brief invuln).",
     effect: {
       type: "dash",
-      dashSpeedMult: 2.2,  // multiply PLAYER_SPEED during dash window
+      dashSpeedMult: 2.2, // multiply PLAYER_SPEED during dash window
       durationSec: 0.35,
       invulnDuring: true,
-      // Optional: small cooldown inside the effect system (separate from FIRE_COOLDOWN)
       internalCooldownSec: 0.8,
     },
   },
@@ -93,7 +85,6 @@ const UPGRADES = [
     desc: "Shoot a ricochet banana.",
     effect: {
       type: "banana_shot",
-      // You can implement as a special bullet that bounces N times on walls/machines.
       speed: 860,
       ttlSec: 1.6,
       bounces: 3,
@@ -109,7 +100,6 @@ const UPGRADES = [
     effect: {
       type: "shield_add",
       amount: 1,
-      // Optional: cap shields to prevent hoarding
       maxShield: 3,
     },
   },
