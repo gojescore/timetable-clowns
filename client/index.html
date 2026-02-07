@@ -1893,17 +1893,18 @@ function getModsForMe(me){
   };
 }
 
-    function getConeAngleDegForMe(me){
-      const mods = getModsForMe(me);
-      const addDeg = (mods.fovAdd || 0) * (180 / Math.PI);
-      const deg = CONE_ANGLE_BASE_DEG + addDeg;
-      return Math.max(20, Math.min(CONE_ANGLE_MAX_DEG, deg));
-    }
-    function getVisionLenForMe(me){
-      const mods = getModsForMe(me);
-      const len = (BASE_VISION_LEN + (mods.visionLenAdd || 0)) * (mods.visionMult || 1);
-      return Math.max(120, Math.min(VISION_LEN_MAX, len));
-    }
+ function getConeAngleDegForMe(me){
+  const mods = getModsForMe(me);
+  const deg = CONE_ANGLE_BASE_DEG + mods.fovAddDeg;
+  return Math.max(20, Math.min(CONE_ANGLE_MAX_DEG, deg));
+}
+
+function getVisionLenForMe(me){
+  const mods = getModsForMe(me);
+  const len = BASE_VISION_LEN + mods.visionLenAdd;
+  return Math.max(120, Math.min(VISION_LEN_MAX, len));
+}
+
 
     const EDGE_BLUR_PX = 14;
     const EDGE_STRENGTH = 0.75;
