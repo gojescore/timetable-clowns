@@ -1,15 +1,20 @@
 // server/upgrades/apply.js
-// Slot rules for upgrades (effects later).
+// Slot rules + EFFECT HELPERS.
 //
-// IMPORTANT MODEL:
+// IMPORTANT MODEL (unchanged):
 // - player.upgrades.permSlots: max 3 entries, each { id, count }.
 //   Stacking = increment count for existing id.
 // - player.upgrades.consSlots: max 3 entries, each { id }.
 //   No duplicates by id.
 //
-// Money checks:
+// Money checks (unchanged):
 // - Permanent acquisition cost is enforced in server/index.js (it owns player.money).
 // - Consumable use cost is enforced in server/index.js (useUpgradeSlot).
+//
+// NEW (effects phase):
+// - computePlayerMods(player): returns deterministic modifiers from permanents + temp effects.
+// - ensureEffectState(player): stores temp states like dash/shield.
+// - applyConsumableUse(player, upgradeId, ctx): returns "actions" for server to apply.
 
 let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
@@ -35,6 +40,21 @@ function ensureUpgradeState(player) {
   }
   if (!Array.isArray(player.upgrades.permSlots)) player.upgrades.permSlots = [];
   if (!Array.isArray(player.upgrades.consSlots)) player.upgrades.consSlots = [];
+}
+
+// NEW: where we keep temporary effect state
+function ensureEffectState(player) {
+  if (!player.effects) {
+    player.effects = {
+      // dash: { untilMs, speedMult, cooldownUntilMs, invulnDuring }
+      dash: null,
+      // shield points: blocks a death (server decides how)
+      shield: 0,
+      // mines placed by this player (optional bookkeeping)
+      // mines: [], // keep on world state instead, but leaving hook here
+    };
+  }
+  if (typeof player.effects.shield !== "number") player.effects.shield = 0;
 }
 
 function getUpgradeByIdSafe(id) {
@@ -178,13 +198,187 @@ function applyConsumableReplace(player, upgradeId, dropId) {
   return { ok: true, applied: { kind: "consumable_replace", id: up.id, dropped: dropKey } };
 }
 
+/* ------------------------------------------------------------------
+ * EFFECTS PHASE HELPERS
+ * ------------------------------------------------------------------ */
+
+// Compute deterministic modifiers from permanents + temp effects.
+// Server can call this each tick, or compute-on-demand for snapshots.
+function computePlayerMods(player, nowMs) {
+  ensureUpgradeState(player);
+  ensureEffectState(player);
+
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+
+  let speedMult = 1.0;
+  let fovAdd = 0.0;
+  let visionMult = 1.0;
+
+  // permanents
+  for (const slot of player.upgrades.permSlots) {
+    const id = String(slot?.id || "");
+    const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
+    const count = Math.max(1, Math.floor(countRaw));
+
+    const up = getUpgradeByIdSafe(id);
+    const eff = up?.effect;
+    if (!eff || up?.kind !== "permanent") continue;
+
+    if (eff.type === "speed_mult") {
+      const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
+      const c = Math.min(count, maxStacks);
+      const per = Number.isFinite(eff.perStackMult) ? eff.perStackMult : 1.0;
+      speedMult *= Math.pow(per, c);
+    }
+
+    if (eff.type === "fov_add") {
+      const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
+      const c = Math.min(count, maxStacks);
+      const add = Number.isFinite(eff.addRadiansPerStack) ? eff.addRadiansPerStack : 0;
+      fovAdd += add * c;
+    }
+
+    if (eff.type === "vision_mult") {
+      const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
+      const c = Math.min(count, maxStacks);
+      const per = Number.isFinite(eff.perStackMult) ? eff.perStackMult : 1.0;
+      visionMult *= Math.pow(per, c);
+    }
+  }
+
+  // temporary dash effect
+  const dash = player.effects.dash;
+  if (dash && Number.isFinite(dash.untilMs) && now < dash.untilMs) {
+    if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
+  }
+
+  // clamp to avoid insane values
+  speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
+  visionMult = Math.max(0.75, Math.min(visionMult, 3.0));
+  fovAdd = Math.max(0.0, Math.min(fovAdd, 1.2)); // ~69 degrees extra
+
+  return {
+    speedMult,
+    fovAdd,
+    visionMult,
+    shield: player.effects.shield | 0,
+    dashActive: !!(dash && Number.isFinite(dash.untilMs) && now < dash.untilMs),
+  };
+}
+
+// Apply a consumable effect.
+// This does NOT charge money (server/index.js does that).
+// It returns { ok, actions, changed } so server/index.js can apply actions to world/state.
+function applyConsumableUse(player, upgradeId, ctx) {
+  ensureUpgradeState(player);
+  ensureEffectState(player);
+
+  const up = getUpgradeByIdSafe(upgradeId);
+  if (!up) return { ok: false, reason: "invalid_upgrade" };
+  if (up.kind !== "consumable") return { ok: false, reason: "not_consumable" };
+
+  const eff = up.effect || {};
+  const now = ctx && Number.isFinite(ctx.nowMs) ? ctx.nowMs : Date.now();
+
+  const actions = [];
+
+  switch (eff.type) {
+    case "shield_add": {
+      const add = Number.isFinite(eff.amount) ? eff.amount : 1;
+      const cap = Number.isFinite(eff.maxShield) ? eff.maxShield : 99;
+      const before = player.effects.shield | 0;
+      player.effects.shield = Math.min(cap, before + add);
+      return { ok: true, actions, changed: { shield: player.effects.shield } };
+    }
+
+    case "dash": {
+      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 0.3;
+      const speedMult = Number.isFinite(eff.dashSpeedMult) ? eff.dashSpeedMult : 2.0;
+      const invulnDuring = !!eff.invulnDuring;
+
+      // internal cooldown (optional)
+      const cdSec = Number.isFinite(eff.internalCooldownSec) ? eff.internalCooldownSec : 0;
+      const dashState = player.effects.dash;
+      if (dashState && Number.isFinite(dashState.cooldownUntilMs) && now < dashState.cooldownUntilMs) {
+        return { ok: false, reason: "dash_cooldown" };
+      }
+
+      const untilMs = now + Math.floor(durSec * 1000);
+      const cooldownUntilMs = now + Math.floor((durSec + cdSec) * 1000);
+
+      player.effects.dash = { untilMs, speedMult, cooldownUntilMs, invulnDuring };
+
+      // If you want invulnerability, server/index.js can merge with invulnUntil:
+      if (invulnDuring) {
+        actions.push({ type: "set_invuln_until", untilMs });
+      }
+
+      return { ok: true, actions, changed: { dashUntil: untilMs } };
+    }
+
+    case "spawn_mine": {
+      // We do not store mines on the player; keep mines in world state.
+      // The server will take this action and spawn a mine at player's position (if legal).
+      actions.push({
+        type: "spawn_mine_at_player",
+        upgradeId: up.id,
+        params: {
+          radius: Number.isFinite(eff.radius) ? eff.radius : 24,
+          damage: Number.isFinite(eff.damage) ? eff.damage : 1,
+          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 20,
+          armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
+        },
+      });
+      return { ok: true, actions };
+    }
+
+    case "banana_shot": {
+      // Server should spawn a special projectile with bounce counter.
+      actions.push({
+        type: "spawn_banana_shot",
+        upgradeId: up.id,
+        params: {
+          speed: Number.isFinite(eff.speed) ? eff.speed : 820,
+          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 1.4,
+          bounces: Number.isFinite(eff.bounces) ? eff.bounces : 3,
+          hitRadiusPlayer: Number.isFinite(eff.hitRadiusPlayer) ? eff.hitRadiusPlayer : 12,
+        },
+      });
+      return { ok: true, actions };
+    }
+
+    default:
+      return { ok: false, reason: "no_effect_defined" };
+  }
+}
+
+// Optional helper: consume/remove a consumable from a slot by id (if you want "one use then removed").
+// If you want consumables to remain after use, DON'T call this.
+function removeConsumableById(player, upgradeId) {
+  ensureUpgradeState(player);
+  const key = String(upgradeId || "");
+  const idx = player.upgrades.consSlots.findIndex((s) => String(s?.id || "") === key);
+  if (idx >= 0) player.upgrades.consSlots.splice(idx, 1);
+}
+
+/* ------------------------------------------------------------------ */
+
 module.exports = {
   ensureUpgradeState,
+  ensureEffectState,
+
   pickRandomUpgradePool,
   buildOfferOptions,
+
   applyUpgradeSelection,
   applyConsumableReplace,
+
   getUpgradeInfo,
+
+  // effects helpers
+  computePlayerMods,
+  applyConsumableUse,
+  removeConsumableById,
 
   // optional helpers if you ever want them elsewhere
   canTakeUpgrade,
