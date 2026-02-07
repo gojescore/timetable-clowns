@@ -395,6 +395,7 @@ function buildLeaderboard(game) {
     .map((pl) => ({
       id: pl.id,
       name: pl.name,
+      teamId: pl.teamId,
       money: Number.isFinite(pl.money) ? pl.money : 0,
       correct: pl.stats?.correct || 0,
       kills: pl.stats?.kills || 0,
@@ -409,16 +410,114 @@ function buildLeaderboard(game) {
     );
 }
 
+function computeTeamWinner(game, leaderboard) {
+  // Returns { winnerTeamId, winnerId, winnerName }
+  // - winnerTeamId is based on TEAM aggregate score
+  // - winnerId/winnerName is the best player (first in leaderboard) from that winning team
+  const byTeam = new Map();
+
+  for (const row of leaderboard) {
+    const tid = row.teamId;
+    if (tid === null || tid === undefined) continue;
+    if (!byTeam.has(tid)) byTeam.set(tid, { teamId: tid, correct: 0, kills: 0, money: 0, deaths: 0 });
+    const agg = byTeam.get(tid);
+    agg.correct += row.correct || 0;
+    agg.kills += row.kills || 0;
+    agg.money += row.money || 0;
+    agg.deaths += row.deaths || 0;
+  }
+
+  const teams = [...byTeam.values()];
+  if (!teams.length) {
+    // fallback: treat as FFA
+    const top = leaderboard[0] || null;
+    return {
+      winnerTeamId: null,
+      winnerId: top ? top.id : null,
+      winnerName: top ? top.name : null,
+    };
+  }
+
+  teams.sort(
+    (a, b) =>
+      (b.correct - a.correct) ||
+      (b.kills - a.kills) ||
+      (b.money - a.money) ||
+      (a.deaths - b.deaths)
+  );
+
+  const winnerTeamId = teams[0].teamId;
+
+  // pick top player from that team (so client can highlight a row)
+  const topPlayer = leaderboard.find((r) => r.teamId === winnerTeamId) || leaderboard[0] || null;
+
+  return {
+    winnerTeamId,
+    winnerId: topPlayer ? topPlayer.id : null,
+    winnerName: topPlayer ? topPlayer.name : null,
+  };
+}
+
+function computeWinners(game, extra = {}) {
+  // Always returns { winnerId, winnerName, winnerTeamId } (values may be null, but keys always present)
+  const leaderboard = buildLeaderboard(game);
+
+  // If caller explicitly forced winnerId/winnerName (machine10), respect that.
+  const forcedWinnerId = extra && typeof extra.winnerId === "string" ? extra.winnerId : null;
+  const forcedWinnerName = extra && typeof extra.winnerName === "string" ? extra.winnerName : null;
+
+  // Winner team is derived from winnerId when possible (for machine10 in Teams mode)
+  if (forcedWinnerId) {
+    const pl = game.players.get(forcedWinnerId) || null;
+    const winnerTeamId =
+      game.settings?.mode === GAME_MODE_TEAMS
+        ? (pl && Number.isFinite(pl.teamId) ? pl.teamId : null)
+        : null;
+
+    return {
+      leaderboard,
+      winnerId: forcedWinnerId,
+      winnerName: forcedWinnerName || (pl ? pl.name : null),
+      winnerTeamId,
+    };
+  }
+
+  // Otherwise compute winner from leaderboard (FFA) or team aggregates (Teams)
+  if (game.settings?.mode === GAME_MODE_TEAMS) {
+    const t = computeTeamWinner(game, leaderboard);
+    return { leaderboard, winnerId: t.winnerId, winnerName: t.winnerName, winnerTeamId: t.winnerTeamId };
+  }
+
+  const top = leaderboard[0] || null;
+  return {
+    leaderboard,
+    winnerId: top ? top.id : null,
+    winnerName: top ? top.name : null,
+    winnerTeamId: null,
+  };
+}
+
 function endGame(io, game, reason, extra = {}) {
   if (!game || game.phase !== "running") return;
 
   game.phase = "ended";
   game.endedAt = Date.now();
 
+  const winners = computeWinners(game, extra);
+
   const payload = {
     reason,
     endedAt: game.endedAt,
-    leaderboard: buildLeaderboard(game),
+
+    // ✅ ALWAYS present (even if null)
+    winnerId: winners.winnerId,
+    winnerName: winners.winnerName,
+    winnerTeamId: winners.winnerTeamId,
+
+    // ✅ ALWAYS includes teamId per row now
+    leaderboard: winners.leaderboard,
+
+    // allow extra info without overriding required fields unless you *really* want to
     ...extra,
   };
 
@@ -474,8 +573,7 @@ setInterval(() => {
       const left = !!p.input?.left;
       const right = !!p.input?.right;
 
-      let vx = 0,
-        vy = 0;
+      let vx = 0, vy = 0;
       if (left) vx -= 1;
       if (right) vx += 1;
       if (up) vy -= 1;
