@@ -397,7 +397,7 @@
       font-weight:900;
     }
     .winnerBanner .who{
-      font-size:36px; /* ✅ slightly bigger */
+      font-size:36px;
       font-weight:1000;
       margin-top:4px;
       line-height:1.05;
@@ -565,12 +565,12 @@
               🍰 <span id="hudCakes">7</span>
             </div>
 
-            <!-- ✅ Added: invulnerability indicator (server invulnUntil) -->
+            <!-- ✅ Added: invulnerability indicator -->
             <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
               🛡️ <span id="hudInvulnText">INV 0.0s</span>
             </div>
 
-            <!-- ✅ Added: timer indicator (timed sessions) -->
+            <!-- ✅ Added: timer indicator -->
             <div class="hudPill timer hidden" id="hudTimer" title="Time left">
               ⏱️ <span id="hudTimerText">--:--</span>
             </div>
@@ -718,11 +718,7 @@
       friendlyFire: document.getElementById("friendlyFire"),
       mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
-
-      // ✅ new: win mode
       winMode: document.getElementById("winMode"),
-
-      // ✅ new: session
       sessionMode: document.getElementById("sessionMode"),
       sessionMinutes: document.getElementById("sessionMinutes"),
 
@@ -745,10 +741,8 @@
       hudMoney: document.getElementById("hudMoney"),
       hudLife: document.getElementById("hudLife"),
       hudCakes: document.getElementById("hudCakes"),
-
       hudInvuln: document.getElementById("hudInvuln"),
       hudInvulnText: document.getElementById("hudInvulnText"),
-
       hudTimer: document.getElementById("hudTimer"),
       hudTimerText: document.getElementById("hudTimerText"),
 
@@ -784,7 +778,6 @@
       respawnCloseBtn: document.getElementById("respawnCloseBtn"),
       respawnMsg: document.getElementById("respawnMsg"),
 
-      // ✅ end screen (solo button)
       endOverlay: document.getElementById("endOverlay"),
       endBoard: document.getElementById("endBoard"),
       endBackBtn: document.getElementById("endBackBtn"),
@@ -814,71 +807,12 @@
     let pendingReplace = null;
     let activeRespawn = null;
 
-    // UI expects the SNAPSHOT shape: { permanent:[{id,count,info}], slots:[{id,info}] }
+    // UI expects SNAPSHOT shape: { permanent:[{id,count,info}], slots:[{id,info}] }
     let myServerUpgrades = { permanent: [], slots: [] };
 
     const INTERACT_RADIUS = 60;
-
-    // ✅ cakes config (HUD starts with 7)
     const MAX_CAKES = 7;
-
-    // ✅ invuln UI tuning
-    const INVULN_SHOW_THRESHOLD_MS = 80; // show only if > 0.08s remaining
-
-    // ✅ timed session UI/runtime
-    let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
-    function formatMMSS(msLeft){
-      const s = Math.max(0, Math.ceil(msLeft / 1000));
-      const mm = Math.floor(s / 60);
-      const ss = s % 60;
-      return String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
-    }
-    function updateTimerHudFromSnapshot(snap){
-      const endAt = Number.isFinite(snap?.endAt) ? snap.endAt : (Number.isFinite(gameEndAt) ? gameEndAt : null);
-      if (!endAt) {
-        el.hudTimer.classList.add("hidden");
-        return;
-      }
-      gameEndAt = endAt;
-      const msLeft = endAt - Date.now();
-      if (msLeft > 0) {
-        el.hudTimer.classList.remove("hidden");
-        el.hudTimerText.textContent = formatMMSS(msLeft);
-      } else {
-        el.hudTimer.classList.remove("hidden");
-        el.hudTimerText.textContent = "00:00";
-      }
-    }
-    function updateTimerHudFrame(){
-      if (!Number.isFinite(gameEndAt)) return;
-      const msLeft = gameEndAt - Date.now();
-      el.hudTimer.classList.remove("hidden");
-      el.hudTimerText.textContent = formatMMSS(msLeft);
-    }
-
-    // speech bubble
-    let bubble = null;
-    function showBubble(text, ms = 1600) {
-      bubble = { text: String(text), untilMs: Date.now() + ms };
-    }
-
-    // ✅ invuln HUD update (driven by latest snapshot each frame)
-    function updateInvulnHudFromMe(me) {
-      if (!me || me.alive === false) {
-        el.hudInvuln.classList.add("hidden");
-        return;
-      }
-      const until = Number.isFinite(me.invulnUntil) ? me.invulnUntil : 0;
-      const now = Date.now();
-      const msLeft = until - now;
-
-      if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
-        el.hudInvuln.classList.remove("hidden");
-        el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
-      } else {
-        el.hudInvuln.classList.add("hidden");
-      }
-    }
+    const INVULN_SHOW_THRESHOLD_MS = 80;
 
     // ===== Role UI =====
     function updateRoleUI(){
@@ -982,6 +916,55 @@
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
+    // ✅ timed session UI/runtime
+    let gameEndAt = null;
+    function formatMMSS(msLeft){
+      const s = Math.max(0, Math.ceil(msLeft / 1000));
+      const mm = Math.floor(s / 60);
+      const ss = s % 60;
+      return String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
+    }
+    function updateTimerHudFromSnapshot(snap){
+      const endAt = Number.isFinite(snap?.endAt) ? snap.endAt : (Number.isFinite(gameEndAt) ? gameEndAt : null);
+      if (!endAt) {
+        el.hudTimer.classList.add("hidden");
+        return;
+      }
+      gameEndAt = endAt;
+      const msLeft = endAt - Date.now();
+      el.hudTimer.classList.remove("hidden");
+      el.hudTimerText.textContent = (msLeft > 0) ? formatMMSS(msLeft) : "00:00";
+    }
+    function updateTimerHudFrame(){
+      if (!Number.isFinite(gameEndAt)) return;
+      const msLeft = gameEndAt - Date.now();
+      el.hudTimer.classList.remove("hidden");
+      el.hudTimerText.textContent = formatMMSS(msLeft);
+    }
+
+    // speech bubble
+    let bubble = null;
+    function showBubble(text, ms = 1600) {
+      bubble = { text: String(text), untilMs: Date.now() + ms };
+    }
+
+    function updateInvulnHudFromMe(me) {
+      if (!me || me.alive === false) {
+        el.hudInvuln.classList.add("hidden");
+        return;
+      }
+      const until = Number.isFinite(me.invulnUntil) ? me.invulnUntil : 0;
+      const now = Date.now();
+      const msLeft = until - now;
+
+      if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
+        el.hudInvuln.classList.remove("hidden");
+        el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
+      } else {
+        el.hudInvuln.classList.add("hidden");
+      }
+    }
+
     socket.on("GAME_STARTED", (payload = {}) => {
       document.body.classList.add("inGame");
 
@@ -997,7 +980,6 @@
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
       el.hudCakes.textContent = String(MAX_CAKES);
-
       el.hudInvuln.classList.add("hidden");
 
       gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
@@ -1033,9 +1015,8 @@
       }
     });
 
-    // ✅ GAME_ENDED + bigger leaderboard + TEAM winner highlight
+    // ✅ GAME_ENDED
     socket.on("GAME_ENDED", (p = {}) => {
-      // stop gameplay input effects immediately
       inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
       sendInput();
 
@@ -1060,7 +1041,6 @@
       const winnerTeam = (p.winnerTeamId === null || p.winnerTeamId === undefined) ? null : Number(p.winnerTeamId);
       const winMode = String(p.winMode || (settings?.winMode || "standard"));
 
-      // Big winner banner: highlight TEAM strongly in teams
       if (winnerTeam === null || Number.isNaN(winnerTeam)) {
         el.winnerLabel.textContent = "Winner";
         el.endWinnerBig.textContent = winnerName;
@@ -1082,9 +1062,6 @@
         const row = document.createElement("div");
         row.className = "boardRow boardGrid";
 
-        // ✅ highlight logic:
-        // - teams: highlight every row in winnerTeamId
-        // - ffa: highlight winnerId / first row fallback
         const isWinnerRow =
           (winnerTeam !== null && !Number.isNaN(winnerTeam))
             ? (Number(r.teamId) === winnerTeam)
@@ -1204,72 +1181,29 @@
     function isGameRunning() {
       return !el.running.classList.contains("hidden");
     }
+    function isFormTarget(target){
+      const t = target;
+      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+      return (tag === "input" || tag === "textarea" || tag === "select");
+    }
     function sendInput(){
       socket.emit("input", inputState);
     }
 
-    function setKey(e, isDown){
-      if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
-
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
-
-      const k = e.key.toLowerCase();
+    function applyMoveKey(keyLower, code, isDown){
       let used = true;
-
-      if (k === "w" || e.key === "ArrowUp") inputState.up = isDown;
-      else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
-      else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
-      else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
-      else if (e.key === " " || e.code === "Space") inputState.fire = isDown;
+      if (keyLower === "w" || code === "ArrowUp") inputState.up = isDown;
+      else if (keyLower === "s" || code === "ArrowDown") inputState.down = isDown;
+      else if (keyLower === "a" || code === "ArrowLeft") inputState.left = isDown;
+      else if (keyLower === "d" || code === "ArrowRight") inputState.right = isDown;
+      else if (code === "Space") inputState.fire = isDown;
       else used = false;
-
-      if (used) { e.preventDefault(); sendInput(); }
+      return used;
     }
 
-    window.addEventListener("keydown", (e) => setKey(e, true));
-    window.addEventListener("keyup", (e) => setKey(e, false));
-
+    // ✅ SINGLE keydown handler for everything (no duplicates / no nesting)
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
-
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
-
-      if (e.key.toLowerCase() === "e") socket.emit("tryInteract");
-    });
-
-    // ✅ single keydown handler for:
-    // - drop overlay 8/9/0
-    // - upgrade overlay Escape
-    // - upgrade slot usage 8/9/0
-    window.addEventListener("keydown", (e) => {
-      if (!isGameRunning()) return;
-
-      // Drop overlay choose stage: 8/9/0 selects what to drop
-      if (el.dropOverlay.classList.contains("show") && pendingReplace?.stage === "choose") {
-        if (e.key === "8" || e.key === "9" || e.key === "0") {
-          e.preventDefault();
-          const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
-          chooseDropByIndex(slotIndex);
-          return;
-        }
-      }
-
-      // Upgrade picker open: Escape closes and declines offer server-side
-      if (el.upgradeOverlay.classList.contains("show")) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          closeUpgradeOffer();
-          return;
-        }
-      }
 
       // End overlay: only allow Enter/Escape to go back
       if (el.endOverlay.classList.contains("show")) {
@@ -1280,62 +1214,90 @@
         return;
       }
 
-      // Block gameplay hotkeys while UI is up
-      if (isUiBlockingInput()) return;
+      // Allow prompt input keys in the input itself (handled by answer keydown)
+      if (isFormTarget(e.target)) return;
 
-      // Ignore typing in inputs
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      const isForm = (tag === "input" || tag === "textarea" || tag === "select");
-      if (isForm) return;
+      const k = e.key.toLowerCase();
+      const code = e.code;
 
-      // Use upgrade slots 8/9/0 (consumables only)
+      // Drop overlay controls (Y/N + choose 8/9/0)
+      if (el.dropOverlay.classList.contains("show")) {
+        if (pendingReplace?.stage === "ask") {
+          if (k === "y") { e.preventDefault(); enterReplaceChooseStage(); return; }
+          if (k === "n" || k === "escape") { e.preventDefault(); declineReplace(); return; }
+        } else if (pendingReplace?.stage === "choose") {
+          if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
+          if (e.key === "8" || e.key === "9" || e.key === "0") {
+            e.preventDefault();
+            const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
+            chooseDropByIndex(slotIndex);
+            return;
+          }
+        }
+        return; // don’t process gameplay keys while drop UI is open
+      }
+
+      // Upgrade overlay: Escape declines (server) and closes
+      if (el.upgradeOverlay.classList.contains("show")) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeUpgradeOffer();
+        }
+        return;
+      }
+
+      // Respawn overlay open: block gameplay keys
+      if (el.respawnOverlay.classList.contains("show")) return;
+
+      // Prompt overlay open: block gameplay keys
+      if (el.overlay.classList.contains("show")) return;
+
+      // Debug toggles
+      if (k === "v") {
+        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
+        e.preventDefault();
+        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
+        return;
+      }
+      if (k === "b") {
+        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
+        e.preventDefault();
+        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
+        return;
+      }
+
+      // Interact
+      if (k === "e") {
+        e.preventDefault();
+        socket.emit("tryInteract");
+        return;
+      }
+
+      // Use upgrade slots 8/9/0 (consumables)
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
         socket.emit("useUpgradeSlot", { slotIndex });
-      }
-    });
-
-    window.addEventListener("keydown", (e) => {
-      if (!el.dropOverlay.classList.contains("show")) return;
-
-      const k = e.key.toLowerCase();
-      if (pendingReplace?.stage === "ask") {
-        if (k === "y") { e.preventDefault(); enterReplaceChooseStage(); return; }
-        if (k === "n" || k === "escape") { e.preventDefault(); declineReplace(); return; }
-      } else if (pendingReplace?.stage === "choose") {
-        if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
-      }
-    });
-
-    socket.on("UPGRADE_USED", (p) => {
-      if (!p) return;
-
-      if (!p.ok) {
-        if (p.reason === "empty_slot") showBubble("No upgrade in that slot.", 1200);
-        else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
-        else if (p.reason === "prompt_open") showBubble("Finish the machine first.", 1400);
-        else if (p.reason === "dead") showBubble("You are dead. Respawn first.", 1400);
-        else if (p.reason === "not_enough_money") showBubble(`Not enough money. Need $${p.need}.`, 1500);
-        else showBubble("Cannot use right now.", 1200);
         return;
       }
 
-      if (typeof p.money === "number") {
-        el.hudMoney.textContent = "$" + p.money;
+      // Movement + fire
+      if (applyMoveKey(k, e.key, true)) {
+        e.preventDefault();
+        sendInput();
       }
-
-      const name = p.used?.name || p.used?.id || "Upgrade";
-      if (typeof p.paid === "number") showBubble(`Used: ${name} (-$${p.paid})`, 1300);
-      else showBubble(`Used: ${name}`, 1300);
     });
 
-    socket.on("PLAYER_DIED", ({ playerId }) => {
-      if (playerId !== myId) return;
-      el.hudLife.textContent = "0";
-      el.hudCakes.textContent = "0";
-      el.hudInvuln.classList.add("hidden");
+    window.addEventListener("keyup", (e) => {
+      if (!isGameRunning()) return;
+      if (isUiBlockingInput()) return;
+      if (isFormTarget(e.target)) return;
+
+      const k = e.key.toLowerCase();
+      if (applyMoveKey(k, e.key, false)) {
+        e.preventDefault();
+        sendInput();
+      }
     });
 
     // ---------- Prompt UI ----------
@@ -1353,6 +1315,7 @@
       el.overlay.classList.remove("show");
       el.answer.value = "";
       el.msg.textContent = "";
+      el.msg.className = "msg";
     }
     function submitPrompt() {
       const val = el.answer.value.trim();
@@ -1453,11 +1416,11 @@
       if (activeOfferId) {
         socket.emit("declineUpgrade", { offerId: activeOfferId });
       }
-
       activeOfferId = null;
       el.upgradeOverlay.classList.remove("show");
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
+      el.upgradeMsg.className = "msg";
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
@@ -1470,6 +1433,7 @@
         el.upgradeOverlay.classList.remove("show");
         el.upgradeList.innerHTML = "";
         el.upgradeMsg.textContent = "";
+        el.upgradeMsg.className = "msg";
       }
     });
 
@@ -1556,22 +1520,23 @@
       });
     }
 
-    function declineReplace() {
-      closeDropPicker();
-      closeUpgradeOffer();
-      showBubble("Kept current upgrades.", 1300);
-    }
-
     function closeDropPicker() {
       pendingReplace = null;
       el.dropOverlay.classList.remove("show");
       el.dropList.innerHTML = "";
       el.dropMsg.textContent = "";
+      el.dropMsg.className = "msg";
     }
 
-    el.dropCancelBtn.addEventListener("click", () => closeDropPicker());
-    el.replaceYesBtn.addEventListener("click", () => enterReplaceChooseStage());
-    el.replaceNoBtn.addEventListener("click", () => declineReplace());
+    function declineReplace() {
+      closeDropPicker();
+      closeUpgradeOffer(); // ✅ also emits declineUpgrade so server clears offer
+      showBubble("Kept current upgrades.", 1300);
+    }
+
+    el.dropCancelBtn.addEventListener("click", closeDropPicker);
+    el.replaceYesBtn.addEventListener("click", enterReplaceChooseStage);
+    el.replaceNoBtn.addEventListener("click", declineReplace);
 
     socket.on("UPGRADE_RESULT", (p) => {
       if (!p) return;
@@ -1703,6 +1668,35 @@
         el.respawnMsg.textContent = "Cannot respawn: " + (p.reason || "unknown");
         el.respawnMsg.className = "msg bad";
       }
+    });
+
+    socket.on("UPGRADE_USED", (p) => {
+      if (!p) return;
+
+      if (!p.ok) {
+        if (p.reason === "empty_slot") showBubble("No upgrade in that slot.", 1200);
+        else if (p.reason === "offer_open") showBubble("Close the upgrade picker first.", 1400);
+        else if (p.reason === "prompt_open") showBubble("Finish the machine first.", 1400);
+        else if (p.reason === "dead") showBubble("You are dead. Respawn first.", 1400);
+        else if (p.reason === "not_enough_money") showBubble(`Not enough money. Need $${p.need}.`, 1500);
+        else showBubble("Cannot use right now.", 1200);
+        return;
+      }
+
+      if (typeof p.money === "number") {
+        el.hudMoney.textContent = "$" + p.money;
+      }
+
+      const name = p.used?.name || p.used?.id || "Upgrade";
+      if (typeof p.paid === "number") showBubble(`Used: ${name} (-$${p.paid})`, 1300);
+      else showBubble(`Used: ${name}`, 1300);
+    });
+
+    socket.on("PLAYER_DIED", ({ playerId }) => {
+      if (playerId !== myId) return;
+      el.hudLife.textContent = "0";
+      el.hudCakes.textContent = "0";
+      el.hudInvuln.classList.add("hidden");
     });
 
     // ===== Upgrade bar render (two sections) =====
@@ -2259,22 +2253,6 @@
       ctx.lineWidth = 1;
     }
 
-    window.addEventListener("keydown", (e) => {
-      if (!isGameRunning()) return;
-      if (isUiBlockingInput()) return;
-
-      if (e.key.toLowerCase() === "v") {
-        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
-        e.preventDefault();
-        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
-      }
-      if (e.key.toLowerCase() === "b") {
-        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
-        e.preventDefault();
-        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
-      }
-    });
-
     function draw(){
       if (!lastSnapshot) return;
 
@@ -2349,20 +2327,6 @@
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
-
-    // ===== Helpers for UI closing =====
-    function closeDropPicker() {
-      pendingReplace = null;
-      el.dropOverlay.classList.remove("show");
-      el.dropList.innerHTML = "";
-      el.dropMsg.textContent = "";
-    }
-    function closePrompt() {
-      activePromptId = null;
-      el.overlay.classList.remove("show");
-      el.answer.value = "";
-      el.msg.textContent = "";
-    }
 
     // initial render
     renderUpgradeBar();
