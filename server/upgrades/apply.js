@@ -224,6 +224,7 @@ const VISION_LEN_PER_STACK = 80;
 const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
 
 const RAD2DEG = 180 / Math.PI;
+const DEG2RAD = Math.PI / 180; // ✅ added (compat field below)
 
 // Compute deterministic modifiers from permanents + temp effects.
 // 🔒 Protocol wants ONLY: { speedMult, visionLenAdd, fovAddDeg }
@@ -293,7 +294,11 @@ function computePlayerMods(player, nowMs) {
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
 
-  return { speedMult, visionLenAdd, fovAddDeg };
+  // ✅ compat: some clients still read radians
+  const fovAdd = fovAddDeg * DEG2RAD;
+
+  // keep protocol fields, plus compat field
+  return { speedMult, visionLenAdd, fovAddDeg, fovAdd };
 }
 
 // Apply a consumable effect.
