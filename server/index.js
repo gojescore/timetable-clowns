@@ -506,19 +506,20 @@ function endGame(io, game, reason, extra = {}) {
   const winners = computeWinners(game, extra);
 
   const payload = {
+    // allow extra info (endedBy, winnerReason, etc.)
+    // NOTE: we spread extras FIRST so they can NEVER override the canonical winner/leaderboard fields below.
+    ...extra,
+
     reason,
     endedAt: game.endedAt,
 
-    // ✅ ALWAYS present (even if null)
+    // ✅ ALWAYS present + protected from overwrite
     winnerId: winners.winnerId,
     winnerName: winners.winnerName,
     winnerTeamId: winners.winnerTeamId,
 
     // ✅ ALWAYS includes teamId per row now
     leaderboard: winners.leaderboard,
-
-    // allow extra info without overriding required fields unless you *really* want to
-    ...extra,
   };
 
   io.to(game.code).emit("GAME_ENDED", payload);
