@@ -1882,16 +1882,17 @@
     const VISION_LEN_MAX = 2400;
 
     // ✅ prefer server-computed mods (snapshot.players[].mods)
-    function getModsForMe(me){
-      const m = me?.mods;
-      if (!m) return { fovAdd: 0, visionLenAdd: 0, visionMult: 1, speedMult: 1 };
-      return {
-        fovAdd: Number.isFinite(m.fovAdd) ? m.fovAdd : 0,              // radians
-        visionLenAdd: Number.isFinite(m.visionLenAdd) ? m.visionLenAdd : 0, // pixels
-        visionMult: Number.isFinite(m.visionMult) ? m.visionMult : 1,
-        speedMult: Number.isFinite(m.speedMult) ? m.speedMult : 1,
-      };
-    }
+function getModsForMe(me){
+  const m = me?.mods;
+  if (!m) return { fovAddDeg: 0, visionLenAdd: 0, speedMult: 1 };
+
+  return {
+    fovAddDeg: Number.isFinite(m.fovAddDeg) ? m.fovAddDeg : 0,
+    visionLenAdd: Number.isFinite(m.visionLenAdd) ? m.visionLenAdd : 0,
+    speedMult: Number.isFinite(m.speedMult) ? m.speedMult : 1,
+  };
+}
+
     function getConeAngleDegForMe(me){
       const mods = getModsForMe(me);
       const addDeg = (mods.fovAdd || 0) * (180 / Math.PI);
