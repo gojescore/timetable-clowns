@@ -197,6 +197,19 @@ function snapshotForGame(game) {
           y: b.y,
         }))
       : [],
+    // ✅ NEW: mines in snapshots (client can render later)
+    mines: Array.isArray(game.mines)
+      ? game.mines.map((m) => ({
+          id: m.id,
+          ownerId: m.ownerId,
+          ownerTeamId: m.ownerTeamId,
+          x: m.x,
+          y: m.y,
+          radius: m.radius,
+          armedAt: m.armedAt,
+          expiresAt: m.expiresAt,
+        }))
+      : [],
     players: [...game.players.values()].map((p) => {
       upgrades.ensureUpgradeState(p);
       upgrades.ensureEffectState(p);
@@ -342,6 +355,10 @@ function makeOfferId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 function makeBulletId() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+// ✅ NEW: mine ids
+function makeMineId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
@@ -875,6 +892,111 @@ setInterval(() => {
       if (removed) continue;
     }
 
+    // ✅ NEW: mines (Cake Surprise) tick + detonation
+    if (!Array.isArray(game.mines)) game.mines = [];
+
+    for (let mi = game.mines.length - 1; mi >= 0; mi--) {
+      const m = game.mines[mi];
+      if (!m) {
+        game.mines.splice(mi, 1);
+        continue;
+      }
+
+      // expire
+      if (Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
+        game.mines.splice(mi, 1);
+        continue;
+      }
+
+      // not armed yet
+      if (Number.isFinite(m.armedAt) && now < m.armedAt) continue;
+
+      // check players in radius
+      let hitPlayer = null;
+
+      for (const p of game.players.values()) {
+        if (!p.alive) continue;
+
+        // friendly fire rules
+        if (game.settings?.mode === GAME_MODE_TEAMS) {
+          const friendlyFire = !!game.settings?.friendlyFire;
+          if (!friendlyFire) {
+            let ownerTeam = m.ownerTeamId;
+            if (ownerTeam === undefined || ownerTeam === null) {
+              const owner = game.players.get(m.ownerId);
+              ownerTeam = owner ? owner.teamId : ownerTeam;
+            }
+            if (ownerTeam !== undefined && ownerTeam !== null && p.teamId === ownerTeam) continue;
+          }
+        }
+
+        if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
+
+        const r = Number.isFinite(m.radius) ? m.radius : 24;
+        if (dist2(p.x, p.y, m.x, m.y) <= r * r) {
+          hitPlayer = p;
+          break;
+        }
+      }
+
+      if (!hitPlayer) continue;
+
+      // mine triggers once
+      game.mines.splice(mi, 1);
+
+      const owner = game.players.get(m.ownerId) || null;
+
+      // shield blocks death (same behavior as bullets)
+      upgrades.ensureEffectState(hitPlayer);
+      if ((hitPlayer.effects.shield | 0) > 0) {
+        hitPlayer.effects.shield = (hitPlayer.effects.shield | 0) - 1;
+        hitPlayer.invulnUntil = now + 250;
+
+        io.to(code).emit("PLAYER_SHIELDED", {
+          playerId: hitPlayer.id,
+          by: owner ? owner.id : null,
+          shieldLeft: hitPlayer.effects.shield | 0,
+        });
+        continue;
+      }
+
+      // stats
+      if (owner) {
+        if (!owner.stats) owner.stats = { kills: 0, deaths: 0, correct: 0 };
+        owner.stats.kills += 1;
+      }
+      if (!hitPlayer.stats) hitPlayer.stats = { kills: 0, deaths: 0, correct: 0 };
+      hitPlayer.stats.deaths += 1;
+
+      // killed-by info
+      hitPlayer.killedByName = owner ? owner.name : "Unknown";
+      hitPlayer.killedById = owner ? owner.id : null;
+
+      hitPlayer.alive = false;
+      hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
+      hitPlayer.fireCd = 0;
+      hitPlayer.cakes = 0;
+      hitPlayer.pendingPrompt = null;
+      hitPlayer.pendingUpgradeOffer = null;
+
+      const opts = buildRespawnOptions(game, hitPlayer);
+      hitPlayer.pendingRespawn = {
+        options: opts.map((o) => o.id),
+        createdAt: now,
+      };
+
+      io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
+        killedBy: hitPlayer.killedByName || "Unknown",
+        options: opts.map((o) => ({
+          id: o.id,
+          label: o.label,
+          kind: o.kind,
+        })),
+      });
+
+      io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
+    }
+
     // economy + broadcast
     economy.tryCollectPickups(game);
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
@@ -943,6 +1065,7 @@ io.on("connection", (socket) => {
       players: new Map(),
       pickups: [],
       bullets: [],
+      mines: [], // ✅ NEW
       upgradePool: null,
 
       startedAt: null,
@@ -1156,6 +1279,7 @@ io.on("connection", (socket) => {
 
     game.pickups = [];
     game.bullets = [];
+    game.mines = []; // ✅ NEW
 
     game.phase = "running";
     game.startedAt = Date.now();
@@ -1499,7 +1623,7 @@ io.on("connection", (socket) => {
       return socket.emit("UPGRADE_USED", { ok: false, reason: res.reason || "use_failed" });
     }
 
-    // apply actions (incremental: we support invuln action now; spawn actions later)
+    // apply actions (now supports invuln + mines)
     if (Array.isArray(res.actions)) {
       for (const a of res.actions) {
         if (!a || typeof a.type !== "string") continue;
@@ -1509,8 +1633,84 @@ io.on("connection", (socket) => {
           if (Number.isFinite(untilMs)) p.invulnUntil = Math.max(p.invulnUntil || 0, untilMs);
         }
 
-        // Other action types (mines/banana_shot) will be wired later (incremental).
-        // For now they are ignored safely.
+        // ✅ NEW: mine spawn action from apply.js (Cake Surprise)
+        if (a.type === "spawn_mine_at_player") {
+          const params = a.params || {};
+          const radius = Number.isFinite(params.radius) ? params.radius : 24;
+          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : 20;
+          const armDelaySec = Number.isFinite(params.armDelaySec) ? params.armDelaySec : 0.6;
+
+          if (!Array.isArray(game.mines)) game.mines = [];
+
+          // Try to place at/near player, avoiding walls/machines (simple point-vs-expanded-AABB)
+          const tries = 16;
+          const step = 18;
+
+          function pointBlocked(x, y, r) {
+            // walls
+            if (Array.isArray(game.map?.walls)) {
+              for (const w of game.map.walls) {
+                const rx = w.x - r;
+                const ry = w.y - r;
+                const rw = w.w + r * 2;
+                const rh = w.h + r * 2;
+                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+              }
+            }
+            // machines
+            if (Array.isArray(game.map?.machines)) {
+              for (const mm of game.map.machines) {
+                const bx = mm.x - MACHINE_HALF;
+                const by = mm.y - MACHINE_HALF;
+                const bw = MACHINE_HALF * 2;
+                const bh = MACHINE_HALF * 2;
+
+                const rx = bx - r;
+                const ry = by - r;
+                const rw = bw + r * 2;
+                const rh = bh + r * 2;
+                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+              }
+            }
+            return false;
+          }
+
+          let placed = null;
+
+          // try player position first
+          if (!pointBlocked(p.x, p.y, radius)) {
+            placed = { x: p.x, y: p.y };
+          } else {
+            for (let t = 0; t < tries; t++) {
+              const ang = (t / tries) * Math.PI * 2;
+              const x = p.x + Math.cos(ang) * step;
+              const y = p.y + Math.sin(ang) * step;
+              if (!pointBlocked(x, y, radius)) {
+                placed = { x, y };
+                break;
+              }
+            }
+          }
+
+          if (!placed) {
+            // no safe place -> refund and fail
+            p.money += useCost;
+            return socket.emit("UPGRADE_USED", { ok: false, reason: "mine_no_space" });
+          }
+
+          game.mines.push({
+            id: makeMineId(),
+            ownerId: p.id,
+            ownerTeamId: p.teamId,
+            x: placed.x,
+            y: placed.y,
+            radius,
+            armedAt: nowMs + Math.floor(armDelaySec * 1000),
+            expiresAt: nowMs + Math.floor(ttlSec * 1000),
+          });
+        }
+
+        // Other action types (banana_shot) can be wired next (incremental).
       }
     }
 
