@@ -5,7 +5,7 @@ When starting a NEW chat thread, paste:
 2) PROTOCOL.md
 3) the file currently being edited
 
-Last updated: 2026-02-06
+Last updated: 2026-02-07
 
 ---
 
@@ -98,7 +98,7 @@ timetable-clowns/
 ### Economy
 - Each player starts with `$100`
 - Money pickups exist (`type: "money"`)
-- Server handles pickup collection
+- Server handles pickup collection (economy module)
 - On correct answer:
   - server awards money via economy module (spawns / pickup logic)
 - On wrong answer:
@@ -106,7 +106,7 @@ timetable-clowns/
 
 ### Upgrades
 - Upgrades exist with:
-  - Permanents (buy cost, stacking count, max 3 types)
+  - Permanents (buy cost, stacking count)
   - Consumables (3 slots, use cost, use via 8/9/0)
 - Offer system:
   - After correct answer, server emits `UPGRADE_OFFER` with options
@@ -136,30 +136,6 @@ timetable-clowns/
   - `RESPAWN_OPTIONS` includes `{ killedBy: <name>, options:[...] }`
   - client shows “Killed by: X” in respawn modal
 
-### Client rendering + UI (client/index.html)
-- Canvas rendering with camera centered on “me”
-- Fog-of-war cone implemented (debug toggles V and B)
-- HUD shows:
-  - money
-  - life
-  - cakes
-  - invulnerability countdown
-  - ✅ timer pill in timed sessions (MM:SS)
-- Overlays implemented:
-  - math prompt
-  - upgrade picker
-  - backpack full replace picker
-  - respawn picker
-  - ✅ game ended / leaderboard overlay (large winner banner)
-- Input handling:
-  - movement WASD/arrow
-  - shooting hold space
-  - E interact
-  - 8/9/0 use consumables
-  - client blocks gameplay input while overlays are open
-- Known safety constraint:
-  - Avoid nested duplicate `window.addEventListener("keydown", ...)` patterns (previous bug class)
-
 ### ✅ Timed session setting (implemented)
 - Host chooses in lobby:
   - session type: Standard / Timed
@@ -185,27 +161,59 @@ timetable-clowns/
   - (teamId exists on player)
 - Leaderboard currently sorts by:
   - correct desc, then kills desc, then money desc, then deaths asc
+- ✅ Teams-mode winner computation exists on server:
+  - server aggregates team totals and chooses winning `winnerTeamId`
+  - `winnerName/winnerId` are the top player from the winning team (so the client can highlight a row)
+
+### Client rendering + UI (client/index.html)
+- Canvas rendering with camera centered on “me”
+- Fog-of-war cone implemented (debug toggles V and B)
+- HUD shows:
+  - money
+  - life
+  - cakes
+  - invulnerability countdown
+  - ✅ timer pill in timed sessions (MM:SS)
+- Overlays implemented:
+  - math prompt
+  - upgrade picker
+  - backpack full replace picker
+  - respawn picker
+  - ✅ game ended / leaderboard overlay (large winner banner)
+- Input handling:
+  - movement WASD/arrow
+  - shooting hold space
+  - E interact
+  - 8/9/0 use consumables
+  - client blocks gameplay input while overlays are open
+- Known safety constraint:
+  - Avoid nested duplicate `window.addEventListener("keydown", ...)` patterns (previous bug class)
 
 ---
 
 ## What is NOT implemented yet (next work)
 
-### Winner computation for Teams mode (recommended next)
-Current end-game payload includes winner fields, but:
-- If you want **“winning team”** (aggregate team score) rather than “winning player”,
-  server needs to compute:
-  - team totals (sum correct/kills/money or chosen rules)
-  - choose winning teamId
-  - send winnerTeamId consistently for Teams sessions
-  - optionally: show team totals on leaderboard or separate team leaderboard
+### Winner UI emphasis for Teams mode (client-side)
+Server already computes `winnerTeamId`, but the client end screen should:
+- make the winning team much more noticeable in the banner (big label)
+- optionally show team totals (correct/kills/money) on the end screen
+
+### Consumable “use” effects + usesLeft decrement (if desired)
+Current `useUpgradeSlot`:
+- charges the useCost and emits `UPGRADE_USED`
+- but does not apply an actual effect yet (and may not decrement usesLeft depending on how upgrades/apply.js is implemented)
+If you want consumables to have real gameplay impact, add:
+- server-side effect hooks
+- consistent usesLeft decrement and removal when depleted
+- snapshot reflects updated slot state
 
 ### Optional: richer end reasons / UX
-- If you want “match canceled” / host ended / disconnect end
-- If you want “play again” without full reload (currently you reload)
+- “match canceled” / host ended / disconnect end
+- “play again” without full reload (currently you reload)
 
 ### Optional: leaderboard fields
-- If you want accuracy %, streaks, damage dealt, etc.
-- If you want machines-cleared count separate from correct count
+- accuracy %, streaks, damage dealt, etc.
+- machines-cleared count separate from correct count
 
 ---
 
@@ -291,22 +299,25 @@ Client → Server events in use:
   - keep input listeners flat and guard with “UI blocking” checks
 - School PCs / performance:
   - keep collision math simple and avoid expensive per-frame DOM
+- ⚠️ `GAME_ENDED` payload merge footgun:
+  - `endGame()` builds a payload and then spreads `...extra`
+  - if `extra` contains `winnerId/winnerName/winnerTeamId/leaderboard`, it can overwrite the computed fields
+  - safest pattern is: spread `...extra` BEFORE the required winner fields
 
 ---
 
 ## Next concrete tasks (recommended order)
 
-1) Teams-mode winner calculation:
-   - compute team totals
-   - fill `winnerTeamId` consistently
-   - update client winner banner to emphasize the team
+1) Client end screen polish (Teams mode)
+   - bigger winner modal
+   - make winning TEAM extremely obvious (use `winnerTeamId`)
+   - ensure “Back to lobby” is the only action
 
-2) Improve end-game payload completeness:
-   - always include winner fields even on time end (already done)
-   - optionally include `endedBy` / `winnerReason` etc.
+2) Make `GAME_ENDED` payload “override-safe”
+   - move `...extra` earlier so winner fields cannot be overwritten accidentally
 
-3) Expand leaderboard:
-   - include `teamId` in rows if you want to show it
+3) Expand leaderboard UI
+   - display `teamId` (or “Team A/B”) if you want
    - add columns you care about
 
 4) Optional: non-reload return-to-lobby flow
