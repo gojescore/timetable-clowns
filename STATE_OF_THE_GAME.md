@@ -5,7 +5,7 @@ When starting a NEW chat thread, paste:
 2) PROTOCOL.md
 3) the file currently being edited
 
-Last updated: 2026-02-07
+Last updated: 2026-02-06
 
 ---
 
@@ -41,14 +41,6 @@ timetable-clowns/
   - >= 2 players
   - Teams mode: all players must have teamId
 
-### Session settings (Standard / Timed)
-- Host can choose:
-  - sessionMode: `"standard"` or `"timed"`
-  - sessionMinutes (1..60, used if timed)
-- Server computes `endAt` at game start (timed only)
-- Server includes `endAt` in `GAME_STARTED`
-- Server repeats `endAt` in `STATE_SNAPSHOT`
-
 ### Map (map01)
 - `map01` = “Training Hall (10 rooms)”
 - World size: `{ w: 2400, h: 1600 }`
@@ -71,7 +63,7 @@ timetable-clowns/
 ### Shooting / bullets (cakes)
 - Shooting is server authoritative
 - Bullet speed: `BULLET_SPEED = 780 px/s`
-- Bullet TTL: `BULLET_TTL = 2.0`
+- Bullet TTL: `BULLET_TTL = 2.0` (user-confirmed range feels right)
 - Bullet removal happens on:
   - TTL expiry
   - world bounds exit
@@ -81,7 +73,7 @@ timetable-clowns/
 - Bullet collision tuning:
   - `BULLET_HIT_R_WALL = 4`
   - `BULLET_HIT_R_MACHINE = 6`
-  - `CAKE_HIT_R_PLAYER = 12`
+  - `CAKE_HIT_R_PLAYER = 12` (player hit radius padding)
 - Sub-stepping is used to avoid tunneling on fast bullets:
   - travel distance split into steps (max step length ~10px)
 
@@ -127,7 +119,7 @@ timetable-clowns/
   - Consumables slots (8/9/0)
   - Permanents with stacking count
 
-### Death + respawn (includes killed-by)
+### Death + respawn
 - Players can be killed by bullets
 - On death:
   - server marks player dead and emits `PLAYER_DIED { playerId }` to room
@@ -135,35 +127,14 @@ timetable-clowns/
 - Respawn options:
   - corners always
   - cleared machines as optional spawn points (implemented as a Set per player)
-- Killed-by name:
-  - `RESPAWN_OPTIONS { killedBy, options }` includes killer name when known
-  - client renders “Killed by: <name>”
 - Invulnerability after respawn:
   - `RESPAWN_INVULN = 0.6s`
   - server sets `invulnUntil` timestamp
   - client shows invuln HUD pill + blink effect
-
-### Game end + leaderboard (implemented)
-Game ends when:
-1) **Machine 10** is correctly answered (standard session)
-2) **Time runs out** (timed session)
-
-Server emits:
-- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
-
-Leaderboard rows include:
-- `{ id, name, teamId, correct, kills, deaths, money }`
-
-Winner fields are **always present**:
-- `winnerId` / `winnerName` always included (may be null if something truly weird happens, but keys exist)
-- `winnerTeamId` is:
-  - `null` in FFA
-  - set in Teams mode (team aggregate scoring)
-
-Client UX:
-- Large end modal
-- Winner banner big + winner row highlighted
-- **Only action**: “Back to lobby” (reload)
+- ✅ Killed-by info:
+  - server tracks killer name on death
+  - `RESPAWN_OPTIONS` includes `{ killedBy: <name>, options:[...] }`
+  - client shows “Killed by: X” in respawn modal
 
 ### Client rendering + UI (client/index.html)
 - Canvas rendering with camera centered on “me”
@@ -173,13 +144,13 @@ Client UX:
   - life
   - cakes
   - invulnerability countdown
-  - timer (timed sessions only)
+  - ✅ timer pill in timed sessions (MM:SS)
 - Overlays implemented:
   - math prompt
   - upgrade picker
   - backpack full replace picker
-  - respawn picker (includes killed-by)
-  - end screen / leaderboard
+  - respawn picker
+  - ✅ game ended / leaderboard overlay (large winner banner)
 - Input handling:
   - movement WASD/arrow
   - shooting hold space
@@ -188,6 +159,53 @@ Client UX:
   - client blocks gameplay input while overlays are open
 - Known safety constraint:
   - Avoid nested duplicate `window.addEventListener("keydown", ...)` patterns (previous bug class)
+
+### ✅ Timed session setting (implemented)
+- Host chooses in lobby:
+  - session type: Standard / Timed
+  - minutes (Timed only)
+- Server sets `endAt` when match starts (Timed only)
+- Client shows timer pill while running
+- Server ends match automatically when `now >= endAt`
+
+### ✅ Game end + leaderboard (implemented)
+- Game ends when:
+  1) **Machine 10** is correctly answered (reason: `"machine10"`)
+  2) **Time runs out** in timed session (reason: `"time"`)
+- When ended:
+  - client shows large end modal
+  - winner is visually highlighted
+  - only action: “Back to lobby” (reload)
+- Server event:
+  - `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
+- Server tracks stats:
+  - correct answers count
+  - kills, deaths
+  - money
+  - (teamId exists on player)
+- Leaderboard currently sorts by:
+  - correct desc, then kills desc, then money desc, then deaths asc
+
+---
+
+## What is NOT implemented yet (next work)
+
+### Winner computation for Teams mode (recommended next)
+Current end-game payload includes winner fields, but:
+- If you want **“winning team”** (aggregate team score) rather than “winning player”,
+  server needs to compute:
+  - team totals (sum correct/kills/money or chosen rules)
+  - choose winning teamId
+  - send winnerTeamId consistently for Teams sessions
+  - optionally: show team totals on leaderboard or separate team leaderboard
+
+### Optional: richer end reasons / UX
+- If you want “match canceled” / host ended / disconnect end
+- If you want “play again” without full reload (currently you reload)
+
+### Optional: leaderboard fields
+- If you want accuracy %, streaks, damage dealt, etc.
+- If you want machines-cleared count separate from correct count
 
 ---
 
@@ -208,7 +226,7 @@ Bullets:
 - `BULLET_HIT_R_WALL = 4`
 - `BULLET_HIT_R_MACHINE = 6`
 - `CAKE_HIT_R_PLAYER = 12`
-- `FIRE_COOLDOWN` (current value in file)
+- `FIRE_COOLDOWN = 0.5`
 
 Respawn:
 - `RESPAWN_INVULN = 0.6`
@@ -217,7 +235,7 @@ Respawn:
 Ammo:
 - `MAX_CAKES = 7`
 
-Session:
+Timed sessions:
 - `SESSION_STANDARD = "standard"`
 - `SESSION_TIMED = "timed"`
 - `MIN_SESSION_MIN = 1`
@@ -233,17 +251,17 @@ Server → Client events in use:
 - `JOIN_SUCCESS { gameCode, players, settings }`
 - `JOIN_FAILED { reason }`
 - `LOBBY_UPDATE { players, settings }`
-- `GAME_STARTED { map, settings, endAt? }`
-- `STATE_SNAPSHOT { time, world, pickups, bullets, players, endAt? }`
+- `GAME_STARTED { map, settings, endAt }`
+- `STATE_SNAPSHOT { time, world, phase, endAt, pickups, bullets, players }`
 - `MATH_PROMPT { promptId, base, machineNum }`
 - `ANSWER_RESULT { ok, correct? }`
 - `INTERACT_DENIED { reason, nextMachineNum, tried }`
 - `UPGRADE_OFFER { offerId, options }`
 - `UPGRADE_RESULT { ok, reason?, ... }`
-- `UPGRADE_DECLINED { ok }`
+- `UPGRADE_DECLINED { ok, reason? }`
 - `UPGRADE_USED { ok, reason?, ... }`
 - `PLAYER_DIED { playerId }`
-- `RESPAWN_OPTIONS { options, killedBy? }`
+- `RESPAWN_OPTIONS { killedBy?, options }`
 - `RESPAWN_RESULT { ok, reason? }`
 - `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
 
@@ -268,7 +286,7 @@ Client → Server events in use:
 - If bullets appear to “vanish immediately”, common cause is spawning inside an expanded collision rect:
   - solved by spawn push-forward safety check (already in server file)
 - If bullets pass through walls, common cause is discrete movement without sweep:
-  - current server uses swept segment vs expanded AABB
+  - current server uses swept segment vs expanded AABB (should be reliable)
 - Input handling bugs can occur if multiple nested key listeners are used:
   - keep input listeners flat and guard with “UI blocking” checks
 - School PCs / performance:
@@ -278,8 +296,20 @@ Client → Server events in use:
 
 ## Next concrete tasks (recommended order)
 
-1) (Optional cleanup) Reduce/merge multiple keydown handlers in client to one flat handler
-2) Decide final Teams winner UX:
-   - show “Team X” as the big winner name instead of best player name
-   - and/or highlight all rows for winning team
-3) Flesh out upgrade effects (speed, vision, etc.)
+1) Teams-mode winner calculation:
+   - compute team totals
+   - fill `winnerTeamId` consistently
+   - update client winner banner to emphasize the team
+
+2) Improve end-game payload completeness:
+   - always include winner fields even on time end (already done)
+   - optionally include `endedBy` / `winnerReason` etc.
+
+3) Expand leaderboard:
+   - include `teamId` in rows if you want to show it
+   - add columns you care about
+
+4) Optional: non-reload return-to-lobby flow
+   - reset state on client + server without `location.reload()`
+
+---
