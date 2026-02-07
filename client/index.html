@@ -1875,8 +1875,26 @@
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
-    const VISION_LEN = 420;
-    const CONE_ANGLE_DEG = 92;
+const VISION_LEN = 420;
+
+// ✅ Glasses (big_eyes) effect: widen cone per stack
+const CONE_ANGLE_BASE_DEG = 92;
+const CONE_ANGLE_PER_STACK_DEG = 10;
+const CONE_ANGLE_MAX_DEG = 160;
+
+function getPermCountFromMe(me, upgradeId){
+  const perm = me?.upgrades?.permanent;
+  if (!Array.isArray(perm)) return 0;
+  const row = perm.find(x => x && x.id === upgradeId);
+  return Number.isFinite(row?.count) ? row.count : 0;
+}
+
+function getConeAngleDegForMe(me){
+  const stacks = getPermCountFromMe(me, "big_eyes"); // ✅ still the id
+  const deg = CONE_ANGLE_BASE_DEG + stacks * CONE_ANGLE_PER_STACK_DEG;
+  return Math.min(CONE_ANGLE_MAX_DEG, deg);
+}
+
 
     const EDGE_BLUR_PX = 14;
     const EDGE_STRENGTH = 0.75;
