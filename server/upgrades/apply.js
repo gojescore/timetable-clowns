@@ -117,6 +117,15 @@ function findPermanentSlot(player, upgradeId) {
   return player.upgrades.permSlots.findIndex((s) => String(s?.id || "") === key);
 }
 
+// ✅ helper: get permanent stack count by id (safe)
+function getPermCount(player, upgradeId) {
+  ensureUpgradeState(player);
+  const key = String(upgradeId || "");
+  const row = player.upgrades.permSlots.find((s) => String(s?.id || "") === key);
+  const c = Number.isFinite(row?.count) ? row.count : 0;
+  return Math.max(0, Math.floor(c));
+}
+
 function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
@@ -202,6 +211,9 @@ function applyConsumableReplace(player, upgradeId, dropId) {
  * EFFECTS PHASE HELPERS
  * ------------------------------------------------------------------ */
 
+// ✅ Fog length tuning (server -> client mods)
+const VISION_LEN_PER_STACK = 80; // ✅ you said 80 is good
+
 // Compute deterministic modifiers from permanents + temp effects.
 // Server can call this each tick, or compute-on-demand for snapshots.
 function computePlayerMods(player, nowMs) {
@@ -214,7 +226,11 @@ function computePlayerMods(player, nowMs) {
   let fovAdd = 0.0;
   let visionMult = 1.0;
 
-  // permanents
+  // ✅ NEW: additive vision length (pixels) for fog cone
+  // (client should do: BASE_VISION_LEN + mods.visionLenAdd)
+  let visionLenAdd = 0;
+
+  // permanents driven by definition effects (existing system)
   for (const slot of player.upgrades.permSlots) {
     const id = String(slot?.id || "");
     const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
@@ -246,6 +262,11 @@ function computePlayerMods(player, nowMs) {
     }
   }
 
+  // ✅ Explicit mapping: giraffoscope increases cone LENGTH by +80px per stack
+  // (independent of definitions.js effect schema — safe + incremental)
+  const giraffeStacks = getPermCount(player, "giraffoscope");
+  visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
+
   // temporary dash effect
   const dash = player.effects.dash;
   if (dash && Number.isFinite(dash.untilMs) && now < dash.untilMs) {
@@ -257,10 +278,17 @@ function computePlayerMods(player, nowMs) {
   visionMult = Math.max(0.75, Math.min(visionMult, 3.0));
   fovAdd = Math.max(0.0, Math.min(fovAdd, 1.2)); // ~69 degrees extra
 
+  // ✅ clamp additive length too (so it never explodes)
+  visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400)); // 30 stacks -> 2400px cap
+
   return {
     speedMult,
     fovAdd,
     visionMult,
+
+    // ✅ NEW
+    visionLenAdd,
+
     shield: player.effects.shield | 0,
     dashActive: !!(dash && Number.isFinite(dash.untilMs) && now < dash.untilMs),
   };
