@@ -23,7 +23,8 @@ A silly top-down multiplayer game for practicing times tables.
   - map choice (map01 or random)
   - session type: Standard or Timed
   - timed minutes (Timed only)
-  - win mode: Standard or Money (Timed sessions only decide winner via winMode, standard sessions still end on Machine 10)
+  - win mode: Standard or Money  
+    (Timed sessions only decide winner via winMode; Standard sessions still end on Machine 10)
 - Players move around a top-down map with rooms + corridors
 - Rooms contain machines 1–10 (one per room)
 - Machines must be completed in numeric order per player (1 → 2 → … → 10)
@@ -81,8 +82,10 @@ Upgrades come in two kinds:
 - Cost field:
   - `useCost`
 - Cannot hold more than 3 consumables:
-  - If full and player picks a new consumable, server returns `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
-  - Client must offer replace flow and send `chooseUpgradeReplace { dropId }`
+  - If full and player picks a new consumable, server returns  
+    `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
+  - Client must offer replace flow and send  
+    `chooseUpgradeReplace { offerId, upgradeId, dropId }`
 
 **Using consumables**
 - Hotkeys:
@@ -96,8 +99,28 @@ Upgrades come in two kinds:
     - no prompt open (`pendingPrompt`)
     - no upgrade offer open (`pendingUpgradeOffer`)
   - player has enough money for `useCost`
-- Server subtracts money and emits `UPGRADE_USED { ok:true, paid, used, money }`
+- Server subtracts money and emits:
+  - `UPGRADE_USED { ok:true, paid, used, money }`
 - (Consumable “effects” are defined by upgrades module; networking contract stays the same.)
+
+### 2.4.1 Permanent fog upgrades (Glasses + Giraffoscope)
+Two permanent upgrades affect fog-of-war rendering:
+
+**Glasses (`big_eyes`)**
+- Widens the fog cone angle.
+- Stacking increases cone width linearly.
+
+**Giraffoscope**
+- Increases the fog cone length.
+- Stacking increases cone length linearly.
+
+**Important rule (authoritative source):**
+- Fog parameters are derived from server state and must be consistent with permanent stacks.
+- Client may calculate the final fog values from the player’s permanent stack counts in snapshot:
+  - `big_eyes` stack count → cone angle
+  - `giraffoscope` stack count → vision length
+
+(Exact constants are client-tuned; server remains authoritative for the permanent stack counts.)
 
 ### 2.5 Combat + death + respawn
 - Players can shoot projectiles (cakes) while holding Space (or input state `fire`)
