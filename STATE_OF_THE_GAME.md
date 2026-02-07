@@ -39,7 +39,19 @@ timetable-clowns/
 - Host assigns teams (Teams mode) via lobby dropdowns
 - Start game validation:
   - >= 2 players
-  - Teams mode: all players must have teamId
+  - Teams mode: all players must have a `teamId`
+
+### Host settings (implemented)
+Host sends these settings on `createGame`:
+- `mode`: `"ffa"` or `"teams"`
+- `teamCount`: 1–4 (Teams only)
+- `friendlyFire`: boolean (Teams only)
+- `tableBase`: 1–10
+- `mapChoice`: `"map01"` or `"random"`
+- `inputMode`: `"kb" | "kbm" | "kbm_gamepad"` (client UI exists; gameplay is keyboard-driven currently)
+- `sessionMode`: `"standard"` or `"timed"`
+- `sessionMinutes`: 1–60 (Timed only; default 5)
+- `winMode`: `"standard"` or `"money"`
 
 ### Map (map01)
 - `map01` = “Training Hall (10 rooms)”
@@ -58,12 +70,13 @@ timetable-clowns/
   - attempt Y move, apply if not colliding
 - Collisions include:
   - map walls (AABB)
-  - machines (treated as AABB centered at machine with `MACHINE_HALF = 10`)
+  - machines (AABB centered at machine with `MACHINE_HALF = 10`)
 
 ### Shooting / bullets (cakes)
 - Shooting is server authoritative
 - Bullet speed: `BULLET_SPEED = 780 px/s`
-- Bullet TTL: `BULLET_TTL = 2.0` (user-confirmed range feels right)
+- Bullet TTL: `BULLET_TTL = 2.0`
+- Fire cooldown: `FIRE_COOLDOWN = 0.5`
 - Bullet removal happens on:
   - TTL expiry
   - world bounds exit
@@ -73,9 +86,12 @@ timetable-clowns/
 - Bullet collision tuning:
   - `BULLET_HIT_R_WALL = 4`
   - `BULLET_HIT_R_MACHINE = 6`
-  - `CAKE_HIT_R_PLAYER = 12` (player hit radius padding)
-- Sub-stepping is used to avoid tunneling on fast bullets:
+  - `CAKE_HIT_R_PLAYER = 12` (extra padding beyond `PLAYER_HALF`)
+- Sub-stepping is used to avoid tunneling:
   - travel distance split into steps (max step length ~10px)
+- Spawn safety:
+  - server pushes the spawn point forward if it starts inside an expanded collision rect
+  - if still blocked, shot is canceled without consuming ammo
 
 ### Ammo (cakes)
 - Players have cakes (ammo)
@@ -102,68 +118,65 @@ timetable-clowns/
 - On correct answer:
   - server awards money via economy module (spawns / pickup logic)
 - On wrong answer:
-  - server can penalize via economy module
+  - server penalizes via economy module
 
 ### Upgrades
 - Upgrades exist with:
   - Permanents (buy cost, stacking count)
   - Consumables (3 slots, use cost, use via 8/9/0)
+- Upgrade pool:
+  - server picks a random pool (size 9) at match start
 - Offer system:
-  - After correct answer, server emits `UPGRADE_OFFER` with options
-  - Player can choose an upgrade or decline
+  - after correct answer, server emits `UPGRADE_OFFER` with options
+  - player can choose an upgrade or decline (`declineUpgrade`)
 - Backpack full flow:
-  - If consumable slots are full and a new consumable is chosen:
+  - if consumable slots are full and a new consumable is chosen:
     - server returns `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
     - client shows replace UI and can send `chooseUpgradeReplace`
-- Client renders two upgrade sections:
-  - Consumables slots (8/9/0)
-  - Permanents with stacking count
 
 ### Death + respawn
 - Players can be killed by bullets
 - On death:
-  - server marks player dead and emits `PLAYER_DIED { playerId }` to room
+  - server emits `PLAYER_DIED { playerId }` to room
   - server emits `RESPAWN_OPTIONS` to dead player
 - Respawn options:
   - corners always
-  - cleared machines as optional spawn points (implemented as a Set per player)
+  - cleared machines as optional spawn points (implemented via a per-player `clearedMachines` Set)
 - Invulnerability after respawn:
   - `RESPAWN_INVULN = 0.6s`
-  - server sets `invulnUntil` timestamp
+  - server sets `invulnUntil` (ms timestamp)
   - client shows invuln HUD pill + blink effect
-- ✅ Killed-by info:
-  - server tracks killer name on death
+- Killed-by info:
   - `RESPAWN_OPTIONS` includes `{ killedBy: <name>, options:[...] }`
   - client shows “Killed by: X” in respawn modal
 
-### ✅ Timed session setting (implemented)
-- Host chooses in lobby:
-  - session type: Standard / Timed
-  - minutes (Timed only)
-- Server sets `endAt` when match starts (Timed only)
-- Client shows timer pill while running
+### Timed sessions (implemented)
+- Host can choose:
+  - Session: Standard / Timed
+  - Minutes (Timed only)
+- Server sets `endAt` at game start (Timed only)
 - Server ends match automatically when `now >= endAt`
+- Client shows timer pill while running
+- `endAt` is provided in:
+  - `GAME_STARTED`
+  - `STATE_SNAPSHOT`
 
-### ✅ Game end + leaderboard (implemented)
+### Game end + leaderboard (implemented)
 - Game ends when:
-  1) **Machine 10** is correctly answered (reason: `"machine10"`)
-  2) **Time runs out** in timed session (reason: `"time"`)
-- When ended:
-  - client shows large end modal
-  - winner is visually highlighted
+  1) Machine 10 is correctly answered (reason: `"machine10"`)
+  2) Time runs out in timed session (reason: `"time"`)
+- Server emits:
+  - `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard, winMode }`
+- Winner selection:
+  - FFA: top leaderboard row
+  - Teams: server aggregates team totals, chooses `winnerTeamId`, and provides a representative `winnerId/winnerName`
+- Client end screen:
+  - large end modal
+  - winner banner is big; Teams winner shows “TEAM X 🏆”
+  - leaderboard highlights:
+    - Teams: all rows from winning team
+    - FFA: winner row
   - only action: “Back to lobby” (reload)
-- Server event:
-  - `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
-- Server tracks stats:
-  - correct answers count
-  - kills, deaths
-  - money
-  - (teamId exists on player)
-- Leaderboard currently sorts by:
-  - correct desc, then kills desc, then money desc, then deaths asc
-- ✅ Teams-mode winner computation exists on server:
-  - server aggregates team totals and chooses winning `winnerTeamId`
-  - `winnerName/winnerId` are the top player from the winning team (so the client can highlight a row)
 
 ### Client rendering + UI (client/index.html)
 - Canvas rendering with camera centered on “me”
@@ -173,47 +186,37 @@ timetable-clowns/
   - life
   - cakes
   - invulnerability countdown
-  - ✅ timer pill in timed sessions (MM:SS)
+  - timer pill in timed sessions (MM:SS)
 - Overlays implemented:
   - math prompt
   - upgrade picker
   - backpack full replace picker
   - respawn picker
-  - ✅ game ended / leaderboard overlay (large winner banner)
+  - game ended / leaderboard overlay
 - Input handling:
   - movement WASD/arrow
   - shooting hold space
   - E interact
   - 8/9/0 use consumables
   - client blocks gameplay input while overlays are open
-- Known safety constraint:
-  - Avoid nested duplicate `window.addEventListener("keydown", ...)` patterns (previous bug class)
 
 ---
 
 ## What is NOT implemented yet (next work)
 
-### Winner UI emphasis for Teams mode (client-side)
-Server already computes `winnerTeamId`, but the client end screen should:
-- make the winning team much more noticeable in the banner (big label)
-- optionally show team totals (correct/kills/money) on the end screen
+### Consumable effects / usesLeft semantics (depends on upgrades module decisions)
+- `useUpgradeSlot` charges money and emits `UPGRADE_USED`
+- If you want gameplay effects (speed, vision, etc.), implement server-side effects in upgrades module and reflect any “usesLeft” decrement/removal rules consistently in snapshots.
 
-### Consumable “use” effects + usesLeft decrement (if desired)
-Current `useUpgradeSlot`:
-- charges the useCost and emits `UPGRADE_USED`
-- but does not apply an actual effect yet (and may not decrement usesLeft depending on how upgrades/apply.js is implemented)
-If you want consumables to have real gameplay impact, add:
-- server-side effect hooks
-- consistent usesLeft decrement and removal when depleted
-- snapshot reflects updated slot state
+### Optional: richer end-of-game flows
+- Host ends match early
+- Match canceled on host disconnect
+- Return-to-lobby without full reload (currently reload is the design)
 
-### Optional: richer end reasons / UX
-- “match canceled” / host ended / disconnect end
-- “play again” without full reload (currently you reload)
-
-### Optional: leaderboard fields
-- accuracy %, streaks, damage dealt, etc.
-- machines-cleared count separate from correct count
+### Optional: additional stats
+- accuracy
+- damage dealt
+- machines-cleared count vs correct count (currently correct increments on correct answers)
 
 ---
 
@@ -249,6 +252,10 @@ Timed sessions:
 - `MIN_SESSION_MIN = 1`
 - `MAX_SESSION_MIN = 60`
 
+Win modes:
+- `WIN_MODE_STANDARD = "standard"`
+- `WIN_MODE_MONEY = "money"`
+
 ---
 
 ## Wire protocol snapshot (current reality)
@@ -259,8 +266,8 @@ Server → Client events in use:
 - `JOIN_SUCCESS { gameCode, players, settings }`
 - `JOIN_FAILED { reason }`
 - `LOBBY_UPDATE { players, settings }`
-- `GAME_STARTED { map, settings, endAt }`
-- `STATE_SNAPSHOT { time, world, phase, endAt, pickups, bullets, players }`
+- `GAME_STARTED { map, settings, endAt? }`
+- `STATE_SNAPSHOT { time, world, phase, endAt?, pickups, bullets, players }`
 - `MATH_PROMPT { promptId, base, machineNum }`
 - `ANSWER_RESULT { ok, correct? }`
 - `INTERACT_DENIED { reason, nextMachineNum, tried }`
@@ -271,11 +278,11 @@ Server → Client events in use:
 - `PLAYER_DIED { playerId }`
 - `RESPAWN_OPTIONS { killedBy?, options }`
 - `RESPAWN_RESULT { ok, reason? }`
-- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard }`
+- `GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard, winMode }`
 
 Client → Server events in use:
 - `hello { name }`
-- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes }`
+- `createGame { mode, teamCount, friendlyFire, tableBase, mapChoice, inputMode, sessionMode, sessionMinutes, winMode }`
 - `joinGame { gameCode }`
 - `assignTeam { playerId, teamId }`
 - `startGame`
@@ -290,37 +297,11 @@ Client → Server events in use:
 
 ---
 
-## Known issues / pitfalls
-- If bullets appear to “vanish immediately”, common cause is spawning inside an expanded collision rect:
-  - solved by spawn push-forward safety check (already in server file)
-- If bullets pass through walls, common cause is discrete movement without sweep:
-  - current server uses swept segment vs expanded AABB (should be reliable)
-- Input handling bugs can occur if multiple nested key listeners are used:
-  - keep input listeners flat and guard with “UI blocking” checks
-- School PCs / performance:
-  - keep collision math simple and avoid expensive per-frame DOM
-- ⚠️ `GAME_ENDED` payload merge footgun:
-  - `endGame()` builds a payload and then spreads `...extra`
-  - if `extra` contains `winnerId/winnerName/winnerTeamId/leaderboard`, it can overwrite the computed fields
-  - safest pattern is: spread `...extra` BEFORE the required winner fields
+## Known issues / pitfalls (practical)
 
----
-
-## Next concrete tasks (recommended order)
-
-1) Client end screen polish (Teams mode)
-   - bigger winner modal
-   - make winning TEAM extremely obvious (use `winnerTeamId`)
-   - ensure “Back to lobby” is the only action
-
-2) Make `GAME_ENDED` payload “override-safe”
-   - move `...extra` earlier so winner fields cannot be overwritten accidentally
-
-3) Expand leaderboard UI
-   - display `teamId` (or “Team A/B”) if you want
-   - add columns you care about
-
-4) Optional: non-reload return-to-lobby flow
-   - reset state on client + server without `location.reload()`
-
----
+- Bullet “vanish immediately” typically means spawn started inside an expanded collision rect:
+  - server has a push-forward safety loop; if you ever change radii, re-check this behavior
+- Input handling can get buggy if key listeners are duplicated/nested:
+  - keep listeners flat and always gate with “UI blocking” checks
+- Performance:
+  - keep per-frame work in canvas; avoid per-frame DOM writes beyond HUD text changes
