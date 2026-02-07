@@ -27,7 +27,7 @@ const UPGRADES = [
   },
   {
     id: "big_eyes",
-    name: "Big Eyes",
+    name: "Glasses",
     kind: "permanent",
     acquireCost: 150,
     desc: "Wider view cone.",
