@@ -1020,6 +1020,11 @@
       }
     });
 
+    // ✅ SAFETY: if server still sends these, ignore (prevents UI freezes from client exceptions)
+    socket.on("MINE_PLACED", () => {});
+    socket.on("MINE_EXPLODED", () => {});
+    socket.on("PLAYER_SHIELDED", () => {});
+
     // ✅ GAME_ENDED + bigger leaderboard + TEAM winner highlight
     socket.on("GAME_ENDED", (p = {}) => {
       inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
@@ -1882,29 +1887,28 @@
     const VISION_LEN_MAX = 2400;
 
     // ✅ prefer server-computed mods (snapshot.players[].mods)
-function getModsForMe(me){
-  const m = me?.mods;
-  if (!m) return { fovAddDeg: 0, visionLenAdd: 0, speedMult: 1 };
+    function getModsForMe(me){
+      const m = me?.mods;
+      if (!m) return { fovAddDeg: 0, visionLenAdd: 0, speedMult: 1 };
 
-  return {
-    fovAddDeg: Number.isFinite(m.fovAddDeg) ? m.fovAddDeg : 0,
-    visionLenAdd: Number.isFinite(m.visionLenAdd) ? m.visionLenAdd : 0,
-    speedMult: Number.isFinite(m.speedMult) ? m.speedMult : 1,
-  };
-}
+      return {
+        fovAddDeg: Number.isFinite(m.fovAddDeg) ? m.fovAddDeg : 0,
+        visionLenAdd: Number.isFinite(m.visionLenAdd) ? m.visionLenAdd : 0,
+        speedMult: Number.isFinite(m.speedMult) ? m.speedMult : 1,
+      };
+    }
 
- function getConeAngleDegForMe(me){
-  const mods = getModsForMe(me);
-  const deg = CONE_ANGLE_BASE_DEG + mods.fovAddDeg;
-  return Math.max(20, Math.min(CONE_ANGLE_MAX_DEG, deg));
-}
+    function getConeAngleDegForMe(me){
+      const mods = getModsForMe(me);
+      const deg = CONE_ANGLE_BASE_DEG + mods.fovAddDeg;
+      return Math.max(20, Math.min(CONE_ANGLE_MAX_DEG, deg));
+    }
 
-function getVisionLenForMe(me){
-  const mods = getModsForMe(me);
-  const len = BASE_VISION_LEN + mods.visionLenAdd;
-  return Math.max(120, Math.min(VISION_LEN_MAX, len));
-}
-
+    function getVisionLenForMe(me){
+      const mods = getModsForMe(me);
+      const len = BASE_VISION_LEN + mods.visionLenAdd;
+      return Math.max(120, Math.min(VISION_LEN_MAX, len));
+    }
 
     const EDGE_BLUR_PX = 14;
     const EDGE_STRENGTH = 0.75;
@@ -2193,6 +2197,59 @@ function getVisionLenForMe(me){
       ctx.restore();
     }
 
+    // ✅ Mines rendering (from snapshot.mines OR pickups type mine)
+    function getSnapshotMines(snap){
+      if (!snap) return [];
+      if (Array.isArray(snap.mines)) return snap.mines;
+
+      // fallback: some servers may stick mines in pickups
+      const pk = snap.pickups;
+      if (Array.isArray(pk)) {
+        return pk.filter(m =>
+          m && (m.type === "mine" || m.type === "cake_mine" || m.type === "cake_surprise_mine")
+        );
+      }
+      return [];
+    }
+
+    function drawMines(camX, camY){
+      const mines = getSnapshotMines(lastSnapshot);
+      if (!Array.isArray(mines) || mines.length === 0) return;
+
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "18px system-ui";
+
+      for (const m of mines) {
+        if (!m) continue;
+        const mx = Number(m.x);
+        const my = Number(m.y);
+        if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+
+        const x = mx - camX;
+        const y = my - camY;
+
+        // optional fields: armed, radius, triggerRadius, etc.
+        const armed = (m.armed === undefined) ? true : !!m.armed;
+        const alpha = armed ? 0.95 : 0.55;
+
+        // draw a small “bomb cake” marker
+        ctx.globalAlpha = alpha;
+        ctx.fillText("💣", x, y);
+
+        // subtle ring so you can see it on dark floors
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, Math.PI*2);
+        ctx.strokeStyle = "rgba(255,255,255,.22)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
       if (!Array.isArray(list)) return;
@@ -2314,6 +2371,10 @@ function getVisionLenForMe(me){
 
       drawWalls(camX, camY);
       drawMachines(camX, camY);
+
+      // ✅ Mines should be under fog (fog will cover them)
+      drawMines(camX, camY);
+
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
