@@ -135,6 +135,20 @@ function removePlayerFromGame(io, game, playerId) {
   emitLobbyUpdate(io, game);
 }
 
+// ✅ NEW: movement speed affected by permanent upgrades (XL Shoes)
+function getMoveSpeed(player) {
+  const base = PLAYER_SPEED;
+
+  const slots = player?.upgrades?.permSlots;
+  if (!Array.isArray(slots)) return base;
+
+  const xl = slots.find((s) => s.id === "xl_shoes");
+  const count = Number.isFinite(xl?.count) ? xl.count : 0;
+
+  // +10% per stack
+  return base * (1 + 0.10 * count);
+}
+
 // --- Collision helpers (AABB)
 function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
@@ -609,8 +623,11 @@ setInterval(() => {
         p.dirY = vy;
       }
 
-      const nextX = p.x + vx * PLAYER_SPEED * dt;
-      const nextY = p.y + vy * PLAYER_SPEED * dt;
+      // ✅ NEW: upgrade-driven speed (XL shoes stacks)
+      const speed = getMoveSpeed(p);
+
+      const nextX = p.x + vx * speed * dt;
+      const nextY = p.y + vy * speed * dt;
 
       const minX = PLAYER_HALF;
       const minY = PLAYER_HALF;
