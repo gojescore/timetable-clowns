@@ -56,11 +56,17 @@ function ensureEffectState(player) {
     player.effects = {
       // dash: { untilMs, speedMult, cooldownUntilMs, invulnDuring }
       dash: null,
+
       // shield points: blocks a death (server decides how)
       shield: 0,
+
+      // ✅ NEW: vision boost (consumable) that affects mods
+      // visionBoost: { untilMs, visionLenAdd, fovAddDeg, cooldownUntilMs }
+      visionBoost: null,
     };
   }
   if (typeof player.effects.shield !== "number") player.effects.shield = 0;
+  if (player.effects.visionBoost === undefined) player.effects.visionBoost = null;
 }
 
 function getUpgradeByIdSafe(id) {
@@ -289,6 +295,13 @@ function computePlayerMods(player, nowMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
+  // ✅ 5) Temporary vision boost (consumable) — affects MODS
+  const vb = player.effects.visionBoost;
+  if (vb && Number.isFinite(vb.untilMs) && now < vb.untilMs) {
+    if (Number.isFinite(vb.visionLenAdd)) visionLenAdd += vb.visionLenAdd;
+    if (Number.isFinite(vb.fovAddDeg)) fovAddDeg += vb.fovAddDeg;
+  }
+
   // clamps
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
@@ -348,6 +361,34 @@ function applyConsumableUse(player, upgradeId, ctx) {
       }
 
       return { ok: true, actions, changed: { dashUntil: untilMs } };
+    }
+
+    // ✅ NEW: first consumable that changes MODS (vision/fov)
+    // definitions.js example effect:
+    // effect: { type:"vision_boost", durationSec:6, visionLenAdd:220, fovAddDeg:12, internalCooldownSec:2 }
+    case "vision_boost": {
+      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 6.0;
+      const addLen = Number.isFinite(eff.visionLenAdd) ? eff.visionLenAdd : 200;
+      const addFov = Number.isFinite(eff.fovAddDeg) ? eff.fovAddDeg : 10;
+
+      const cdSec = Number.isFinite(eff.internalCooldownSec) ? eff.internalCooldownSec : 0;
+      const cur = player.effects.visionBoost;
+
+      if (cur && Number.isFinite(cur.cooldownUntilMs) && now < cur.cooldownUntilMs) {
+        return { ok: false, reason: "vision_boost_cooldown" };
+      }
+
+      const untilMs = now + Math.floor(durSec * 1000);
+      const cooldownUntilMs = now + Math.floor((durSec + cdSec) * 1000);
+
+      player.effects.visionBoost = {
+        untilMs,
+        visionLenAdd: addLen,
+        fovAddDeg: addFov,
+        cooldownUntilMs,
+      };
+
+      return { ok: true, actions, changed: { visionBoostUntil: untilMs, visionLenAdd: addLen, fovAddDeg: addFov } };
     }
 
     case "spawn_mine": {
