@@ -15,6 +15,14 @@
 // - computePlayerMods(player): deterministic modifiers from permanents + temp effects.
 // - ensureEffectState(player): stores temp states like dash/shield.
 // - applyConsumableUse(player, upgradeId, ctx): returns "actions" for server to apply.
+//
+// 🔒 LOCKED CONTRACT (PROTOCOL):
+// computePlayerMods() MUST return ONLY:
+//   { speedMult, visionLenAdd, fovAddDeg }
+// Units:
+//   - speedMult: multiplier
+//   - visionLenAdd: pixels (additive)
+//   - fovAddDeg: degrees (additive)
 
 let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
@@ -215,9 +223,9 @@ function applyConsumableReplace(player, upgradeId, dropId) {
 const VISION_LEN_PER_STACK = 80;
 
 // ✅ Big Eyes: widen fog cone angle by +10 degrees per stack
-// (client can convert mods.fovAdd (radians) into degrees if it wants, or just add radians to its cone math)
 const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
-const DEG2RAD = Math.PI / 180;
+
+const RAD2DEG = 180 / Math.PI;
 
 // Compute deterministic modifiers from permanents + temp effects.
 // Server can call this each tick, or compute-on-demand for snapshots.
@@ -228,14 +236,15 @@ function computePlayerMods(player, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
 
   let speedMult = 1.0;
-  let fovAdd = 0.0;      // radians (additive)
-  let visionMult = 1.0;
+
+  // 🔒 Protocol wants DEGREES on the wire
+  let fovAddDeg = 0.0;
 
   // Additive fog cone length (pixels)
-  // (client should do: BASE_VISION_LEN + mods.visionLenAdd)
+  // Client should do: BASE_VISION_LEN + mods.visionLenAdd
   let visionLenAdd = 0;
 
-  // 1) Generic effects from definitions.js (if you use that schema)
+  // 1) Generic effects from definitions.js (optional schema support)
   for (const slot of player.upgrades.permSlots) {
     const id = String(slot?.id || "");
     const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
@@ -252,19 +261,24 @@ function computePlayerMods(player, nowMs) {
       speedMult *= Math.pow(per, c);
     }
 
+    // Support either degrees or radians in definitions, but ALWAYS output degrees
     if (eff.type === "fov_add") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
-      const add = Number.isFinite(eff.addRadiansPerStack) ? eff.addRadiansPerStack : 0;
-      fovAdd += add * c;
+
+      const addDegPerStack = Number.isFinite(eff.addDegPerStack) ? eff.addDegPerStack : null;
+      const addRadPerStack = Number.isFinite(eff.addRadiansPerStack) ? eff.addRadiansPerStack : null;
+
+      if (addDegPerStack !== null) {
+        fovAddDeg += addDegPerStack * c;
+      } else if (addRadPerStack !== null) {
+        fovAddDeg += addRadPerStack * RAD2DEG * c;
+      }
     }
 
-    if (eff.type === "vision_mult") {
-      const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
-      const c = Math.min(count, maxStacks);
-      const per = Number.isFinite(eff.perStackMult) ? eff.perStackMult : 1.0;
-      visionMult *= Math.pow(per, c);
-    }
+    // NOTE: We deliberately do NOT output vision multipliers in mods.
+    // (Keeps the mods wire contract locked and minimal.)
+    // If you later want vision multipliers, add a new explicit mods field in PROTOCOL first.
   }
 
   // 2) Explicit incremental mapping: giraffoscope -> length add
@@ -273,13 +287,13 @@ function computePlayerMods(player, nowMs) {
     visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
   }
 
-  // 3) Explicit incremental mapping: big_eyes -> fov add (radians)
+  // 3) Explicit incremental mapping: big_eyes -> fov add (degrees)
   const bigEyesStacks = getPermCount(player, "big_eyes");
   if (bigEyesStacks > 0) {
-    fovAdd += bigEyesStacks * (BIG_EYES_FOV_ADD_DEG_PER_STACK * DEG2RAD);
+    fovAddDeg += bigEyesStacks * BIG_EYES_FOV_ADD_DEG_PER_STACK;
   }
 
-  // temporary dash effect
+  // temporary dash effect (speed only; other dash metadata stays server-side in player.effects)
   const dash = player.effects.dash;
   if (dash && Number.isFinite(dash.untilMs) && now < dash.untilMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
@@ -287,18 +301,14 @@ function computePlayerMods(player, nowMs) {
 
   // clamps to avoid insane values
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
-  visionMult = Math.max(0.75, Math.min(visionMult, 3.0));
-  fovAdd = Math.max(0.0, Math.min(fovAdd, 1.2)); // ~69 degrees extra
+  fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70)); // cap extra FOV
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
 
+  // 🔒 LOCKED RETURN SHAPE (Protocol)
   return {
     speedMult,
-    fovAdd,
-    visionMult,
     visionLenAdd,
-
-    shield: player.effects.shield | 0,
-    dashActive: !!(dash && Number.isFinite(dash.untilMs) && now < dash.untilMs),
+    fovAddDeg,
   };
 }
 
