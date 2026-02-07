@@ -184,9 +184,10 @@ function collidesAt(game, cx, cy) {
 
 function snapshotForGame(game) {
   const world = getWorldForGame(game);
+  const nowMs = Date.now(); // ✅ compute once per snapshot
 
   return {
-    time: Date.now(),
+    time: nowMs,
     world,
     phase: game.phase,
     endAt: Number.isFinite(game.endAt) ? game.endAt : null,
@@ -202,6 +203,9 @@ function snapshotForGame(game) {
       : [],
     players: [...game.players.values()].map((p) => {
       upgrades.ensureUpgradeState(p);
+      upgrades.ensureEffectState(p); // ✅ ensures p.effects exists before computing mods
+
+      const mods = upgrades.computePlayerMods(p, nowMs); // ✅ NEW: expose computed mods in snapshot
 
       const perm = (p.upgrades.permSlots || []).map((s) => ({
         id: s.id,
@@ -226,6 +230,10 @@ function snapshotForGame(game) {
         nextMachineNum: p.nextMachineNum,
         money: typeof p.money === "number" ? p.money : 0,
         upgrades: { permanent: perm, slots: cons },
+
+        // ✅ NEW: upgrade/fx modifiers for client-side fog + cone later
+        mods,
+
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
@@ -1022,6 +1030,7 @@ io.on("connection", (socket) => {
 
     economy.ensurePlayerEconomy(hostPlayer);
     upgrades.ensureUpgradeState(hostPlayer);
+    upgrades.ensureEffectState(hostPlayer); // ✅ NEW: ensure effects exist from the beginning
 
     game.players.set(session.playerId, hostPlayer);
     games[code] = game;
@@ -1096,6 +1105,7 @@ io.on("connection", (socket) => {
 
     economy.ensurePlayerEconomy(joinPlayer);
     upgrades.ensureUpgradeState(joinPlayer);
+    upgrades.ensureEffectState(joinPlayer); // ✅ NEW: ensure effects exist from the beginning
 
     game.players.set(session.playerId, joinPlayer);
 
@@ -1185,6 +1195,7 @@ io.on("connection", (socket) => {
 
       economy.ensurePlayerEconomy(p);
       upgrades.ensureUpgradeState(p);
+      upgrades.ensureEffectState(p); // ✅ NEW: ensure effects exist from match start too
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
     }
 
