@@ -359,8 +359,8 @@ function applyConsumableUse(player, upgradeId, ctx) {
         upgradeId: up.id,
         params: {
           radius: Number.isFinite(eff.radius) ? eff.radius : 26, // visual radius (client can draw)
-          triggerRadius: 32,
-          blastRadius: 90,
+          triggerRadius: 90,
+          blastRadius: 100,
           damage: Number.isFinite(eff.damage) ? eff.damage : 1,
           ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 25,
           armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
