@@ -2208,49 +2208,60 @@
       ctx2.restore();
     }
 
-    function drawBullets(camX, camY){
-      const list = lastSnapshot?.bullets;
-      if (!Array.isArray(list)) return;
+function drawBullets(camX, camY){
+  const list = lastSnapshot?.bullets;
+  if (!Array.isArray(list)) return;
 
-      // cleanup map so it doesn't grow forever
-      const aliveIds = new Set();
-      for (const b of list) if (b && b.id) aliveIds.add(b.id);
-      for (const id of bulletPrev.keys()) {
-        if (!aliveIds.has(id)) bulletPrev.delete(id);
-      }
+  // cleanup map so it doesn't grow forever
+  const aliveIds = new Set();
+  for (const b of list) if (b && b.id) aliveIds.add(b.id);
+  for (const id of bulletPrev.keys()) {
+    if (!aliveIds.has(id)) bulletPrev.delete(id);
+  }
 
-      ctx.save();
+  ctx.save();
 
-      for (const b of list) {
-        if (!b) continue;
+  for (const b of list) {
+    if (!b) continue;
 
-        const x = b.x - camX;
-        const y = b.y - camY;
+    const x = b.x - camX;
+    const y = b.y - camY;
 
-        // a tiny fade for non-me bullets (nice readability)
-        ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
+    // a tiny fade for non-me bullets (nice readability)
+    ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
 
-        // derive angle from motion using previous position
-        let ang = 0;
-        if (b.id) {
-          const prev = bulletPrev.get(b.id);
-          if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
-            const dx = b.x - prev.x;
-            const dy = b.y - prev.y;
-            if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
-            else if (Number.isFinite(prev.ang)) ang = prev.ang;
-          } else {
-            ang = 0;
-          }
-          bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
+    // ✅ STRICT: only banana if server explicitly says kind:"banana"
+    const kind = (typeof b.kind === "string") ? b.kind.trim().toLowerCase() : "cake";
+
+    if (kind === "banana") {
+      // derive angle from motion using previous position (banana looks better rotated)
+      let ang = 0;
+      if (b.id) {
+        const prev = bulletPrev.get(b.id);
+        if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+          const dx = b.x - prev.x;
+          const dy = b.y - prev.y;
+          if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
+          else if (Number.isFinite(prev.ang)) ang = prev.ang;
         }
-
-        // ✅ IMPORTANT: render ALL bullets as bananas (no mines, no cake bullets)
-        drawBanana(ctx, x, y, ang);
+        bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
       }
+      drawBanana(ctx, x, y, ang);
+    } else {
+      // ✅ normal shot = cake
+      ctx.font = "18px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🍰", x, y);
 
-      ctx.restore();
+      // keep prev map in sync so deletion cleanup works
+      if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
     }
+  }
+
+  ctx.restore();
+}
+
 
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
