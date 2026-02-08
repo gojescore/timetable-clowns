@@ -55,20 +55,6 @@ const UPGRADES = [
     kind: "consumable",
     useCost: 100,
     desc: "Place a mine on roads.",
-    effect: {
-      type: "spawn_mine",
-      radius: 26,
-      damage: 1,
-      ttlSec: 25,
-      armDelaySec: 0.6,
-    },
-  },
-  {
-    id: "rubber_chicken",
-    name: "Rubber Chicken",
-    kind: "consumable",
-    useCost: 100,
-    desc: "Fast dash forward (brief invuln).",
 effect: {
   type: "spawn_mine",
   radius: 26,
@@ -78,6 +64,20 @@ effect: {
   ttlSec: 25,
   armDelaySec: 0.6,
 },
+  },
+  {
+    id: "rubber_chicken",
+    name: "Rubber Chicken",
+    kind: "consumable",
+    useCost: 100,
+    desc: "Fast dash forward (brief invuln).",
+    effect: {
+      type: "dash",
+      dashSpeedMult: 2.2, // multiply PLAYER_SPEED during dash window
+      durationSec: 0.35,
+      invulnDuring: true,
+      internalCooldownSec: 0.8,
+    },
 
   },
   {
