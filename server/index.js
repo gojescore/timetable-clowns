@@ -635,6 +635,60 @@ function endGame(io, game, reason, extra = {}) {
   io.to(game.code).emit("STATE_SNAPSHOT", snapshotForGame(game));
 }
 
+// ✅ NEW: Return-to-lobby reset (server-authoritative)
+function resetGameToLobby(game) {
+  if (!game) return;
+
+  game.phase = "lobby";
+  game.map = null;
+
+  // clear match runtime entities
+  game.pickups = [];
+  game.mines = [];
+  game.bullets = [];
+
+  // clear match timers
+  game.startedAt = null;
+  game.endAt = null;
+  game.endedAt = null;
+
+  // keep settings + players + teams
+  for (const p of game.players.values()) {
+    // progression
+    p.nextMachineNum = 1;
+    p.clearedMachines = new Set();
+    p.lastCorrectMachineId = null;
+
+    // prompts/offers/respawn
+    p.pendingPrompt = null;
+    p.pendingUpgradeOffer = null;
+    p.pendingRespawn = null;
+
+    // combat
+    p.alive = true;
+    p.invulnUntil = 0;
+    p.fireCd = 0;
+    p.cakes = MAX_CAKES;
+
+    // kill info
+    p.killedByName = null;
+    p.killedById = null;
+
+    // upgrades/effects reset (safest)
+    p.upgrades = null;
+    upgrades.ensureUpgradeState(p);
+    upgrades.ensureEffectState(p);
+    p.effects.dash = null;
+
+    // reset money + stats for a new match (change if you want persistence)
+    p.money = 100;
+    p.stats = { kills: 0, deaths: 0, correct: 0 };
+
+    // clear input
+    p.input = { up: false, down: false, left: false, right: false, fire: false };
+  }
+}
+
 // --------------------
 // Express + HTTP + Socket.IO
 // --------------------
@@ -1047,16 +1101,7 @@ setInterval(() => {
           }
 
           // reflect velocity based on which face was hit
-          const refl = reflectVelocityOnAABBHit(
-            hitX,
-            hitY,
-            bestHit.rx,
-            bestHit.ry,
-            bestHit.rw,
-            bestHit.rh,
-            b.vx,
-            b.vy
-          );
+          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1097,7 +1142,6 @@ setInterval(() => {
           if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
           const extra = isBanana && Number.isFinite(b.hitRadiusPlayer) ? Number(b.hitRadiusPlayer) : CAKE_HIT_R_PLAYER;
-
           const r = PLAYER_HALF + extra;
 
           if (segmentHitsCircle(prevX, prevY, nextX, nextY, p.x, p.y, r)) {
@@ -2066,6 +2110,27 @@ io.on("connection", (socket) => {
     p.effects.dash = null;
 
     socket.emit("RESPAWN_RESULT", { ok: true });
+  });
+
+  // ✅ NEW: ONLY option after game ends → host can send everyone back to lobby
+  socket.on("backToLobby", () => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game) return;
+
+    // host only
+    if (session.playerId !== game.hostPlayerId) return;
+
+    // only when ended (so players can’t escape mid-match)
+    if (game.phase !== "ended") return;
+
+    resetGameToLobby(game);
+
+    // clients should switch UI on LOBBY_UPDATE (or optional event below)
+    emitLobbyUpdate(io, game);
+    io.to(code).emit("RETURNED_TO_LOBBY", { ok: true });
   });
 
   socket.on("disconnect", () => {
