@@ -73,7 +73,7 @@ const MINE_STEP_ON_TRIGGER_R = 32;
 const MINE_BLAST_R = 180;
 
 // ✅ Dash attack (“Rubber chicken”) collision rules
-const DASH_HIT_R_PLAYER = 18; // center-to-center hit radius while dashing
+const DASH_HIT_R_PLAYER = 18; // extra reach beyond player radius (we add PLAYER_HALF when checking)
 
 // In-memory game store
 const games = Object.create(null);
@@ -150,24 +150,18 @@ function getMoveSpeed(player, nowMs) {
   return base * mult;
 }
 
-// ✅ Dash state helpers (robust to naming changes)
-function getDashUntilMs(player) {
-  const e = player?.effects;
-  if (!e) return 0;
-  if (Number.isFinite(e.dashUntilMs)) return e.dashUntilMs;
-  if (Number.isFinite(e.dashUntil)) return e.dashUntil;
-  if (Number.isFinite(e.dashEndsAt)) return e.dashEndsAt;
-  return 0;
-}
+// ✅ Dash helpers (SINGLE SOURCE: player.effects.dash)
 function isDashing(player, nowMs) {
-  const until = getDashUntilMs(player);
-  return Number.isFinite(until) && nowMs < until;
+  const d = player?.effects?.dash;
+  return !!(d && Number.isFinite(d.untilMs) && nowMs < d.untilMs);
 }
 function endDashNow(player, nowMs) {
   upgrades.ensureEffectState(player);
-  player.effects.dashUntilMs = nowMs;
-  player.effects.dashUntil = nowMs;
-  player.effects.dashEndsAt = nowMs;
+  if (player.effects.dash && Number.isFinite(player.effects.dash.untilMs)) {
+    player.effects.dash.untilMs = nowMs;
+  } else {
+    player.effects.dash = null;
+  }
 }
 
 // --- Collision helpers (AABB)
@@ -244,13 +238,13 @@ function snapshotForGame(game) {
       const perm = (p.upgrades.permSlots || []).map((s) => ({
         id: s.id,
         count: Number.isFinite(s.count) ? s.count : 1,
-        info: upgrades.getUpgradeInfo(s.id),
+        info: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null,
       }));
 
       const cons = (p.upgrades.consSlots || []).map((s) => ({
         id: s.id,
         usesLeft: Number.isFinite(s.usesLeft) ? s.usesLeft : undefined,
-        info: upgrades.getUpgradeInfo(s.id),
+        info: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null,
       }));
 
       return {
@@ -592,36 +586,47 @@ setInterval(() => {
 
       upgrades.ensureEffectState(p);
 
-      const up = !!p.input?.up;
-      const down = !!p.input?.down;
-      const left = !!p.input?.left;
-      const right = !!p.input?.right;
-
-      let vx = 0,
-        vy = 0;
-      if (left) vx -= 1;
-      if (right) vx += 1;
-      if (up) vy -= 1;
-      if (down) vy += 1;
-
-      let len = Math.hypot(vx, vy);
-
-      // ✅ If dashing and standing still: dash uses facing / stored dash dir
       const dashing = isDashing(p, now);
-      if (dashing && len <= 1e-9) {
-        const dx = Number.isFinite(p.effects.dashDirX) ? p.effects.dashDirX : (Number.isFinite(p.dirX) ? p.dirX : 1);
-        const dy = Number.isFinite(p.effects.dashDirY) ? p.effects.dashDirY : (Number.isFinite(p.dirY) ? p.dirY : 0);
+
+      // Store pre-move position for sweep hits
+      const prevPX = p.x;
+      const prevPY = p.y;
+
+      // If dashing: force movement direction from dash.dirX/Y (no "only hits at end")
+      let vx = 0, vy = 0;
+
+      if (dashing) {
+        const d = p.effects.dash || {};
+        const dx = Number.isFinite(d.dirX) ? d.dirX : (Number.isFinite(p.dirX) ? p.dirX : 1);
+        const dy = Number.isFinite(d.dirY) ? d.dirY : (Number.isFinite(p.dirY) ? p.dirY : 0);
         const dlen = Math.hypot(dx, dy) || 1;
         vx = dx / dlen;
         vy = dy / dlen;
-        len = 1;
-      }
 
-      if (len > 0) {
-        vx /= len;
-        vy /= len;
+        // Ensure facing matches dash direction
         p.dirX = vx;
         p.dirY = vy;
+      } else {
+        const up = !!p.input?.up;
+        const down = !!p.input?.down;
+        const left = !!p.input?.left;
+        const right = !!p.input?.right;
+
+        if (left) vx -= 1;
+        if (right) vx += 1;
+        if (up) vy -= 1;
+        if (down) vy += 1;
+
+        const len = Math.hypot(vx, vy);
+        if (len > 1e-9) {
+          vx /= len;
+          vy /= len;
+          p.dirX = vx;
+          p.dirY = vy;
+        } else {
+          vx = 0;
+          vy = 0;
+        }
       }
 
       const speed = getMoveSpeed(p, now);
@@ -634,14 +639,14 @@ setInterval(() => {
       const maxX = world.w - PLAYER_HALF;
       const maxY = world.h - PLAYER_HALF;
 
-      // If dashing, boundary clamp ends dash
+      // Bounds clamp (dash ends if clamp happens)
       const clampedNextX = clamp(rawNextX, minX, maxX);
       const clampedNextY = clamp(rawNextY, minY, maxY);
       if (dashing && (clampedNextX !== rawNextX || clampedNextY !== rawNextY)) {
         endDashNow(p, now);
       }
 
-      // slide: X then Y
+      // slide: X then Y (dash ends if blocked)
       let blockedX = false;
       let blockedY = false;
 
@@ -655,17 +660,13 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
       else blockedY = true;
 
-      // If dashing, hitting any wall/machine ends dash immediately
       if (dashing && (blockedX || blockedY)) {
         endDashNow(p, now);
       }
 
-      // ✅ Dash hit kills: dash ends when hitting a player; hit kills
-      // Run after movement so you can “ram” into them.
+      // ✅ DASH HIT (segment sweep): ends dash on hit; hit kills immediately
       if (isDashing(p, now)) {
-        const r = DASH_HIT_R_PLAYER;
-        const r2 = r * r;
-
+        const hitR = PLAYER_HALF + DASH_HIT_R_PLAYER; // include player size
         let victim = null;
 
         for (const other of game.players.values()) {
@@ -682,17 +683,16 @@ setInterval(() => {
 
           if (Number.isFinite(other.invulnUntil) && now < other.invulnUntil) continue;
 
-          if (dist2(p.x, p.y, other.x, other.y) <= r2) {
+          if (segmentHitsCircle(prevPX, prevPY, p.x, p.y, other.x, other.y, hitR)) {
             victim = other;
             break;
           }
         }
 
         if (victim) {
-          // End dash on hit
+          // dash ends on player hit
           endDashNow(p, now);
 
-          // Shield check
           upgrades.ensureEffectState(victim);
           if ((victim.effects.shield | 0) > 0) {
             victim.effects.shield = (victim.effects.shield | 0) - 1;
@@ -704,7 +704,6 @@ setInterval(() => {
               shieldLeft: victim.effects.shield | 0,
             });
           } else {
-            // stats
             if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
             p.stats.kills += 1;
 
@@ -736,6 +735,7 @@ setInterval(() => {
         }
       }
 
+      // ---- shooting ----
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
       const wantsFire = !!p.input?.fire;
@@ -981,11 +981,7 @@ setInterval(() => {
 
           io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
             killedBy: hitPlayer.killedByName || "Unknown",
-            options: opts.map((o) => ({
-              id: o.id,
-              label: o.label,
-              kind: o.kind,
-            })),
+            options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
           });
 
           io.to(code).emit("PLAYER_DIED", { playerId: hitPlayer.id });
@@ -1079,11 +1075,7 @@ setInterval(() => {
 
         io.to(targetSocket).emit("RESPAWN_OPTIONS", {
           killedBy: victim.killedByName || "Mine",
-          options: opts.map((o) => ({
-            id: o.id,
-            label: o.label,
-            kind: o.kind,
-          })),
+          options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
         });
 
         io.to(code).emit("PLAYER_DIED", { playerId: victim.id });
@@ -1205,6 +1197,7 @@ io.on("connection", (socket) => {
     economy.ensurePlayerEconomy(hostPlayer);
     upgrades.ensureUpgradeState(hostPlayer);
     upgrades.ensureEffectState(hostPlayer);
+    hostPlayer.effects.dash = null;
 
     game.players.set(session.playerId, hostPlayer);
     games[code] = game;
@@ -1277,6 +1270,7 @@ io.on("connection", (socket) => {
     economy.ensurePlayerEconomy(joinPlayer);
     upgrades.ensureUpgradeState(joinPlayer);
     upgrades.ensureEffectState(joinPlayer);
+    joinPlayer.effects.dash = null;
 
     game.players.set(session.playerId, joinPlayer);
 
@@ -1338,7 +1332,7 @@ io.on("connection", (socket) => {
     const map = pickMap(game.settings.mapChoice);
     game.map = map;
 
-    game.upgradePool = upgrades.pickRandomUpgradePool(9);
+    game.upgradePool = upgrades.pickRandomUpgradePool ? upgrades.pickRandomUpgradePool(9) : null;
 
     const world = getWorldForGame(game);
     const corners = cornerSpawns(world);
@@ -1366,12 +1360,8 @@ io.on("connection", (socket) => {
       economy.ensurePlayerEconomy(p);
       upgrades.ensureUpgradeState(p);
       upgrades.ensureEffectState(p);
+      p.effects.dash = null;
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
-
-      // clear dash dir on start
-      p.effects.dashDirX = 0;
-      p.effects.dashDirY = 0;
-      endDashNow(p, Date.now());
     }
 
     game.pickups = [];
@@ -1519,7 +1509,7 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
 
       const offerId = makeOfferId();
-      const options = upgrades.buildOfferOptions(game.upgradePool);
+      const options = upgrades.buildOfferOptions ? upgrades.buildOfferOptions(game.upgradePool) : [];
 
       p.pendingUpgradeOffer = { id: offerId, options: options.map((o) => o.id) };
       socket.emit("UPGRADE_OFFER", { offerId, options });
@@ -1572,7 +1562,7 @@ io.on("connection", (socket) => {
 
     upgrades.ensureUpgradeState(p);
 
-    const info = upgrades.getUpgradeInfo(upgradeId);
+    const info = upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(upgradeId) : null;
     if (!info) return socket.emit("UPGRADE_RESULT", { ok: false, reason: "invalid_upgrade" });
 
     if (!Number.isFinite(p.money)) p.money = 0;
@@ -1591,13 +1581,12 @@ io.on("connection", (socket) => {
       p.money -= cost;
     }
 
-    const res = upgrades.applyUpgradeSelection(p, upgradeId);
-
+    const res = upgrades.applyUpgradeSelection ? upgrades.applyUpgradeSelection(p, upgradeId) : { ok: false };
     if (!res.ok && res.reason === "slots_full") {
       const slots = (p.upgrades?.consSlots || []).map((s) => ({
         id: s.id,
         usesLeft: s.usesLeft,
-        info: upgrades.getUpgradeInfo(s.id),
+        info: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null,
       }));
       return socket.emit("UPGRADE_RESULT", {
         ok: false,
@@ -1644,12 +1633,12 @@ io.on("connection", (socket) => {
     const dropId = String(payload.dropId || "");
     upgrades.ensureUpgradeState(p);
 
-    const info = upgrades.getUpgradeInfo(upgradeId);
+    const info = upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(upgradeId) : null;
     if (!info || info.kind !== "consumable") {
       return socket.emit("UPGRADE_RESULT", { ok: false, reason: "not_consumable" });
     }
 
-    const res = upgrades.applyConsumableReplace(p, upgradeId, dropId);
+    const res = upgrades.applyConsumableReplace ? upgrades.applyConsumableReplace(p, upgradeId, dropId) : { ok: false };
     if (!res.ok) return socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
 
     p.pendingUpgradeOffer = null;
@@ -1657,9 +1646,9 @@ io.on("connection", (socket) => {
     socket.emit("UPGRADE_RESULT", {
       ok: true,
       applied: res.applied,
-      chosen: upgrades.getUpgradeInfo(upgradeId),
+      chosen: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(upgradeId) : null,
       upgrades: p.upgrades,
-      dropped: upgrades.getUpgradeInfo(dropId),
+      dropped: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(dropId) : null,
       money: Number.isFinite(p.money) ? p.money : 0,
     });
   });
@@ -1694,7 +1683,7 @@ io.on("connection", (socket) => {
     const s = slots[slotIndex];
     if (!s || !s.id) return socket.emit("UPGRADE_USED", { ok: false, reason: "empty_slot" });
 
-    const info = upgrades.getUpgradeInfo(s.id);
+    const info = upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null;
     if (!info || info.kind !== "consumable") {
       return socket.emit("UPGRADE_USED", { ok: false, reason: "unknown_upgrade" });
     }
@@ -1709,7 +1698,7 @@ io.on("connection", (socket) => {
     p.money -= useCost;
 
     const nowMs = Date.now();
-    const res = upgrades.applyConsumableUse(p, s.id, { nowMs });
+    const res = upgrades.applyConsumableUse ? upgrades.applyConsumableUse(p, s.id, { nowMs }) : { ok: false };
 
     if (!res.ok) {
       p.money += useCost;
@@ -1723,27 +1712,6 @@ io.on("connection", (socket) => {
         if (a.type === "set_invuln_until") {
           const untilMs = Number(a.untilMs);
           if (Number.isFinite(untilMs)) p.invulnUntil = Math.max(p.invulnUntil || 0, untilMs);
-        }
-
-        // ✅ Dash actions (support multiple naming styles)
-        if (a.type === "set_dash_until" || a.type === "start_dash" || a.type === "dash") {
-          const untilMs =
-            Number.isFinite(Number(a.untilMs)) ? Number(a.untilMs) :
-            (Number.isFinite(Number(a.endsAtMs)) ? Number(a.endsAtMs) :
-            (Number.isFinite(Number(a.dashUntilMs)) ? Number(a.dashUntilMs) : null));
-
-          if (Number.isFinite(untilMs)) {
-            p.effects.dashUntilMs = untilMs;
-            p.effects.dashUntil = untilMs;
-            p.effects.dashEndsAt = untilMs;
-
-            // capture dash direction from current facing (so standing still still dashes)
-            const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
-            const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
-            const dlen = Math.hypot(dx, dy) || 1;
-            p.effects.dashDirX = dx / dlen;
-            p.effects.dashDirY = dy / dlen;
-          }
         }
 
         if (a.type === "spawn_mine_at_player") {
@@ -1832,9 +1800,7 @@ io.on("connection", (socket) => {
     p.killedById = null;
 
     upgrades.ensureEffectState(p);
-    endDashNow(p, Date.now());
-    p.effects.dashDirX = 0;
-    p.effects.dashDirY = 0;
+    p.effects.dash = null;
 
     socket.emit("RESPAWN_RESULT", { ok: true });
   });
