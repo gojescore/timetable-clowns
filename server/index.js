@@ -81,6 +81,11 @@ const BIG_NOSE_INVULN_MS = 250; // brief invuln after save
 const BIG_NOSE_PUSH_DIST = 260; // tune later
 const BIG_NOSE_PUSH_STEP = 12; // collision-safe stepping
 
+// ✅ Banana Shot (consumable projectile)
+const BANANA_KIND = "banana";
+const BANANA_DEFAULT_BOUNCES = 5; // allowed bounces; disappears on the 6th wall hit
+const BANANA_STICK_NUDGE = 0.5; // px nudge after bounce to avoid re-hitting same wall
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -293,6 +298,7 @@ function snapshotForGame(game) {
           id: b.id,
           ownerId: b.ownerId,
           ownerTeamId: b.ownerTeamId,
+          kind: b.kind || "cake", // ✅ client can render banana differently if desired
           x: b.x,
           y: b.y,
         }))
@@ -419,6 +425,18 @@ function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
 
   if (tmin < 0 || tmin > 1) return null;
   return { t: tmin };
+}
+
+// ✅ Banana bounce reflection helper: flip vx or vy based on closest AABB face at hit point.
+function reflectVelocityOnAABBHit(hitX, hitY, rx, ry, rw, rh, vx, vy) {
+  const left = Math.abs(hitX - rx);
+  const right = Math.abs(hitX - (rx + rw));
+  const top = Math.abs(hitY - ry);
+  const bottom = Math.abs(hitY - (ry + rh));
+  const m = Math.min(left, right, top, bottom);
+
+  if (m === left || m === right) return { vx: -vx, vy };
+  return { vx, vy: -vy };
 }
 
 function makePromptId() {
@@ -880,6 +898,7 @@ setInterval(() => {
           id: makeBulletId(),
           ownerId: p.id,
           ownerTeamId: p.teamId,
+          kind: "cake",
           x: spawnX,
           y: spawnY,
           vx: ndx * BULLET_SPEED,
@@ -895,7 +914,7 @@ setInterval(() => {
       }
     }
 
-    // ---- bullets ----
+    // ---- bullets (cakes + banana) ----
     if (!Array.isArray(game.bullets)) game.bullets = [];
 
     for (let i = game.bullets.length - 1; i >= 0; i--) {
@@ -905,13 +924,15 @@ setInterval(() => {
         continue;
       }
 
+      const isBanana = b.kind === BANANA_KIND;
+
       b.ttl -= dt;
       if (b.ttl <= 0) {
         game.bullets.splice(i, 1);
         continue;
       }
 
-      const bSpeed = Math.hypot(b.vx || 0, b.vy || 0) || BULLET_SPEED;
+      const bSpeed = Math.hypot(b.vx || 0, b.vy || 0) || (isBanana ? 820 : BULLET_SPEED);
       const travel = bSpeed * dt;
 
       const maxStep = 10;
@@ -924,16 +945,45 @@ setInterval(() => {
         const prevX = b.x;
         const prevY = b.y;
 
-        const nextX = prevX + b.vx * stepDt;
-        const nextY = prevY + b.vy * stepDt;
+        let nextX = prevX + b.vx * stepDt;
+        let nextY = prevY + b.vy * stepDt;
 
+        // ✅ Arena bounds:
+        // - cakes: remove if leaving world
+        // - banana: treat arena edges as WALL bounces (counts toward bounces)
         if (nextX < 0 || nextX > world.w || nextY < 0 || nextY > world.h) {
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
+          if (!isBanana) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+
+          // banana bounce on arena boundary
+          b.bouncesLeft = (Number.isFinite(b.bouncesLeft) ? (b.bouncesLeft | 0) : BANANA_DEFAULT_BOUNCES) - 1;
+          if (b.bouncesLeft < 0) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+
+          // reflect depending on which boundary was crossed
+          if (nextX < 0 || nextX > world.w) b.vx = -b.vx;
+          if (nextY < 0 || nextY > world.h) b.vy = -b.vy;
+
+          // clamp back inside and nudge
+          b.x = clamp(nextX, 0, world.w);
+          b.y = clamp(nextY, 0, world.h);
+
+          const nlen = Math.hypot(b.vx, b.vy) || 1;
+          b.x += (b.vx / nlen) * BANANA_STICK_NUDGE;
+          b.y += (b.vy / nlen) * BANANA_STICK_NUDGE;
+
+          // continue stepping with new velocity
+          continue;
         }
 
-        let bestT = null;
+        // Track earliest AABB hit and WHAT it hit (wall vs machine)
+        let bestHit = null; // { t, kind, rx, ry, rw, rh }
 
         if (Array.isArray(game.map?.walls)) {
           for (const w of game.map.walls) {
@@ -943,7 +993,7 @@ setInterval(() => {
             const rh = w.h + BULLET_HIT_R_WALL * 2;
 
             const hit = segmentHitAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh);
-            if (hit && (bestT === null || hit.t < bestT)) bestT = hit.t;
+            if (hit && (!bestHit || hit.t < bestHit.t)) bestHit = { t: hit.t, kind: "wall", rx, ry, rw, rh };
           }
         }
 
@@ -960,22 +1010,59 @@ setInterval(() => {
             const rh = bh + BULLET_HIT_R_MACHINE * 2;
 
             const hit = segmentHitAABB(prevX, prevY, nextX, nextY, rx, ry, rw, rh);
-            if (hit && (bestT === null || hit.t < bestT)) bestT = hit.t;
+            if (hit && (!bestHit || hit.t < bestHit.t)) bestHit = { t: hit.t, kind: "machine", rx, ry, rw, rh };
           }
         }
 
-        if (bestT !== null) {
-          b.x = prevX + (nextX - prevX) * bestT;
-          b.y = prevY + (nextY - prevY) * bestT;
+        if (bestHit) {
+          const bestT = bestHit.t;
+          const hitX = prevX + (nextX - prevX) * bestT;
+          const hitY = prevY + (nextY - prevY) * bestT;
 
-          game.bullets.splice(i, 1);
-          removed = true;
-          break;
+          b.x = hitX;
+          b.y = hitY;
+
+          // cake: die on any wall/machine hit
+          if (!isBanana) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+
+          // banana: bounce ONLY on walls (machines still remove it)
+          if (bestHit.kind !== "wall") {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+
+          // consume a bounce; disappears on the 6th wall hit
+          b.bouncesLeft = (Number.isFinite(b.bouncesLeft) ? (b.bouncesLeft | 0) : BANANA_DEFAULT_BOUNCES) - 1;
+          if (b.bouncesLeft < 0) {
+            game.bullets.splice(i, 1);
+            removed = true;
+            break;
+          }
+
+          // reflect velocity based on which face was hit
+          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
+          b.vx = refl.vx;
+          b.vy = refl.vy;
+
+          // tiny nudge forward to avoid sticking
+          const nlen = Math.hypot(b.vx, b.vy) || 1;
+          b.x += (b.vx / nlen) * BANANA_STICK_NUDGE;
+          b.y += (b.vy / nlen) * BANANA_STICK_NUDGE;
+
+          // continue stepping after bounce
+          continue;
         }
 
+        // no wall/machine hit -> move
         b.x = nextX;
         b.y = nextY;
 
+        // player hit check (banana dies on player hit, same as cake)
         let hitPlayer = null;
 
         for (const p of game.players.values()) {
@@ -998,7 +1085,11 @@ setInterval(() => {
 
           if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
-          const r = PLAYER_HALF + CAKE_HIT_R_PLAYER;
+          const extra =
+            isBanana && Number.isFinite(b.hitRadiusPlayer) ? Number(b.hitRadiusPlayer) : CAKE_HIT_R_PLAYER;
+
+          const r = PLAYER_HALF + extra;
+
           if (segmentHitsCircle(prevX, prevY, nextX, nextY, p.x, p.y, r)) {
             hitPlayer = p;
             break;
@@ -1825,6 +1916,81 @@ io.on("connection", (socket) => {
           };
 
           game.mines.push(mine);
+        }
+
+        // ✅ Banana shot spawn (server-authoritative)
+        if (a.type === "spawn_banana_shot") {
+          if (!Array.isArray(game.bullets)) game.bullets = [];
+
+          const params = a.params || {};
+          const speed = Number.isFinite(params.speed) ? params.speed : 820;
+          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : 1.4;
+
+          const bounces = Number.isFinite(params.bounces) ? Math.floor(params.bounces) : BANANA_DEFAULT_BOUNCES;
+          const hitRadiusPlayer = Number.isFinite(params.hitRadiusPlayer) ? params.hitRadiusPlayer : CAKE_HIT_R_PLAYER;
+
+          const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+          const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+          const dlen = Math.hypot(dx, dy) || 1;
+          const ndx = dx / dlen;
+          const ndy = dy / dlen;
+
+          // spawn slightly forward; push out if inside a wall/machine
+          let spawnX = p.x + ndx * (PLAYER_HALF + 8);
+          let spawnY = p.y + ndy * (PLAYER_HALF + 8);
+
+          const pushSteps = 6;
+          const pushStepLen = 6;
+
+          function pointHitsExpandedWalls(x, y) {
+            if (Array.isArray(game.map?.walls)) {
+              for (const w of game.map.walls) {
+                const rx = w.x - BULLET_HIT_R_WALL;
+                const ry = w.y - BULLET_HIT_R_WALL;
+                const rw = w.w + BULLET_HIT_R_WALL * 2;
+                const rh = w.h + BULLET_HIT_R_WALL * 2;
+                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+              }
+            }
+            return false;
+          }
+          function pointHitsExpandedMachines(x, y) {
+            if (Array.isArray(game.map?.machines)) {
+              for (const m of game.map.machines) {
+                const bx = m.x - MACHINE_HALF;
+                const by = m.y - MACHINE_HALF;
+                const bw = MACHINE_HALF * 2;
+                const bh = MACHINE_HALF * 2;
+                const rx = bx - BULLET_HIT_R_MACHINE;
+                const ry = by - BULLET_HIT_R_MACHINE;
+                const rw = bw + BULLET_HIT_R_MACHINE * 2;
+                const rh = bh + BULLET_HIT_R_MACHINE * 2;
+                if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return true;
+              }
+            }
+            return false;
+          }
+
+          for (let k = 0; k < pushSteps; k++) {
+            const bad = pointHitsExpandedWalls(spawnX, spawnY) || pointHitsExpandedMachines(spawnX, spawnY);
+            if (!bad) break;
+            spawnX += ndx * pushStepLen;
+            spawnY += ndy * pushStepLen;
+          }
+
+          game.bullets.push({
+            id: makeBulletId(),
+            ownerId: p.id,
+            ownerTeamId: p.teamId,
+            kind: BANANA_KIND,
+            x: spawnX,
+            y: spawnY,
+            vx: ndx * speed,
+            vy: ndy * speed,
+            ttl: ttlSec,
+            bouncesLeft: Math.max(0, bounces), // disappears on the 6th wall hit (goes to -1)
+            hitRadiusPlayer,
+          });
         }
       }
     }
