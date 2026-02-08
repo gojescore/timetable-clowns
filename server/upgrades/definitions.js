@@ -74,7 +74,7 @@ effect: {
     effect: {
       type: "dash",
       dashSpeedMult: 2.2, // multiply PLAYER_SPEED during dash window
-      durationSec: 0.35,
+      durationSec: 0.75,
       invulnDuring: true,
       internalCooldownSec: 0.8,
     },
