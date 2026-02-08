@@ -1,216 +1,261 @@
-# Timetable Clowns — Protocol (Single Source of Truth)
+Timetable Clowns — Protocol (Single Source of Truth)
 
 This file is the canonical reference for rules, architecture, and networking for the Timetable Clowns project.
 
-When starting a NEW chat thread, paste:
-1) this file (PROTOCOL.md)
-2) STATE_OF_THE_GAME.md
-3) the file currently being edited
+When starting a NEW chat thread, paste all three:
 
-🔒 **Hard rule**
-Client may display upgrades, but must never compute gameplay modifiers from them.
-All gameplay modifiers come only from `player.mods`, computed by the server.
+this file (PROTOCOL.md)
 
----
+STATE_OF_THE_GAME.md
 
-## 1) Game concept
+the file currently being edited
+
+🔒 Non-negotiable rule
+
+The client may display upgrades, but must never compute gameplay modifiers from them.
+All gameplay modifiers come only from player.mods sent by the server.
+
+1) Game concept
 
 A silly top-down multiplayer game for practicing times tables.
 
-- 2–12 players per match
-- Host creates a game and receives a join code
-- Guests join via code
-- Host selects:
-  - game mode: FFA or Teams
-  - timetable base (1–10)
-  - team count (Teams only)
-  - friendly fire (Teams only)
-  - input mode (kb / kbm / controller later)
-  - map choice (map01 or random)
-  - session type: Standard or Timed
-  - timed minutes (Timed only)
-  - win mode: Standard or Money
+2–12 players per match
 
-Timed sessions decide winner via `winMode`.
-Standard sessions still end on Machine 10.
+Host creates a game and receives a join code
 
-Players move around a top-down map with rooms and corridors.
-Rooms contain machines numbered 1–10.
-Machines must be completed in numeric order **per player**.
+Guests join using the code
 
----
+Host selects game settings before start
 
-## 2) Core gameplay rules (must be enforced)
+Host-selectable settings
 
-### 2.1 Machines & progression
+Game mode: ffa or teams
 
-- Interaction key: **E**
-- Player must be within `INTERACT_RADIUS`
-- Each player has their own progression:
-  - `nextMachineNum` starts at 1
-  - Only `nextMachineNum` may be interacted with
-  - Correct answer increments `nextMachineNum` (max 10)
+Timetable base: 1–10
+
+Team count: 1–4 (Teams only)
+
+Friendly fire: on/off (Teams only)
+
+Input mode: kb, kbm, kbm_gamepad (keyboard currently authoritative)
+
+Map choice: map01 or random
+
+Session type: standard or timed
+
+Session minutes: 1–60 (Timed only)
+
+Win mode: standard or money
+
+Timed sessions decide the winner via winMode.
+Standard sessions still end when Machine 10 is solved.
+
+2) Core gameplay rules (server authoritative)
+2.1 Machines and progression
+
+Interaction key: E
+
+Interaction allowed if player is within INTERACT_RADIUS
+
+Each player has independent machine progression
+
+nextMachineNum starts at 1
+
+Player may only interact with nextMachineNum
+
+Correct answer increments nextMachineNum (caps at 10)
+
+Machines are not global
 
 Server denies interaction if:
-- already cleared → `reason:"already_cleared"`
-- wrong order → `reason:"wrong_order"`
 
----
+Machine already cleared by that player
+→ reason: "already_cleared"
 
-### 2.2 Math prompts
+Wrong order
+→ reason: "wrong_order"
 
-- Prompt appears on valid interaction
-- Formula: `base × machineNum = ?`
-- Server authoritative:
-  - generates prompt
-  - validates answer
+2.2 Math prompts
+
+Prompt appears when interacting with the correct machine
+
+Formula:
+
+base × machineNum = ?
+
+
+Server responsibilities:
+
+Generate prompt
+
+Validate answer
+
+Emit result
 
 Server emits:
 
 ANSWER_RESULT { ok, correct? }
 
 Client behavior:
-- Prompt blocks gameplay input
-- Enter submits
-- Escape closes
 
----
+Prompt blocks gameplay input
 
-### 2.3 Money & pickups
+Enter submits
 
-- Start money: **$100**
-- Money pickups:
-  - `type:"money"`
-  - default amount: 100
-- Economy handled server-side
+Escape closes
 
----
+2.3 Money and pickups
 
-## 2.4 Upgrades
+Each player starts with $100
 
-Upgrades come in two kinds.
+Money pickups exist in the world
 
-### A) Permanent upgrades
+Pickup properties:
 
-- Paid immediately on selection
-- Stored as permanent
-- Can stack (`count`)
-- Max **3 different permanent types**
-- Cost field: `acquireCost`
+type: "money"
 
-### B) Consumable upgrades
+default amount: 100
 
-- Stored in **3 slots** (hotkeys **8 / 9 / 0**)
-- Not paid on pickup
-- Paid on use
-- Cost field: `useCost`
-- No duplicates
-- Max 3 at a time
+Server handles pickup spawning and collection (economy module)
 
-If slots are full:
-
-
-Client behavior:
-- Prompt blocks gameplay input
-- Enter submits
-- Escape closes
-
----
-
-### 2.3 Money & pickups
-
-- Start money: **$100**
-- Money pickups:
-  - `type:"money"`
-  - default amount: 100
-- Economy handled server-side
-
----
-
-## 2.4 Upgrades
+2.4 Upgrades
 
 Upgrades come in two kinds.
 
-### A) Permanent upgrades
+A) Permanent upgrades
 
-- Paid immediately on selection
-- Stored as permanent
-- Can stack (`count`)
-- Max **3 different permanent types**
-- Cost field: `acquireCost`
+Purchased immediately
 
-### B) Consumable upgrades
+Money removed on selection
 
-- Stored in **3 slots** (hotkeys **8 / 9 / 0**)
-- Not paid on pickup
-- Paid on use
-- Cost field: `useCost`
-- No duplicates
-- Max 3 at a time
+Stored permanently
 
-If slots are full:
-Client must send:
+Stackable (count: 2, count: 3, …)
+
+Max 3 different permanent types
+
+Cost field: acquireCost
+
+Examples:
+
+XL Shoes
+
+Glasses
+
+Giraffoscope
+
+B) Consumable upgrades
+
+Stored in 3 slots
+
+Hotkeys:
+
+Slot 0 → key 8
+
+Slot 1 → key 9
+
+Slot 2 → key 0
+
+Not paid when picked
+
+Paid when used
+
+Cost field: useCost
+
+No duplicates
+
+Max 3 at a time
+
+If slots are full, server returns:
+
+UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }
+
+
+Client must run replace flow and send:
 
 chooseUpgradeReplace { offerId, upgradeId, dropId }
 
-Using consumables:
-- Server validates:
-  - slot not empty
-  - player alive
-  - no prompt open
-  - no upgrade offer open
-  - enough money
-- Server subtracts money and emits:
+Using consumables
+
+Server validates:
+
+Slot not empty
+
+Player is alive
+
+No blockers:
+
+no pending math prompt
+
+no pending upgrade offer
+
+Player has enough money
+
+Server subtracts money and emits:
 
 UPGRADE_USED { ok:true, paid, used, money }
 
----
+2.5 Mods (server-computed gameplay modifiers) — 🔒 LOCKED CONTRACT
+Purpose
 
-## 2.5 Mods (server-computed) — 🔒 LOCKED CONTRACT
+Server computes all gameplay modifiers
 
-### Rule
+Client never derives modifiers from upgrades
 
-The server is the **only authority** that converts upgrades and effects into gameplay modifiers.
+Rule
 
-The client must **never** derive gameplay values from `player.upgrades`.
+The server is the only authority that converts upgrades, effects, and statuses into gameplay modifiers.
 
-### Snapshot contract
+Snapshot contract
 
-Each player in `STATE_SNAPSHOT.players[]` includes:
+Every player inside STATE_SNAPSHOT.players[] includes:
 
-```js
 mods: {
   speedMult: number,
   visionLenAdd: number,
   fovAddDeg: number
 }
-Defaults:
 
-speedMult = 1.0
+Meaning
 
-visionLenAdd = 0
+speedMult
+Multiplier applied to base speed (default 1.0)
 
-fovAddDeg = 0
+visionLenAdd
+Pixels added to base vision length (default 0)
 
-Client usage
+fovAddDeg
+Degrees added to base fog cone angle (default 0)
 
-Movement: server authoritative, client does not scale speed
+Client rules
 
-Fog of war:
+Movement
 
-visionLen = BASE_VISION_LEN + mods.visionLenAdd
-coneDeg   = CONE_ANGLE_BASE_DEG + mods.fovAddDeg
+Server authoritative
 
+Client must NOT scale speed
 
-If mods missing → fall back to defaults.
+Fog of war
 
-2.6 Combat, death & respawn
+visionLen = BASE_VISION_LEN + me.mods.visionLenAdd
 
-Shooting: cakes
+coneDeg = CONE_ANGLE_BASE_DEG + me.mods.fovAddDeg
+
+Robustness:
+
+If mods missing → use defaults
+
+Never recompute from upgrades
+
+Mods are plain JSON in snapshots
+
+2.6 Combat, death, and respawn
+
+Players shoot cakes while holding fire
 
 Server authoritative for:
 
-bullets
+projectiles
 
 collisions
 
@@ -220,9 +265,15 @@ death
 
 Shooting blocked if:
 
-prompt open
+math prompt open
 
 upgrade offer open
+
+Shooting:
+
+consumes 1 cake per shot
+
+Death
 
 On death:
 
@@ -230,15 +281,17 @@ alive = false
 
 Server emits:
 
-PLAYER_DIED
+PLAYER_DIED { playerId }
 
 RESPAWN_OPTIONS (private)
 
-Respawn options:
+Respawn options
 
-corners (always)
+Available respawn locations:
 
-cleared machines (player-specific)
+Corners (always)
+
+Cleared machines (player-specific)
 
 On respawn:
 
@@ -246,27 +299,44 @@ alive = true
 
 invulnUntil set
 
-3) Session types & game end
-3.1 Standard
+Client behavior:
+
+Blink / invulnerability indicator
+
+HUD reflects invulnerability
+
+RESPAWN_OPTIONS includes:
+
+killedBy name
+
+3) Session types and game end
+3.1 Standard session
 
 Ends when Machine 10 is solved
 
+Server emits:
+
 GAME_ENDED { reason:"machine10" }
 
-3.2 Timed
+3.2 Timed session
 
 Server sets:
 
 endAt = startedAt + sessionMinutes * 60 * 1000
 
 
-Included in GAME_STARTED and STATE_SNAPSHOT
+Included in:
+
+GAME_STARTED
+
+STATE_SNAPSHOT
 
 Ends when time expires:
 
 GAME_ENDED { reason:"time" }
 
 3.3 Win modes
+
 Standard
 
 correct ↓
@@ -288,11 +358,12 @@ kills ↓
 deaths ↑
 
 FFA → top player wins
+
 Teams → aggregated team totals
 
 4) End screen UX
 
-Large modal
+Large end modal
 
 Big winner banner
 
@@ -302,47 +373,80 @@ Leaderboard shown
 
 Only option: Back to lobby (reload)
 
-5) Networking
-Client → Server
+5) Networking (Socket.IO)
+5.1 Client → Server
 
-hello
+hello { name }
+
 createGame
+
 joinGame
+
 assignTeam
+
 startGame
+
 input
+
 tryInteract
+
 submitAnswer
+
 chooseUpgrade
+
 declineUpgrade
+
 chooseUpgradeReplace
+
 useUpgradeSlot
+
 chooseRespawn
 
-Server → Client
+5.2 Server → Client
+
+Lobby:
 
 WELCOME
+
 GAME_CREATED
+
 JOIN_SUCCESS
+
 JOIN_FAILED
+
 LOBBY_UPDATE
+
+Game:
+
 GAME_STARTED
+
 STATE_SNAPSHOT
-MATH_PROMPT
-ANSWER_RESULT
-INTERACT_DENIED
+
+Upgrades:
+
 UPGRADE_OFFER
+
 UPGRADE_RESULT
+
 UPGRADE_DECLINED
+
 UPGRADE_USED
+
+Death / respawn:
+
 PLAYER_DIED
+
 RESPAWN_OPTIONS
+
 RESPAWN_RESULT
+
+End:
+
 GAME_ENDED
 
 6) Authoritative server model (non-negotiable)
 
-Server owns:
+Server owns
 
 movement
 
@@ -362,9 +466,9 @@ death / respawn
 
 timers
 
-winners
+winner calculation
 
-Client owns:
+Client owns
 
 rendering
 
