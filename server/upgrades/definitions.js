@@ -2,13 +2,19 @@
 // Data-only list. Tweak names + costs + effect tuning here.
 //
 // Slot model:
-// - Permanents: 3 reserved slots (stacking allowed via count), pay acquireCost each time.
-// - Consumables: 3 action slots (8/9/0), no duplicates, pay useCost each time you use.
+// - Permanents: stored in permSlots (max 3 types). Stacking allowed via count.
+//   Paying acquireCost each time you select/buy (server/index.js enforces money).
+// - Consumables: stored in consSlots (max 3). Hotkeys: 8/9/0. No duplicates.
+//   Paying useCost each time you use (server/index.js enforces money).
 //
 // IMPORTANT (matches apply.js):
-// - XL Shoes uses effect.type="speed_mult" (generic).
-// - Big Eyes + Giraffoscope are computed by explicit mapping inside apply.js
-//   (to keep the mods contract locked and avoid double-counting).
+// - Permanent effects can be defined via `effect` (generic) and are applied by computePlayerMods().
+// - big_eyes + giraffoscope are ALSO mapped explicitly in apply.js for locked mods:
+//     big_eyes     -> fovAddDeg += stacks * BIG_EYES_FOV_ADD_DEG_PER_STACK
+//     giraffoscope -> visionLenAdd += stacks * VISION_LEN_PER_STACK
+//   Therefore: DO NOT add `effect.type="fov_add"` for big_eyes
+//              DO NOT add any visionLen effect for giraffoscope
+//   (Avoid double-counting.)
 //
 // Locked mods contract is enforced in apply.js:
 //   computePlayerMods() -> { speedMult, visionLenAdd, fovAddDeg }
@@ -29,23 +35,24 @@ const UPGRADES = [
       maxStacks: 6, // soft cap to prevent silliness
     },
   },
+
+  // NOTE: id is "big_eyes" but name is shown as "Glasses" in UI.
+  // No effect here on purpose (apply.js explicit mapping handles fovAddDeg).
   {
     id: "big_eyes",
     name: "Glasses",
     kind: "permanent",
     acquireCost: 150,
     desc: "Wider view cone.",
-    // NOTE: no effect here on purpose.
-    // apply.js adds fovAddDeg per stack for big_eyes.
   },
+
+  // No effect here on purpose (apply.js explicit mapping handles visionLenAdd).
   {
     id: "giraffoscope",
     name: "Giraffoscope",
     kind: "permanent",
     acquireCost: 150,
     desc: "See further.",
-    // NOTE: no effect here on purpose.
-    // apply.js adds visionLenAdd (pixels) per stack for giraffoscope.
   },
 
   // ---------- Consumable (action slots 8/9/0) ----------
@@ -55,16 +62,17 @@ const UPGRADES = [
     kind: "consumable",
     useCost: 100,
     desc: "Place a mine on roads.",
-effect: {
-  type: "spawn_mine",
-  radius: 26,
-  triggerRadius: 100, // 2× trigger
-  blastRadius: 180,  // 2× blast
-  damage: 1,
-  ttlSec: 25,
-  armDelaySec: 0.6,
-},
+    effect: {
+      type: "spawn_mine",
+      radius: 26,
+      triggerRadius: 100, // 2× trigger
+      blastRadius: 180,   // 2× blast
+      damage: 1,
+      ttlSec: 25,
+      armDelaySec: 0.6,
+    },
   },
+
   {
     id: "rubber_chicken",
     name: "Rubber Chicken",
@@ -74,12 +82,12 @@ effect: {
     effect: {
       type: "dash",
       dashSpeedMult: 2.2, // multiply PLAYER_SPEED during dash window
-      durationSec: 0.70,
+      durationSec: 0.7,
       invulnDuring: true,
       internalCooldownSec: 0.8,
     },
-
   },
+
   {
     id: "banana_shot",
     name: "Banana Shot",
@@ -94,6 +102,7 @@ effect: {
       hitRadiusPlayer: 12,
     },
   },
+
   {
     id: "big_nose",
     name: "Big Nose",
@@ -110,7 +119,7 @@ effect: {
 
 function getUpgradeById(id) {
   const key = String(id || "");
-  return UPGRADES.find((u) => u.id === key) || null;
+  return UPGRADES.find((u) => String(u.id) === key) || null;
 }
 
 module.exports = { UPGRADES, getUpgradeById };
