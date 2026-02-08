@@ -58,7 +58,7 @@ const UPGRADES = [
 effect: {
   type: "spawn_mine",
   radius: 26,
-  triggerRadius: 64, // 2× trigger
+  triggerRadius: 100, // 2× trigger
   blastRadius: 180,  // 2× blast
   damage: 1,
   ttlSec: 25,
