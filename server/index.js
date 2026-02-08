@@ -71,8 +71,8 @@ const WIN_MODE_STANDARD = "standard"; // your current behavior
 const WIN_MODE_MONEY = "money"; // money wins when time ends
 
 // ✅ Mines
-const MINE_STEP_ON_TRIGGER_R = 80; // enemy-only trigger radius
-const MINE_BLAST_R = 90; // kills everyone inside
+const MINE_STEP_ON_TRIGGER_R = 340; // enemy-only trigger radius
+const MINE_BLAST_R = 340; // kills everyone inside
 
 // In-memory game store
 const games = Object.create(null);
