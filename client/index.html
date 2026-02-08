@@ -2170,6 +2170,45 @@
     }
 
     // ---------------------------
+    // ✅ Mines / bombs / traps rendering (NEW)
+    //   This is why it "did not show" before: client had no renderer for them.
+    //   We try common names to be robust: mines / bombs / traps
+    // ---------------------------
+    function drawMines(camX, camY){
+      const list =
+        (Array.isArray(lastSnapshot?.mines) ? lastSnapshot.mines : null) ||
+        (Array.isArray(lastSnapshot?.bombs) ? lastSnapshot.bombs : null) ||
+        (Array.isArray(lastSnapshot?.traps) ? lastSnapshot.traps : null);
+
+      if (!Array.isArray(list)) return;
+
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (const m of list) {
+        if (!m) continue;
+
+        const x = (m.x ?? 0) - camX;
+        const y = (m.y ?? 0) - camY;
+
+        // ring (visible even with fog overlay)
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,80,80,.95)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // marker
+        ctx.font = "18px system-ui";
+        ctx.fillText("💣", x, y);
+      }
+
+      ctx.restore();
+      ctx.lineWidth = 1;
+    }
+
+    // ---------------------------
     // ✅ Banana bullets (what we agreed: banana shot should look like banana)
     // ---------------------------
     const bulletPrev = new Map(); // id -> {x,y,ang}
@@ -2208,84 +2247,82 @@
       ctx2.restore();
     }
 
-function drawBullets(camX, camY){
-  const list = lastSnapshot?.bullets;
-  if (!Array.isArray(list)) return;
+    function drawBullets(camX, camY){
+      const list = lastSnapshot?.bullets;
+      if (!Array.isArray(list)) return;
 
-  // cleanup map so it doesn't grow forever
-  const aliveIds = new Set();
-  for (const b of list) if (b && b.id) aliveIds.add(b.id);
-  for (const id of bulletPrev.keys()) {
-    if (!aliveIds.has(id)) bulletPrev.delete(id);
-  }
-
-  ctx.save();
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  for (const b of list) {
-    if (!b) continue;
-
-    const x = b.x - camX;
-    const y = b.y - camY;
-
-    // slight fade for non-me bullets (readability)
-    ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
-
-    const kind = (typeof b.kind === "string")
-      ? b.kind.trim().toLowerCase()
-      : "cake";
-
-    if (kind === "banana") {
-      // angle from motion (snapshot has x/y only)
-      let ang = 0;
-      if (b.id) {
-        const prev = bulletPrev.get(b.id);
-        if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
-          const dx = b.x - prev.x;
-          const dy = b.y - prev.y;
-          if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
-          else if (Number.isFinite(prev.ang)) ang = prev.ang;
-        }
-        bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
+      // cleanup map so it doesn't grow forever
+      const aliveIds = new Set();
+      for (const b of list) if (b && b.id) aliveIds.add(b.id);
+      for (const id of bulletPrev.keys()) {
+        if (!aliveIds.has(id)) bulletPrev.delete(id);
       }
-      drawBanana(ctx, x, y, ang);
-      continue;
-    }
 
-    // ✅ cake surprise (make it clearly visible again)
-    if (kind === "cake_surprise") {
-      // glow ring
       ctx.save();
-      ctx.globalAlpha *= 0.95;
-      ctx.beginPath();
-      ctx.arc(x, y, 10, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255, 210, 80, .85)";
-      ctx.lineWidth = 3;
-      ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (const b of list) {
+        if (!b) continue;
+
+        const x = b.x - camX;
+        const y = b.y - camY;
+
+        // slight fade for non-me bullets (readability)
+        ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
+
+        const kind = (typeof b.kind === "string")
+          ? b.kind.trim().toLowerCase()
+          : "cake";
+
+        if (kind === "banana") {
+          // angle from motion (snapshot has x/y only)
+          let ang = 0;
+          if (b.id) {
+            const prev = bulletPrev.get(b.id);
+            if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+              const dx = b.x - prev.x;
+              const dy = b.y - prev.y;
+              if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
+              else if (Number.isFinite(prev.ang)) ang = prev.ang;
+            }
+            bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
+          }
+          drawBanana(ctx, x, y, ang);
+          continue;
+        }
+
+        // ✅ cake surprise (make it clearly visible again)
+        if (kind === "cake_surprise") {
+          // glow ring
+          ctx.save();
+          ctx.globalAlpha *= 0.95;
+          ctx.beginPath();
+          ctx.arc(x, y, 10, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 210, 80, .85)";
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.restore();
+
+          // emoji + sparkle overlay
+          ctx.font = "18px system-ui";
+          ctx.fillText("🍰", x, y);
+          ctx.font = "14px system-ui";
+          ctx.fillText("✨", x + 12, y - 10);
+
+          if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+          continue;
+        }
+
+        // ✅ default / normal shot = cake
+        ctx.font = "18px system-ui";
+        ctx.fillText("🍰", x, y);
+
+        if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+      }
+
       ctx.restore();
-
-      // emoji + sparkle overlay
-      ctx.font = "18px system-ui";
-      ctx.fillText("🍰", x, y);
-      ctx.font = "14px system-ui";
-      ctx.fillText("✨", x + 12, y - 10);
-
-      if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
-      continue;
     }
-
-    // ✅ default / normal shot = cake
-    ctx.font = "18px system-ui";
-    ctx.fillText("🍰", x, y);
-
-    if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
-  }
-
-  ctx.restore();
-}
-
-
 
     function drawPickups(camX, camY){
       const list = lastSnapshot?.pickups;
@@ -2409,7 +2446,9 @@ function drawBullets(camX, camY){
       drawWalls(camX, camY);
       drawMachines(camX, camY);
 
-      // ✅ bullets are bananas now
+      // ✅ NEW: draw mines/bombs/traps before bullets so they appear as ground objects
+      drawMines(camX, camY);
+
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
