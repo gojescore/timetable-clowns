@@ -54,13 +54,14 @@ function ensureUpgradeState(player) {
 function ensureEffectState(player) {
   if (!player.effects) {
     player.effects = {
-      // dash: { untilMs, speedMult, cooldownUntilMs, invulnDuring }
+      // dash: { untilMs, speedMult, cooldownUntilMs, invulnDuring, dirX, dirY }
       dash: null,
       // shield points: blocks a death (server decides how)
       shield: 0,
     };
   }
   if (typeof player.effects.shield !== "number") player.effects.shield = 0;
+  // dash can be null or an object; leave as-is
 }
 
 function getUpgradeByIdSafe(id) {
@@ -223,9 +224,6 @@ const VISION_LEN_PER_STACK = 80;
 // ✅ Big Eyes: widen fog cone angle by +10 degrees per stack
 const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
 
-const RAD2DEG = 180 / Math.PI;
-const DEG2RAD = Math.PI / 180; // ✅ added (compat field below)
-
 // Compute deterministic modifiers from permanents + temp effects.
 // 🔒 Protocol wants ONLY: { speedMult, visionLenAdd, fovAddDeg }
 function computePlayerMods(player, nowMs) {
@@ -255,33 +253,21 @@ function computePlayerMods(player, nowMs) {
       speedMult *= Math.pow(per, c);
     }
 
-    // Support either degrees or radians in definitions, but ALWAYS output degrees
     if (eff.type === "fov_add") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
-
-      const addDegPerStack = Number.isFinite(eff.addDegPerStack) ? eff.addDegPerStack : null;
-      const addRadPerStack = Number.isFinite(eff.addRadiansPerStack) ? eff.addRadiansPerStack : null;
-
-      if (addDegPerStack !== null) {
-        fovAddDeg += addDegPerStack * c;
-      } else if (addRadPerStack !== null) {
-        fovAddDeg += addRadPerStack * RAD2DEG * c;
-      }
+      const addDegPerStack = Number.isFinite(eff.addDegPerStack) ? eff.addDegPerStack : 0;
+      fovAddDeg += addDegPerStack * c;
     }
   }
 
   // 2) Explicit mapping: giraffoscope -> vision length add (pixels)
   const giraffeStacks = getPermCount(player, "giraffoscope");
-  if (giraffeStacks > 0) {
-    visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
-  }
+  if (giraffeStacks > 0) visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
 
   // 3) Explicit mapping: big_eyes -> fov add (degrees)
   const bigEyesStacks = getPermCount(player, "big_eyes");
-  if (bigEyesStacks > 0) {
-    fovAddDeg += bigEyesStacks * BIG_EYES_FOV_ADD_DEG_PER_STACK;
-  }
+  if (bigEyesStacks > 0) fovAddDeg += bigEyesStacks * BIG_EYES_FOV_ADD_DEG_PER_STACK;
 
   // 4) Temporary dash effect (speed only)
   const dash = player.effects.dash;
@@ -294,11 +280,7 @@ function computePlayerMods(player, nowMs) {
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
 
-  // ✅ compat: some clients still read radians
-  const fovAdd = fovAddDeg * DEG2RAD;
-
-  // keep protocol fields, plus compat field
-  return { speedMult, visionLenAdd, fovAddDeg, fovAdd };
+  return { speedMult, visionLenAdd, fovAddDeg };
 }
 
 // Apply a consumable effect.
@@ -327,11 +309,10 @@ function applyConsumableUse(player, upgradeId, ctx) {
     }
 
     case "dash": {
-      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 0.3;
-      const speedMult = Number.isFinite(eff.dashSpeedMult) ? eff.dashSpeedMult : 2.0;
+      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 0.6; // default longer
+      const speedMult = Number.isFinite(eff.dashSpeedMult) ? eff.dashSpeedMult : 2.2;
       const invulnDuring = !!eff.invulnDuring;
 
-      // internal cooldown (optional)
       const cdSec = Number.isFinite(eff.internalCooldownSec) ? eff.internalCooldownSec : 0;
       const dashState = player.effects.dash;
       if (dashState && Number.isFinite(dashState.cooldownUntilMs) && now < dashState.cooldownUntilMs) {
@@ -341,7 +322,19 @@ function applyConsumableUse(player, upgradeId, ctx) {
       const untilMs = now + Math.floor(durSec * 1000);
       const cooldownUntilMs = now + Math.floor((durSec + cdSec) * 1000);
 
-      player.effects.dash = { untilMs, speedMult, cooldownUntilMs, invulnDuring };
+      // lock direction at start (supports standing still)
+      const dx = Number.isFinite(player.dirX) ? player.dirX : 1;
+      const dy = Number.isFinite(player.dirY) ? player.dirY : 0;
+      const dlen = Math.hypot(dx, dy) || 1;
+
+      player.effects.dash = {
+        untilMs,
+        speedMult,
+        cooldownUntilMs,
+        invulnDuring,
+        dirX: dx / dlen,
+        dirY: dy / dlen,
+      };
 
       if (invulnDuring) {
         actions.push({ type: "set_invuln_until", untilMs });
@@ -350,23 +343,21 @@ function applyConsumableUse(player, upgradeId, ctx) {
       return { ok: true, actions, changed: { dashUntil: untilMs } };
     }
 
-case "spawn_mine": {
-  actions.push({
-    type: "spawn_mine_at_player",
-    upgradeId: up.id,
-    params: {
-      radius: Number.isFinite(eff.radius) ? eff.radius : 26,
-      triggerRadius: Number.isFinite(eff.triggerRadius) ? eff.triggerRadius : 32,
-      blastRadius: Number.isFinite(eff.blastRadius) ? eff.blastRadius : 90,
-      damage: Number.isFinite(eff.damage) ? eff.damage : 1,
-      ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 25,
-      armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
-    },
-  });
-  return { ok: true, actions };
-}
-
-
+    case "spawn_mine": {
+      actions.push({
+        type: "spawn_mine_at_player",
+        upgradeId: up.id,
+        params: {
+          radius: Number.isFinite(eff.radius) ? eff.radius : 26,
+          triggerRadius: Number.isFinite(eff.triggerRadius) ? eff.triggerRadius : 32,
+          blastRadius: Number.isFinite(eff.blastRadius) ? eff.blastRadius : 90,
+          damage: Number.isFinite(eff.damage) ? eff.damage : 1,
+          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 25,
+          armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
+        },
+      });
+      return { ok: true, actions };
+    }
 
     case "banana_shot": {
       actions.push({
