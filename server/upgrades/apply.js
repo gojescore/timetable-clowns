@@ -29,6 +29,11 @@
 // - So: remove explicit mapping constants and logic.
 // - Keep XL Shoes via speed_mult.
 // - Support optional fov_add and vision_len_add effects for permanents.
+//
+// ✅ FIX in this version (requested):
+// - Big Nose must NOT stack / no duplicates.
+//   If player already has big_nose, selecting it returns { ok:false, reason:"already_have" }.
+//   (So your server/index.js bullet-saver can consume it once.)
 
 let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
@@ -143,6 +148,18 @@ function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
   if (upgrade.kind === "permanent") {
+    // ✅ Big Nose is unique: NO stacking, no duplicates
+    if (String(upgrade.id) === "big_nose") {
+      const has = findPermanentSlot(player, "big_nose") >= 0;
+      if (has) return { ok: false, reason: "already_have" };
+      // must have a free permanent slot
+      const maxPerm = Number.isFinite(C.MAX_PERM_SLOTS) ? C.MAX_PERM_SLOTS : 3;
+      if (player.upgrades.permSlots.length >= maxPerm) {
+        return { ok: false, reason: "perm_slots_full" };
+      }
+      return { ok: true, mode: "perm_new" };
+    }
+
     // stacking always allowed if already present
     const idx = findPermanentSlot(player, upgrade.id);
     if (idx >= 0) return { ok: true, mode: "perm_stack" };
@@ -181,6 +198,12 @@ function applyUpgradeSelection(player, upgradeId) {
   if (!check.ok) return { ok: false, reason: check.reason };
 
   if (up.kind === "permanent") {
+    // ✅ Big Nose is unique: always add as {count:1} and never stack
+    if (String(up.id) === "big_nose") {
+      player.upgrades.permSlots.push({ id: up.id, count: 1 });
+      return { ok: true, applied: { kind: "permanent_new", id: up.id, count: 1 } };
+    }
+
     const idx = findPermanentSlot(player, up.id);
     if (idx >= 0) {
       const cur = player.upgrades.permSlots[idx];
