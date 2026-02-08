@@ -54,6 +54,11 @@ const BULLET_HIT_R_MACHINE = 6;
 const CAKE_HIT_R_PLAYER = 12;
 
 const FIRE_COOLDOWN = 0.5;
+
+// ✅ Melee (ignores nose / dir)
+const MELEE_RANGE = 52; // pixels (center-to-center)
+const MELEE_COOLDOWN = 0.55; // seconds
+
 const RESPAWN_INVULN = 0.6;
 const CORNER_PAD = 80;
 
@@ -625,6 +630,7 @@ setInterval(() => {
       if (!collidesAt(game, cx, cy)) p.y = cy;
 
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
+      p.meleeCd = Math.max(0, (p.meleeCd || 0) - dt);
 
       const wantsFire = !!p.input?.fire;
       if (wantsFire && p.fireCd <= 0) {
@@ -968,6 +974,7 @@ setInterval(() => {
         victim.alive = false;
         victim.input = { up: false, down: false, left: false, right: false, fire: false };
         victim.fireCd = 0;
+        victim.meleeCd = 0;
         victim.cakes = 0;
         victim.pendingPrompt = null;
         victim.pendingUpgradeOffer = null;
@@ -1105,6 +1112,7 @@ io.on("connection", (socket) => {
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
+      meleeCd: 0,
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
@@ -1172,6 +1180,7 @@ io.on("connection", (socket) => {
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
+      meleeCd: 0,
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
@@ -1282,6 +1291,9 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
       upgrades.ensureEffectState(p);
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
+
+      if (!Number.isFinite(p.fireCd)) p.fireCd = 0;
+      if (!Number.isFinite(p.meleeCd)) p.meleeCd = 0;
     }
 
     game.pickups = [];
@@ -1334,6 +1346,106 @@ io.on("connection", (socket) => {
       right: !!payload.right,
       fire: !!payload.fire,
     };
+  });
+
+  // ✅ Melee (ignores nose/dir; 360° hit)
+  socket.on("melee", () => {
+    const code = session.gameCode;
+    if (!code) return;
+
+    const game = games[code];
+    if (!game || game.phase !== "running") return;
+
+    const attacker = game.players.get(session.playerId);
+    if (!attacker || !attacker.alive) return;
+
+    if (attacker.pendingPrompt) return;
+    if (attacker.pendingUpgradeOffer) return;
+
+    if ((attacker.meleeCd || 0) > 0) return;
+    attacker.meleeCd = MELEE_COOLDOWN;
+
+    const now = Date.now();
+
+    const r2 = MELEE_RANGE * MELEE_RANGE;
+    let best = null;
+    let bestD2 = Infinity;
+
+    for (const p of game.players.values()) {
+      if (!p || !p.alive) continue;
+      if (p.id === attacker.id) continue;
+
+      // teams: respect friendlyFire toggle
+      if (game.settings?.mode === GAME_MODE_TEAMS) {
+        const friendlyFire = !!game.settings?.friendlyFire;
+        if (!friendlyFire) {
+          const at = attacker.teamId;
+          if (at !== null && at !== undefined && p.teamId === at) continue;
+        }
+      }
+
+      if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
+
+      const d2 = dist2(attacker.x, attacker.y, p.x, p.y);
+      if (d2 <= r2 && d2 < bestD2) {
+        best = p;
+        bestD2 = d2;
+      }
+    }
+
+    if (!best) return;
+
+    // shield check
+    upgrades.ensureEffectState(best);
+    if ((best.effects.shield | 0) > 0) {
+      best.effects.shield = (best.effects.shield | 0) - 1;
+      best.invulnUntil = now + 250;
+
+      io.to(code).emit("PLAYER_SHIELDED", {
+        playerId: best.id,
+        by: attacker.id,
+        shieldLeft: best.effects.shield | 0,
+      });
+      return;
+    }
+
+    // kill target (same style as bullet kill)
+    if (!attacker.stats) attacker.stats = { kills: 0, deaths: 0, correct: 0 };
+    attacker.stats.kills += 1;
+
+    if (!best.stats) best.stats = { kills: 0, deaths: 0, correct: 0 };
+    best.stats.deaths += 1;
+
+    best.killedByName = attacker.name || "Unknown";
+    best.killedById = attacker.id;
+
+    best.alive = false;
+    best.input = { up: false, down: false, left: false, right: false, fire: false };
+    best.fireCd = 0;
+    best.meleeCd = 0;
+    best.cakes = 0;
+    best.pendingPrompt = null;
+    best.pendingUpgradeOffer = null;
+
+    const opts = buildRespawnOptions(game, best);
+    best.pendingRespawn = {
+      options: opts.map((o) => o.id),
+      createdAt: now,
+    };
+
+    // ✅ send to socketId OR fallback to player id
+    const targetSocket = best.socketId || best.id;
+
+    io.to(targetSocket).emit("RESPAWN_OPTIONS", {
+      killedBy: best.killedByName || "Unknown",
+      options: opts.map((o) => ({
+        id: o.id,
+        label: o.label,
+        kind: o.kind,
+      })),
+    });
+
+    io.to(code).emit("PLAYER_DIED", { playerId: best.id });
   });
 
   socket.on("tryInteract", () => {
@@ -1718,6 +1830,7 @@ io.on("connection", (socket) => {
 
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
+    p.meleeCd = 0;
     p.cakes = MAX_CAKES;
 
     p.pendingPrompt = null;
