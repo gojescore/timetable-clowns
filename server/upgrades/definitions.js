@@ -8,13 +8,11 @@
 //   Paying useCost each time you use (server/index.js enforces money).
 //
 // IMPORTANT (matches apply.js):
-// - Permanent effects can be defined via `effect` (generic) and are applied by computePlayerMods().
-// - big_eyes + giraffoscope are ALSO mapped explicitly in apply.js for locked mods:
-//     big_eyes     -> fovAddDeg += stacks * BIG_EYES_FOV_ADD_DEG_PER_STACK
-//     giraffoscope -> visionLenAdd += stacks * VISION_LEN_PER_STACK
-//   Therefore: DO NOT add `effect.type="fov_add"` for big_eyes
-//              DO NOT add any visionLen effect for giraffoscope
-//   (Avoid double-counting.)
+// - Permanent effects are defined via `effect` and applied by computePlayerMods().
+// - apply.js supports these permanent effect types:
+//     - speed_mult        (multiplier per stack)
+//     - fov_add           (+degrees per stack)
+//     - vision_len_add    (+pixels per stack)
 //
 // Locked mods contract is enforced in apply.js:
 //   computePlayerMods() -> { speedMult, visionLenAdd, fovAddDeg }
@@ -37,22 +35,30 @@ const UPGRADES = [
   },
 
   // NOTE: id is "big_eyes" but name is shown as "Glasses" in UI.
-  // No effect here on purpose (apply.js explicit mapping handles fovAddDeg).
   {
     id: "big_eyes",
     name: "Glasses",
     kind: "permanent",
     acquireCost: 150,
     desc: "Wider view cone.",
+    effect: {
+      type: "fov_add",
+      addDegPerStack: 10,
+      maxStacks: 6,
+    },
   },
 
-  // No effect here on purpose (apply.js explicit mapping handles visionLenAdd).
   {
     id: "giraffoscope",
     name: "Giraffoscope",
     kind: "permanent",
     acquireCost: 150,
     desc: "See further.",
+    effect: {
+      type: "vision_len_add",
+      addPxPerStack: 80,
+      maxStacks: 10,
+    },
   },
 
   // ---------- Consumable (action slots 8/9/0) ----------
@@ -66,7 +72,7 @@ const UPGRADES = [
       type: "spawn_mine",
       radius: 26,
       triggerRadius: 100, // 2× trigger
-      blastRadius: 180,   // 2× blast
+      blastRadius: 180, // 2× blast
       damage: 1,
       ttlSec: 25,
       armDelaySec: 0.6,
