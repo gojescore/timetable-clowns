@@ -75,6 +75,12 @@ const MINE_BLAST_R = 180;
 // ✅ Dash attack (“Rubber chicken”) collision rules
 const DASH_HIT_R_PLAYER = 18; // extra reach beyond player radius (we add PLAYER_HALF when checking)
 
+// ✅ Big Nose (permanent, one-time lethal bullet save)
+const BIG_NOSE_ID = "big_nose";
+const BIG_NOSE_INVULN_MS = 250; // brief invuln after save
+const BIG_NOSE_PUSH_DIST = 260; // tune later
+const BIG_NOSE_PUSH_STEP = 12; // collision-safe stepping
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -195,6 +201,68 @@ function collidesAt(game, cx, cy) {
   }
 
   return false;
+}
+
+// ✅ Big Nose helpers (uses permanent upgrades; does NOT affect mines/dash)
+function hasBigNose(player) {
+  upgrades.ensureUpgradeState(player);
+  const perm = player?.upgrades?.permSlots;
+  if (!Array.isArray(perm)) return false;
+  return perm.some((s) => s && s.id === BIG_NOSE_ID && ((s.count | 0) > 0));
+}
+
+function consumeBigNose(player) {
+  upgrades.ensureUpgradeState(player);
+  const perm = player?.upgrades?.permSlots;
+  if (!Array.isArray(perm)) return false;
+
+  const idx = perm.findIndex((s) => s && s.id === BIG_NOSE_ID && ((s.count | 0) > 0));
+  if (idx < 0) return false;
+
+  const c = perm[idx].count | 0;
+  if (c > 1) perm[idx].count = c - 1;
+  else perm.splice(idx, 1);
+
+  return true;
+}
+
+function pushVictimAwayFromShooter(game, victim, shooter, dist) {
+  const world = getWorldForGame(game);
+
+  let dx = 1, dy = 0;
+  if (shooter && Number.isFinite(shooter.x) && Number.isFinite(shooter.y)) {
+    dx = victim.x - shooter.x;
+    dy = victim.y - shooter.y;
+  } else if (Number.isFinite(victim.dirX) && Number.isFinite(victim.dirY)) {
+    // fallback: push along victim facing
+    dx = victim.dirX;
+    dy = victim.dirY;
+  }
+
+  const len = Math.hypot(dx, dy) || 1;
+  dx /= len;
+  dy /= len;
+
+  const steps = Math.max(1, Math.ceil(dist / BIG_NOSE_PUSH_STEP));
+  let x = victim.x;
+  let y = victim.y;
+
+  for (let k = 0; k < steps; k++) {
+    const nx = clamp(x + dx * BIG_NOSE_PUSH_STEP, PLAYER_HALF, world.w - PLAYER_HALF);
+    const ny = clamp(y + dy * BIG_NOSE_PUSH_STEP, PLAYER_HALF, world.h - PLAYER_HALF);
+
+    if (collidesAt(game, nx, ny)) break;
+
+    x = nx;
+    y = ny;
+  }
+
+  victim.x = x;
+  victim.y = y;
+
+  // optional: face away
+  victim.dirX = dx;
+  victim.dirY = dy;
 }
 
 function snapshotForGame(game) {
@@ -954,6 +1022,25 @@ setInterval(() => {
               shieldLeft: hitPlayer.effects.shield | 0,
             });
             break;
+          }
+
+          // ✅ BIG NOSE: bullets-only lethal save, then falls off (permanent consumed)
+          if (hasBigNose(hitPlayer)) {
+            consumeBigNose(hitPlayer);
+
+            // brief invuln window to avoid instant re-kill during/after push
+            hitPlayer.invulnUntil = Math.max(hitPlayer.invulnUntil || 0, now + BIG_NOSE_INVULN_MS);
+
+            // knockback away from shooter, blocked by walls/machines
+            pushVictimAwayFromShooter(game, hitPlayer, shooter, BIG_NOSE_PUSH_DIST);
+
+            // optional event (client may ignore for now)
+            io.to(code).emit("BIG_NOSE_USED", {
+              playerId: hitPlayer.id,
+              by: shooter ? shooter.id : null,
+            });
+
+            break; // IMPORTANT: do not kill
           }
 
           if (shooter) {
