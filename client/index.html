@@ -1265,7 +1265,11 @@
       }
 
       // Respawn overlay open: no gameplay hotkeys
-      if (el.respawnOverlay.classList.contains("show")) return;
+       if (el.respawnOverlay.classList.contains("show")) {
+          if (e.key === "Escape") e.preventDefault();
+          return;
+}
+
 
       // Prompt open: no gameplay hotkeys (movement already blocked by isUiBlockingInput in setKey)
       if (el.overlay.classList.contains("show")) return;
