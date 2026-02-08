@@ -69,13 +69,16 @@ const UPGRADES = [
     kind: "consumable",
     useCost: 100,
     desc: "Fast dash forward (brief invuln).",
-    effect: {
-      type: "dash",
-      dashSpeedMult: 2.2, // multiply PLAYER_SPEED during dash window
-      durationSec: 0.35,
-      invulnDuring: true,
-      internalCooldownSec: 0.8,
-    },
+effect: {
+  type: "spawn_mine",
+  radius: 26,
+  triggerRadius: 64, // 2× trigger
+  blastRadius: 180,  // 2× blast
+  damage: 1,
+  ttlSec: 25,
+  armDelaySec: 0.6,
+},
+
   },
   {
     id: "banana_shot",
