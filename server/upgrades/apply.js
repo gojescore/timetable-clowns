@@ -356,10 +356,8 @@ case "spawn_mine": {
     upgradeId: up.id,
     params: {
       radius: Number.isFinite(eff.radius) ? eff.radius : 26,
--     triggerRadius: 32,
--     blastRadius: 90,
-+     triggerRadius: Number.isFinite(eff.triggerRadius) ? eff.triggerRadius : 32,
-+     blastRadius: Number.isFinite(eff.blastRadius) ? eff.blastRadius : 90,
+      triggerRadius: Number.isFinite(eff.triggerRadius) ? eff.triggerRadius : 32,
+      blastRadius: Number.isFinite(eff.blastRadius) ? eff.blastRadius : 90,
       damage: Number.isFinite(eff.damage) ? eff.damage : 1,
       ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 25,
       armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
@@ -367,6 +365,7 @@ case "spawn_mine": {
   });
   return { ok: true, actions };
 }
+
 
 
     case "banana_shot": {
