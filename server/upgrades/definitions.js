@@ -109,18 +109,14 @@ const UPGRADES = [
     },
   },
 
-  {
-    id: "big_nose",
-    name: "Big Nose",
-    kind: "consumable",
-    useCost: 0,
-    desc: "+1 shield (blocks one death).",
-    effect: {
-      type: "shield_add",
-      amount: 1,
-      maxShield: 3,
-    },
-  },
+{
+  id: "big_nose",
+  name: "Big Nose",
+  kind: "permanent",
+  desc: "Blocks ONE lethal cake shot, then falls off. (Bullets only)",
+  acquireCost: 250 // pick your number
+}
+,
 ];
 
 function getUpgradeById(id) {
