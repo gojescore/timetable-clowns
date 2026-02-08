@@ -1268,8 +1268,7 @@
        if (el.respawnOverlay.classList.contains("show")) {
           if (e.key === "Escape") e.preventDefault();
           return;
-}
-
+      }
 
       // Prompt open: no gameplay hotkeys (movement already blocked by isUiBlockingInput in setKey)
       if (el.overlay.classList.contains("show")) return;
@@ -2175,21 +2174,94 @@
       ctx.lineWidth = 1;
     }
 
+    // ---------------------------
+    // ✅ Banana visuals (simple shape)
+    // ---------------------------
+    const bulletPrev = new Map(); // id -> {x,y,ang}
+
+    function drawBanana(ctx2, x, y, angleRad = 0) {
+      ctx2.save();
+      ctx2.translate(x, y);
+      ctx2.rotate(angleRad);
+
+      // Simple “banana”: thick curved stroke + highlight + tiny tips
+      ctx2.lineCap = "round";
+      ctx2.lineJoin = "round";
+
+      // body
+      ctx2.lineWidth = 6;
+      ctx2.strokeStyle = "#f4d000";
+      ctx2.beginPath();
+      ctx2.moveTo(-10, 6);
+      ctx2.quadraticCurveTo(0, -10, 12, 2);
+      ctx2.stroke();
+
+      // highlight
+      ctx2.lineWidth = 3;
+      ctx2.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx2.beginPath();
+      ctx2.moveTo(-8, 5);
+      ctx2.quadraticCurveTo(0, -7, 10, 2);
+      ctx2.stroke();
+
+      // tips
+      ctx2.fillStyle = "#7a4a12";
+      ctx2.beginPath();
+      ctx2.arc(-10, 6, 2, 0, Math.PI * 2);
+      ctx2.arc(12, 2, 2, 0, Math.PI * 2);
+      ctx2.fill();
+
+      ctx2.restore();
+    }
+
     function drawBullets(camX, camY){
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
 
+      // build id set for cleanup (prevents Map growing forever)
+      const aliveIds = new Set();
+      for (const b of list) if (b && b.id) aliveIds.add(b.id);
+      for (const id of bulletPrev.keys()) {
+        if (!aliveIds.has(id)) bulletPrev.delete(id);
+      }
+
       ctx.save();
-      ctx.font = "18px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
       for (const b of list) {
         if (!b) continue;
+
+        const kind = String(b.kind || "cake").toLowerCase();
         const x = b.x - camX;
         const y = b.y - camY;
+
         ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
-        ctx.fillText("🍰", x, y);
+
+        if (kind === "banana") {
+          // angle from motion (snapshot only has x/y, so we derive from last frame)
+          let ang = 0;
+          if (b.id) {
+            const prev = bulletPrev.get(b.id);
+            if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+              const dx = b.x - prev.x;
+              const dy = b.y - prev.y;
+              if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
+              else if (Number.isFinite(prev.ang)) ang = prev.ang;
+            } else {
+              // first time seen: default angle
+              ang = 0;
+            }
+            bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
+          }
+
+          drawBanana(ctx, x, y, ang);
+        } else {
+          // cakes (default)
+          ctx.font = "18px system-ui";
+          ctx.fillText("🍰", x, y);
+          if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+        }
       }
 
       ctx.restore();
