@@ -234,7 +234,8 @@ function consumeBigNose(player) {
 function pushVictimAwayFromShooter(game, victim, shooter, dist) {
   const world = getWorldForGame(game);
 
-  let dx = 1, dy = 0;
+  let dx = 1,
+    dy = 0;
   if (shooter && Number.isFinite(shooter.x) && Number.isFinite(shooter.y)) {
     dx = victim.x - shooter.x;
     dy = victim.y - shooter.y;
@@ -679,12 +680,13 @@ setInterval(() => {
       const prevPY = p.y;
 
       // If dashing: force movement direction from dash.dirX/Y (no "only hits at end")
-      let vx = 0, vy = 0;
+      let vx = 0,
+        vy = 0;
 
       if (dashing) {
         const d = p.effects.dash || {};
-        const dx = Number.isFinite(d.dirX) ? d.dirX : (Number.isFinite(p.dirX) ? p.dirX : 1);
-        const dy = Number.isFinite(d.dirY) ? d.dirY : (Number.isFinite(p.dirY) ? p.dirY : 0);
+        const dx = Number.isFinite(d.dirX) ? d.dirX : Number.isFinite(p.dirX) ? p.dirX : 1;
+        const dy = Number.isFinite(d.dirY) ? d.dirY : Number.isFinite(p.dirY) ? p.dirY : 0;
         const dlen = Math.hypot(dx, dy) || 1;
         vx = dx / dlen;
         vy = dy / dlen;
@@ -1045,7 +1047,16 @@ setInterval(() => {
           }
 
           // reflect velocity based on which face was hit
-          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
+          const refl = reflectVelocityOnAABBHit(
+            hitX,
+            hitY,
+            bestHit.rx,
+            bestHit.ry,
+            bestHit.rw,
+            bestHit.rh,
+            b.vx,
+            b.vy
+          );
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1085,8 +1096,7 @@ setInterval(() => {
 
           if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
-          const extra =
-            isBanana && Number.isFinite(b.hitRadiusPlayer) ? Number(b.hitRadiusPlayer) : CAKE_HIT_R_PLAYER;
+          const extra = isBanana && Number.isFinite(b.hitRadiusPlayer) ? Number(b.hitRadiusPlayer) : CAKE_HIT_R_PLAYER;
 
           const r = PLAYER_HALF + extra;
 
