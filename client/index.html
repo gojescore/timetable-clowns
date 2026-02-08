@@ -2220,6 +2220,8 @@ function drawBullets(camX, camY){
   }
 
   ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
 
   for (const b of list) {
     if (!b) continue;
@@ -2227,14 +2229,15 @@ function drawBullets(camX, camY){
     const x = b.x - camX;
     const y = b.y - camY;
 
-    // a tiny fade for non-me bullets (nice readability)
+    // slight fade for non-me bullets (readability)
     ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
 
-    // ✅ STRICT: only banana if server explicitly says kind:"banana"
-    const kind = (typeof b.kind === "string") ? b.kind.trim().toLowerCase() : "cake";
+    const kind = (typeof b.kind === "string")
+      ? b.kind.trim().toLowerCase()
+      : "cake";
 
     if (kind === "banana") {
-      // derive angle from motion using previous position (banana looks better rotated)
+      // angle from motion (snapshot has x/y only)
       let ang = 0;
       if (b.id) {
         const prev = bulletPrev.get(b.id);
@@ -2247,20 +2250,41 @@ function drawBullets(camX, camY){
         bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
       }
       drawBanana(ctx, x, y, ang);
-    } else {
-      // ✅ normal shot = cake
-      ctx.font = "18px system-ui";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("🍰", x, y);
-
-      // keep prev map in sync so deletion cleanup works
-      if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+      continue;
     }
+
+    // ✅ cake surprise (make it clearly visible again)
+    if (kind === "cake_surprise") {
+      // glow ring
+      ctx.save();
+      ctx.globalAlpha *= 0.95;
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 210, 80, .85)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+
+      // emoji + sparkle overlay
+      ctx.font = "18px system-ui";
+      ctx.fillText("🍰", x, y);
+      ctx.font = "14px system-ui";
+      ctx.fillText("✨", x + 12, y - 10);
+
+      if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+      continue;
+    }
+
+    // ✅ default / normal shot = cake
+    ctx.font = "18px system-ui";
+    ctx.fillText("🍰", x, y);
+
+    if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
   }
 
   ctx.restore();
 }
+
 
 
     function drawPickups(camX, camY){
