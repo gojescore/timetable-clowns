@@ -113,10 +113,10 @@ const UPGRADES = [
   id: "big_nose",
   name: "Big Nose",
   kind: "permanent",
+  acquireCost: 250,
   desc: "Blocks ONE lethal cake shot, then falls off. (Bullets only)",
-  acquireCost: 250 // pick your number
-}
-,
+},
+
 ];
 
 function getUpgradeById(id) {
