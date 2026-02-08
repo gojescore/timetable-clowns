@@ -42,8 +42,6 @@ const MACHINE_HALF = 10;
 
 // Shooting / bullets
 const BULLET_SPEED = 780;
-
-// You confirmed 2.0 works for you (range ≈ 1560px at 780px/s)
 const BULLET_TTL = 2.0;
 
 // Separate radii for tuning
@@ -54,11 +52,6 @@ const BULLET_HIT_R_MACHINE = 6;
 const CAKE_HIT_R_PLAYER = 12;
 
 const FIRE_COOLDOWN = 0.5;
-
-// ✅ Melee (ignores nose / dir)
-const MELEE_RANGE = 52; // pixels (center-to-center)
-const MELEE_COOLDOWN = 0.55; // seconds
-
 const RESPAWN_INVULN = 0.6;
 const CORNER_PAD = 80;
 
@@ -72,12 +65,15 @@ const MIN_SESSION_MIN = 1;
 const MAX_SESSION_MIN = 60;
 
 // ✅ Win modes
-const WIN_MODE_STANDARD = "standard"; // your current behavior
-const WIN_MODE_MONEY = "money"; // money wins when time ends
+const WIN_MODE_STANDARD = "standard";
+const WIN_MODE_MONEY = "money";
 
 // ✅ Mines
-const MINE_STEP_ON_TRIGGER_R = 32; // enemy-only trigger radius (default; upgrades may override)
-const MINE_BLAST_R = 180; // kills everyone inside
+const MINE_STEP_ON_TRIGGER_R = 32;
+const MINE_BLAST_R = 180;
+
+// ✅ Dash attack (“Rubber chicken”) collision rules
+const DASH_HIT_R_PLAYER = 18; // center-to-center hit radius while dashing
 
 // In-memory game store
 const games = Object.create(null);
@@ -154,6 +150,26 @@ function getMoveSpeed(player, nowMs) {
   return base * mult;
 }
 
+// ✅ Dash state helpers (robust to naming changes)
+function getDashUntilMs(player) {
+  const e = player?.effects;
+  if (!e) return 0;
+  if (Number.isFinite(e.dashUntilMs)) return e.dashUntilMs;
+  if (Number.isFinite(e.dashUntil)) return e.dashUntil;
+  if (Number.isFinite(e.dashEndsAt)) return e.dashEndsAt;
+  return 0;
+}
+function isDashing(player, nowMs) {
+  const until = getDashUntilMs(player);
+  return Number.isFinite(until) && nowMs < until;
+}
+function endDashNow(player, nowMs) {
+  upgrades.ensureEffectState(player);
+  player.effects.dashUntilMs = nowMs;
+  player.effects.dashUntil = nowMs;
+  player.effects.dashEndsAt = nowMs;
+}
+
 // --- Collision helpers (AABB)
 function aabbIntersects(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
@@ -189,7 +205,7 @@ function collidesAt(game, cx, cy) {
 
 function snapshotForGame(game) {
   const world = getWorldForGame(game);
-  const nowMs = Date.now(); // ✅ compute once per snapshot
+  const nowMs = Date.now();
 
   return {
     time: nowMs,
@@ -207,7 +223,7 @@ function snapshotForGame(game) {
           armed: Number.isFinite(m.armedAt) ? nowMs >= m.armedAt : true,
           triggerR: Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R,
           blastR: Number.isFinite(m.blastR) ? m.blastR : MINE_BLAST_R,
-          r: Number.isFinite(m.r) ? m.r : 26, // visual radius
+          r: Number.isFinite(m.r) ? m.r : 26,
         }))
       : [],
     bullets: Array.isArray(game.bullets)
@@ -248,14 +264,10 @@ function snapshotForGame(game) {
         nextMachineNum: p.nextMachineNum,
         money: typeof p.money === "number" ? p.money : 0,
         upgrades: { permanent: perm, slots: cons },
-
-        // ✅ NEW: upgrade/fx modifiers for client-side fog rendering
         mods,
-
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
-
         stats: {
           kills: p.stats?.kills || 0,
           deaths: p.stats?.deaths || 0,
@@ -319,35 +331,25 @@ function segmentHitAABB(x1, y1, x2, y2, rx, ry, rw, rh) {
 
   const EPS = 1e-12;
 
-  // X slab
   if (Math.abs(dx) < EPS) {
     if (x1 < minX || x1 > maxX) return null;
   } else {
     const inv = 1 / dx;
     let t1 = (minX - x1) * inv;
     let t2 = (maxX - x1) * inv;
-    if (t1 > t2) {
-      const tmp = t1;
-      t1 = t2;
-      t2 = tmp;
-    }
+    if (t1 > t2) [t1, t2] = [t2, t1];
     tmin = Math.max(tmin, t1);
     tmax = Math.min(tmax, t2);
     if (tmin > tmax) return null;
   }
 
-  // Y slab
   if (Math.abs(dy) < EPS) {
     if (y1 < minY || y1 > maxY) return null;
   } else {
     const inv = 1 / dy;
     let t1 = (minY - y1) * inv;
     let t2 = (maxY - y1) * inv;
-    if (t1 > t2) {
-      const tmp = t1;
-      t1 = t2;
-      t2 = tmp;
-    }
+    if (t1 > t2) [t1, t2] = [t2, t1];
     tmin = Math.max(tmin, t1);
     tmax = Math.min(tmax, t2);
     if (tmin > tmax) return null;
@@ -577,7 +579,6 @@ setInterval(() => {
     const game = games[code];
     if (!game || game.phase !== "running") continue;
 
-    // ✅ timed end check
     if (game.settings?.sessionMode === SESSION_TIMED && Number.isFinite(game.endAt) && now >= game.endAt) {
       endGame(io, game, "time");
       continue;
@@ -585,9 +586,11 @@ setInterval(() => {
 
     const world = getWorldForGame(game);
 
-    // ---- players move + shoot ----
+    // ---- players move + shoot + dash-hit ----
     for (const p of game.players.values()) {
       if (!p.alive) continue;
+
+      upgrades.ensureEffectState(p);
 
       const up = !!p.input?.up;
       const down = !!p.input?.down;
@@ -601,7 +604,19 @@ setInterval(() => {
       if (up) vy -= 1;
       if (down) vy += 1;
 
-      const len = Math.hypot(vx, vy);
+      let len = Math.hypot(vx, vy);
+
+      // ✅ If dashing and standing still: dash uses facing / stored dash dir
+      const dashing = isDashing(p, now);
+      if (dashing && len <= 1e-9) {
+        const dx = Number.isFinite(p.effects.dashDirX) ? p.effects.dashDirX : (Number.isFinite(p.dirX) ? p.dirX : 1);
+        const dy = Number.isFinite(p.effects.dashDirY) ? p.effects.dashDirY : (Number.isFinite(p.dirY) ? p.dirY : 0);
+        const dlen = Math.hypot(dx, dy) || 1;
+        vx = dx / dlen;
+        vy = dy / dlen;
+        len = 1;
+      }
+
       if (len > 0) {
         vx /= len;
         vy /= len;
@@ -609,28 +624,119 @@ setInterval(() => {
         p.dirY = vy;
       }
 
-      // ✅ NEW: speed from server-computed mods (perm + dash, etc.)
       const speed = getMoveSpeed(p, now);
 
-      const nextX = p.x + vx * speed * dt;
-      const nextY = p.y + vy * speed * dt;
+      const rawNextX = p.x + vx * speed * dt;
+      const rawNextY = p.y + vy * speed * dt;
 
       const minX = PLAYER_HALF;
       const minY = PLAYER_HALF;
       const maxX = world.w - PLAYER_HALF;
       const maxY = world.h - PLAYER_HALF;
 
+      // If dashing, boundary clamp ends dash
+      const clampedNextX = clamp(rawNextX, minX, maxX);
+      const clampedNextY = clamp(rawNextY, minY, maxY);
+      if (dashing && (clampedNextX !== rawNextX || clampedNextY !== rawNextY)) {
+        endDashNow(p, now);
+      }
+
       // slide: X then Y
-      let cx = clamp(nextX, minX, maxX);
+      let blockedX = false;
+      let blockedY = false;
+
+      let cx = clampedNextX;
       let cy = clamp(p.y, minY, maxY);
       if (!collidesAt(game, cx, cy)) p.x = cx;
+      else blockedX = true;
 
       cx = clamp(p.x, minX, maxX);
-      cy = clamp(nextY, minY, maxY);
+      cy = clampedNextY;
       if (!collidesAt(game, cx, cy)) p.y = cy;
+      else blockedY = true;
+
+      // If dashing, hitting any wall/machine ends dash immediately
+      if (dashing && (blockedX || blockedY)) {
+        endDashNow(p, now);
+      }
+
+      // ✅ Dash hit kills: dash ends when hitting a player; hit kills
+      // Run after movement so you can “ram” into them.
+      if (isDashing(p, now)) {
+        const r = DASH_HIT_R_PLAYER;
+        const r2 = r * r;
+
+        let victim = null;
+
+        for (const other of game.players.values()) {
+          if (!other || !other.alive) continue;
+          if (other.id === p.id) continue;
+
+          if (game.settings?.mode === GAME_MODE_TEAMS) {
+            const friendlyFire = !!game.settings?.friendlyFire;
+            if (!friendlyFire) {
+              const pt = p.teamId;
+              if (pt !== null && pt !== undefined && other.teamId === pt) continue;
+            }
+          }
+
+          if (Number.isFinite(other.invulnUntil) && now < other.invulnUntil) continue;
+
+          if (dist2(p.x, p.y, other.x, other.y) <= r2) {
+            victim = other;
+            break;
+          }
+        }
+
+        if (victim) {
+          // End dash on hit
+          endDashNow(p, now);
+
+          // Shield check
+          upgrades.ensureEffectState(victim);
+          if ((victim.effects.shield | 0) > 0) {
+            victim.effects.shield = (victim.effects.shield | 0) - 1;
+            victim.invulnUntil = now + 250;
+
+            io.to(code).emit("PLAYER_SHIELDED", {
+              playerId: victim.id,
+              by: p.id,
+              shieldLeft: victim.effects.shield | 0,
+            });
+          } else {
+            // stats
+            if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
+            p.stats.kills += 1;
+
+            if (!victim.stats) victim.stats = { kills: 0, deaths: 0, correct: 0 };
+            victim.stats.deaths += 1;
+
+            victim.killedByName = p.name || "Unknown";
+            victim.killedById = p.id;
+
+            victim.alive = false;
+            victim.input = { up: false, down: false, left: false, right: false, fire: false };
+            victim.fireCd = 0;
+            victim.cakes = 0;
+            victim.pendingPrompt = null;
+            victim.pendingUpgradeOffer = null;
+
+            const opts = buildRespawnOptions(game, victim);
+            victim.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
+
+            const targetSocket = victim.socketId || victim.id;
+
+            io.to(targetSocket).emit("RESPAWN_OPTIONS", {
+              killedBy: victim.killedByName || "Unknown",
+              options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
+            });
+
+            io.to(code).emit("PLAYER_DIED", { playerId: victim.id });
+          }
+        }
+      }
 
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
-      p.meleeCd = Math.max(0, (p.meleeCd || 0) - dt);
 
       const wantsFire = !!p.input?.fire;
       if (wantsFire && p.fireCd <= 0) {
@@ -650,11 +756,9 @@ setInterval(() => {
         const ndx = dx / dlen;
         const ndy = dy / dlen;
 
-        // Spawn slightly outside player
         let spawnX = p.x + ndx * (PLAYER_HALF + 6);
         let spawnY = p.y + ndy * (PLAYER_HALF + 6);
 
-        // Spawn safety: push forward if inside wall/machine
         const pushSteps = 6;
         const pushStepLen = 6;
         let okSpawn = true;
@@ -739,7 +843,6 @@ setInterval(() => {
         continue;
       }
 
-      // ✅ use bullet’s actual speed (supports special shots later)
       const bSpeed = Math.hypot(b.vx || 0, b.vy || 0) || BULLET_SPEED;
       const travel = bSpeed * dt;
 
@@ -756,14 +859,12 @@ setInterval(() => {
         const nextX = prevX + b.vx * stepDt;
         const nextY = prevY + b.vy * stepDt;
 
-        // arena bounds (note: bounds are 0..world.w/h, players are centered)
         if (nextX < 0 || nextX > world.w || nextY < 0 || nextY > world.h) {
           game.bullets.splice(i, 1);
           removed = true;
           break;
         }
 
-        // ✅ earliest wall/machine hit t
         let bestT = null;
 
         if (Array.isArray(game.map?.walls)) {
@@ -804,11 +905,9 @@ setInterval(() => {
           break;
         }
 
-        // move if no wall/machine hit
         b.x = nextX;
         b.y = nextY;
 
-        // player hit (segment sweep)
         let hitPlayer = null;
 
         for (const p of game.players.values()) {
@@ -844,11 +943,9 @@ setInterval(() => {
 
           const shooter = game.players.get(b.ownerId) || null;
 
-          // ✅ Shield handling (consumable/permanent effects may set p.effects.shield)
           upgrades.ensureEffectState(hitPlayer);
           if ((hitPlayer.effects.shield | 0) > 0) {
             hitPlayer.effects.shield = (hitPlayer.effects.shield | 0) - 1;
-            // brief invuln so you can “feel” the shield
             hitPlayer.invulnUntil = now + 250;
 
             io.to(code).emit("PLAYER_SHIELDED", {
@@ -859,7 +956,6 @@ setInterval(() => {
             break;
           }
 
-          // stats
           if (shooter) {
             if (!shooter.stats) shooter.stats = { kills: 0, deaths: 0, correct: 0 };
             shooter.stats.kills += 1;
@@ -867,7 +963,6 @@ setInterval(() => {
           if (!hitPlayer.stats) hitPlayer.stats = { kills: 0, deaths: 0, correct: 0 };
           hitPlayer.stats.deaths += 1;
 
-          // killed-by info
           hitPlayer.killedByName = shooter ? shooter.name : "Unknown";
           hitPlayer.killedById = shooter ? shooter.id : null;
 
@@ -911,13 +1006,11 @@ setInterval(() => {
         continue;
       }
 
-      // expire
       if (Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
         game.mines.splice(i, 1);
         continue;
       }
 
-      // not armed yet
       if (Number.isFinite(m.armedAt) && now < m.armedAt) continue;
 
       const triggerR = Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R;
@@ -926,16 +1019,12 @@ setInterval(() => {
       const triggerR2 = triggerR * triggerR;
       const blastR2 = blastR * blastR;
 
-      // Find an enemy inside trigger radius (allies cannot trigger)
       let triggeredBy = null;
 
       for (const p of game.players.values()) {
         if (!p || !p.alive) continue;
-
-        // owner never triggers their own mine
         if (p.id === m.ownerId) continue;
 
-        // allies cannot trigger (NO friendly trigger)
         if (game.settings?.mode === GAME_MODE_TEAMS) {
           const pt = p.teamId;
           const ot = m.ownerTeamId;
@@ -950,13 +1039,10 @@ setInterval(() => {
 
       if (!triggeredBy) continue;
 
-      // Explosion: kills EVERYONE in blast radius (including allies + owner)
       const deaths = [];
 
       for (const p of game.players.values()) {
         if (!p || !p.alive) continue;
-
-        // Note: invuln applies (dash invuln, respawn invuln, etc.)
         if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
 
         if (dist2(p.x, p.y, m.x, m.y) <= blastR2) {
@@ -964,17 +1050,14 @@ setInterval(() => {
         }
       }
 
-      // remove mine first (so it cannot chain-trigger twice)
       game.mines.splice(i, 1);
 
-      // apply deaths
       for (const victim of deaths) {
         if (!victim || !victim.alive) continue;
 
         victim.alive = false;
         victim.input = { up: false, down: false, left: false, right: false, fire: false };
         victim.fireCd = 0;
-        victim.meleeCd = 0;
         victim.cakes = 0;
         victim.pendingPrompt = null;
         victim.pendingUpgradeOffer = null;
@@ -982,7 +1065,6 @@ setInterval(() => {
         if (!victim.stats) victim.stats = { kills: 0, deaths: 0, correct: 0 };
         victim.stats.deaths += 1;
 
-        // attribution (optional): say mine owner killed them
         const owner = game.players.get(m.ownerId) || null;
         victim.killedByName = owner ? owner.name : "Mine";
         victim.killedById = owner ? owner.id : null;
@@ -993,7 +1075,6 @@ setInterval(() => {
           createdAt: now,
         };
 
-        // ✅ FIX: emit to socketId OR fallback to player id (socket.id == player.id)
         const targetSocket = victim.socketId || victim.id;
 
         io.to(targetSocket).emit("RESPAWN_OPTIONS", {
@@ -1007,11 +1088,8 @@ setInterval(() => {
 
         io.to(code).emit("PLAYER_DIED", { playerId: victim.id });
       }
-
-      // optional fx event for client particles/sound
     }
 
-    // economy + broadcast
     economy.tryCollectPickups(game);
     io.to(code).emit("STATE_SNAPSHOT", snapshotForGame(game));
   }
@@ -1078,7 +1156,7 @@ io.on("connection", (socket) => {
       map: null,
       players: new Map(),
       pickups: [],
-      mines: [], // ✅ mines live here
+      mines: [],
       bullets: [],
       upgradePool: null,
 
@@ -1112,7 +1190,6 @@ io.on("connection", (socket) => {
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
-      meleeCd: 0,
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
@@ -1180,7 +1257,6 @@ io.on("connection", (socket) => {
       alive: true,
       invulnUntil: 0,
       fireCd: 0,
-      meleeCd: 0,
       pendingRespawn: null,
 
       cakes: MAX_CAKES,
@@ -1292,12 +1368,14 @@ io.on("connection", (socket) => {
       upgrades.ensureEffectState(p);
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
 
-      if (!Number.isFinite(p.fireCd)) p.fireCd = 0;
-      if (!Number.isFinite(p.meleeCd)) p.meleeCd = 0;
+      // clear dash dir on start
+      p.effects.dashDirX = 0;
+      p.effects.dashDirY = 0;
+      endDashNow(p, Date.now());
     }
 
     game.pickups = [];
-    game.mines = []; // ✅ reset mines
+    game.mines = [];
     game.bullets = [];
 
     game.phase = "running";
@@ -1346,106 +1424,6 @@ io.on("connection", (socket) => {
       right: !!payload.right,
       fire: !!payload.fire,
     };
-  });
-
-  // ✅ Melee (ignores nose/dir; 360° hit)
-  socket.on("melee", () => {
-    const code = session.gameCode;
-    if (!code) return;
-
-    const game = games[code];
-    if (!game || game.phase !== "running") return;
-
-    const attacker = game.players.get(session.playerId);
-    if (!attacker || !attacker.alive) return;
-
-    if (attacker.pendingPrompt) return;
-    if (attacker.pendingUpgradeOffer) return;
-
-    if ((attacker.meleeCd || 0) > 0) return;
-    attacker.meleeCd = MELEE_COOLDOWN;
-
-    const now = Date.now();
-
-    const r2 = MELEE_RANGE * MELEE_RANGE;
-    let best = null;
-    let bestD2 = Infinity;
-
-    for (const p of game.players.values()) {
-      if (!p || !p.alive) continue;
-      if (p.id === attacker.id) continue;
-
-      // teams: respect friendlyFire toggle
-      if (game.settings?.mode === GAME_MODE_TEAMS) {
-        const friendlyFire = !!game.settings?.friendlyFire;
-        if (!friendlyFire) {
-          const at = attacker.teamId;
-          if (at !== null && at !== undefined && p.teamId === at) continue;
-        }
-      }
-
-      if (Number.isFinite(p.invulnUntil) && now < p.invulnUntil) continue;
-
-      const d2 = dist2(attacker.x, attacker.y, p.x, p.y);
-      if (d2 <= r2 && d2 < bestD2) {
-        best = p;
-        bestD2 = d2;
-      }
-    }
-
-    if (!best) return;
-
-    // shield check
-    upgrades.ensureEffectState(best);
-    if ((best.effects.shield | 0) > 0) {
-      best.effects.shield = (best.effects.shield | 0) - 1;
-      best.invulnUntil = now + 250;
-
-      io.to(code).emit("PLAYER_SHIELDED", {
-        playerId: best.id,
-        by: attacker.id,
-        shieldLeft: best.effects.shield | 0,
-      });
-      return;
-    }
-
-    // kill target (same style as bullet kill)
-    if (!attacker.stats) attacker.stats = { kills: 0, deaths: 0, correct: 0 };
-    attacker.stats.kills += 1;
-
-    if (!best.stats) best.stats = { kills: 0, deaths: 0, correct: 0 };
-    best.stats.deaths += 1;
-
-    best.killedByName = attacker.name || "Unknown";
-    best.killedById = attacker.id;
-
-    best.alive = false;
-    best.input = { up: false, down: false, left: false, right: false, fire: false };
-    best.fireCd = 0;
-    best.meleeCd = 0;
-    best.cakes = 0;
-    best.pendingPrompt = null;
-    best.pendingUpgradeOffer = null;
-
-    const opts = buildRespawnOptions(game, best);
-    best.pendingRespawn = {
-      options: opts.map((o) => o.id),
-      createdAt: now,
-    };
-
-    // ✅ send to socketId OR fallback to player id
-    const targetSocket = best.socketId || best.id;
-
-    io.to(targetSocket).emit("RESPAWN_OPTIONS", {
-      killedBy: best.killedByName || "Unknown",
-      options: opts.map((o) => ({
-        id: o.id,
-        label: o.label,
-        kind: o.kind,
-      })),
-    });
-
-    io.to(code).emit("PLAYER_DIED", { playerId: best.id });
   });
 
   socket.on("tryInteract", () => {
@@ -1533,7 +1511,6 @@ io.on("connection", (socket) => {
 
       economy.awardCorrectAnswer(game, p.id);
 
-      // ✅ End condition: machine 10 solved
       if (pending.machineNum === 10) {
         endGame(io, game, "machine10", { winnerId: p.id, winnerName: p.name });
         return;
@@ -1729,20 +1706,16 @@ io.on("connection", (socket) => {
       return socket.emit("UPGRADE_USED", { ok: false, reason: "not_enough_money", need: useCost });
     }
 
-    // charge
     p.money -= useCost;
 
-    // apply effect (server-authoritative)
     const nowMs = Date.now();
     const res = upgrades.applyConsumableUse(p, s.id, { nowMs });
 
     if (!res.ok) {
-      // refund if effect cannot be applied
       p.money += useCost;
       return socket.emit("UPGRADE_USED", { ok: false, reason: res.reason || "use_failed" });
     }
 
-    // apply actions
     if (Array.isArray(res.actions)) {
       for (const a of res.actions) {
         if (!a || typeof a.type !== "string") continue;
@@ -1750,6 +1723,27 @@ io.on("connection", (socket) => {
         if (a.type === "set_invuln_until") {
           const untilMs = Number(a.untilMs);
           if (Number.isFinite(untilMs)) p.invulnUntil = Math.max(p.invulnUntil || 0, untilMs);
+        }
+
+        // ✅ Dash actions (support multiple naming styles)
+        if (a.type === "set_dash_until" || a.type === "start_dash" || a.type === "dash") {
+          const untilMs =
+            Number.isFinite(Number(a.untilMs)) ? Number(a.untilMs) :
+            (Number.isFinite(Number(a.endsAtMs)) ? Number(a.endsAtMs) :
+            (Number.isFinite(Number(a.dashUntilMs)) ? Number(a.dashUntilMs) : null));
+
+          if (Number.isFinite(untilMs)) {
+            p.effects.dashUntilMs = untilMs;
+            p.effects.dashUntil = untilMs;
+            p.effects.dashEndsAt = untilMs;
+
+            // capture dash direction from current facing (so standing still still dashes)
+            const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+            const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+            const dlen = Math.hypot(dx, dy) || 1;
+            p.effects.dashDirX = dx / dlen;
+            p.effects.dashDirY = dy / dlen;
+          }
         }
 
         if (a.type === "spawn_mine_at_player") {
@@ -1766,7 +1760,7 @@ io.on("connection", (socket) => {
             x: p.x,
             y: p.y,
 
-            r: Number.isFinite(params.radius) ? params.radius : 26, // visual radius
+            r: Number.isFinite(params.radius) ? params.radius : 26,
 
             triggerR: Number.isFinite(params.triggerRadius) ? params.triggerRadius : MINE_STEP_ON_TRIGGER_R,
             blastR: Number.isFinite(params.blastRadius) ? params.blastRadius : MINE_BLAST_R,
@@ -1777,8 +1771,6 @@ io.on("connection", (socket) => {
 
           game.mines.push(mine);
         }
-
-        // Other action types (banana_shot etc.) will be wired later.
       }
     }
 
@@ -1830,7 +1822,6 @@ io.on("connection", (socket) => {
 
     p.input = { up: false, down: false, left: false, right: false, fire: false };
     p.fireCd = 0;
-    p.meleeCd = 0;
     p.cakes = MAX_CAKES;
 
     p.pendingPrompt = null;
@@ -1839,6 +1830,11 @@ io.on("connection", (socket) => {
 
     p.killedByName = null;
     p.killedById = null;
+
+    upgrades.ensureEffectState(p);
+    endDashNow(p, Date.now());
+    p.effects.dashDirX = 0;
+    p.effects.dashDirY = 0;
 
     socket.emit("RESPAWN_RESULT", { ok: true });
   });
