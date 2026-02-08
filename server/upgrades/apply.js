@@ -23,6 +23,12 @@
 //   - speedMult: multiplier
 //   - visionLenAdd: pixels (additive)
 //   - fovAddDeg: degrees (additive)
+//
+// CHANGE in this version:
+// - big_eyes and giraffoscope are now driven via definitions.js `effect` (NOT hardcoded mapping here).
+// - So: remove explicit mapping constants and logic.
+// - Keep XL Shoes via speed_mult.
+// - Support optional fov_add and vision_len_add effects for permanents.
 
 let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
@@ -218,12 +224,6 @@ function applyConsumableReplace(player, upgradeId, dropId) {
  * EFFECTS PHASE HELPERS
  * ------------------------------------------------------------------ */
 
-// ✅ Giraffoscope: +80px fog cone length per stack
-const VISION_LEN_PER_STACK = 80;
-
-// ✅ Big Eyes: widen fog cone angle by +10 degrees per stack
-const BIG_EYES_FOV_ADD_DEG_PER_STACK = 10;
-
 // Compute deterministic modifiers from permanents + temp effects.
 // 🔒 Protocol wants ONLY: { speedMult, visionLenAdd, fovAddDeg }
 function computePlayerMods(player, nowMs) {
@@ -236,7 +236,11 @@ function computePlayerMods(player, nowMs) {
   let fovAddDeg = 0.0;
   let visionLenAdd = 0;
 
-  // 1) Optional schema support from definitions.js (permanent effects)
+  // Permanent effects from definitions.js (generic, data-driven)
+  // Supported:
+  // - speed_mult: multiply speed (stacking multiplicatively)
+  // - fov_add: add degrees to FOV (stacking additively)
+  // - vision_len_add: add pixels to vision length (stacking additively)
   for (const slot of player.upgrades.permSlots) {
     const id = String(slot?.id || "");
     const countRaw = Number.isFinite(slot?.count) ? slot.count : 1;
@@ -246,6 +250,7 @@ function computePlayerMods(player, nowMs) {
     const eff = up?.effect;
     if (!eff || up?.kind !== "permanent") continue;
 
+    // speed multiplier stacks multiplicatively
     if (eff.type === "speed_mult") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
@@ -253,29 +258,30 @@ function computePlayerMods(player, nowMs) {
       speedMult *= Math.pow(per, c);
     }
 
+    // fov add stacks additively
     if (eff.type === "fov_add") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
       const addDegPerStack = Number.isFinite(eff.addDegPerStack) ? eff.addDegPerStack : 0;
       fovAddDeg += addDegPerStack * c;
     }
+
+    // vision length add stacks additively (pixels)
+    if (eff.type === "vision_len_add") {
+      const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
+      const c = Math.min(count, maxStacks);
+      const addPxPerStack = Number.isFinite(eff.addPxPerStack) ? eff.addPxPerStack : 0;
+      visionLenAdd += addPxPerStack * c;
+    }
   }
 
-  // 2) Explicit mapping: giraffoscope -> vision length add (pixels)
-  const giraffeStacks = getPermCount(player, "giraffoscope");
-  if (giraffeStacks > 0) visionLenAdd += giraffeStacks * VISION_LEN_PER_STACK;
-
-  // 3) Explicit mapping: big_eyes -> fov add (degrees)
-  const bigEyesStacks = getPermCount(player, "big_eyes");
-  if (bigEyesStacks > 0) fovAddDeg += bigEyesStacks * BIG_EYES_FOV_ADD_DEG_PER_STACK;
-
-  // 4) Temporary dash effect (speed only)
+  // Temporary dash effect (speed only)
   const dash = player.effects.dash;
   if (dash && Number.isFinite(dash.untilMs) && now < dash.untilMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
-  // clamps
+  // clamps (keep sane, and keep within client max logic too)
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
@@ -309,7 +315,7 @@ function applyConsumableUse(player, upgradeId, ctx) {
     }
 
     case "dash": {
-      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 0.6; // default longer
+      const durSec = Number.isFinite(eff.durationSec) ? eff.durationSec : 0.6;
       const speedMult = Number.isFinite(eff.dashSpeedMult) ? eff.dashSpeedMult : 2.2;
       const invulnDuring = !!eff.invulnDuring;
 
@@ -408,4 +414,5 @@ module.exports = {
   canTakeUpgrade,
   hasConsumable,
   findPermanentSlot,
+  getPermCount,
 };
