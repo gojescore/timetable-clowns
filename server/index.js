@@ -71,7 +71,7 @@ const WIN_MODE_STANDARD = "standard"; // your current behavior
 const WIN_MODE_MONEY = "money"; // money wins when time ends
 
 // ✅ Mines
-const MINE_STEP_ON_TRIGGER_R = 32; // enemy-only trigger radius
+const MINE_STEP_ON_TRIGGER_R = 32; // enemy-only trigger radius (default; upgrades may override)
 const MINE_BLAST_R = 180; // kills everyone inside
 
 // In-memory game store
@@ -963,6 +963,8 @@ setInterval(() => {
 
       // apply deaths
       for (const victim of deaths) {
+        if (!victim || !victim.alive) continue;
+
         victim.alive = false;
         victim.input = { up: false, down: false, left: false, right: false, fire: false };
         victim.fireCd = 0;
@@ -984,7 +986,10 @@ setInterval(() => {
           createdAt: now,
         };
 
-        io.to(victim.socketId).emit("RESPAWN_OPTIONS", {
+        // ✅ FIX: emit to socketId OR fallback to player id (socket.id == player.id)
+        const targetSocket = victim.socketId || victim.id;
+
+        io.to(targetSocket).emit("RESPAWN_OPTIONS", {
           killedBy: victim.killedByName || "Mine",
           options: opts.map((o) => ({
             id: o.id,
@@ -997,7 +1002,6 @@ setInterval(() => {
       }
 
       // optional fx event for client particles/sound
-
     }
 
     // economy + broadcast
@@ -1660,8 +1664,6 @@ io.on("connection", (socket) => {
           };
 
           game.mines.push(mine);
-
-
         }
 
         // Other action types (banana_shot etc.) will be wired later.
