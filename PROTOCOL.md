@@ -122,6 +122,32 @@ Examples:
 - Big Eyes
 - Giraffoscope
 
+  1) Protocol update (PROTOCOL.md)
+
+Add this under 2.4 Upgrades → Permanent upgrades (or as its own sub-section):
+
+Big Nose (disposable permanent)
+
+Kind: permanent (passive)
+
+Limit: max 1 Big Nose at a time (cannot stack)
+
+Acquire rule: can only be obtained via UPGRADE_OFFER after a correct machine answer
+
+Cost: acquireCost is paid on selection
+
+Effect: grants +1 life as a single shield charge
+
+Trigger: when a lethal hit would kill the player, Big Nose blocks the kill once
+
+Consumption: after blocking, Big Nose is removed immediately
+
+Rebuy: player must answer another machine correctly to see offers again and may buy Big Nose again
+
+Also add one line under the 🔒 mods rule:
+
+Big Nose is not a mods thing (not speed/FOV/vision). It is a server combat rule.
+
 ---------------------------------------------------------------------
 
 ### 4.2 Consumable upgrades
