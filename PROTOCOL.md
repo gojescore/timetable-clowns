@@ -1,6 +1,6 @@
 # Timetable Clowns — Protocol (Single Source of Truth)
 
-This file is the canonical reference for **rules, architecture, and networking contracts**
+This file is the canonical reference for rules, architecture, and networking contracts
 for the Timetable Clowns project.
 
 When starting a NEW chat thread, paste ALL THREE:
@@ -114,7 +114,7 @@ Upgrades are **data + effects**, but gameplay impact is always server-computed.
 - Purchased immediately
 - Money paid on selection (`acquireCost`)
 - Stored permanently
-- Stackable
+- Stackable unless explicitly stated otherwise
 - Max **3 different permanent types**
 
 Examples:
@@ -122,31 +122,41 @@ Examples:
 - Big Eyes
 - Giraffoscope
 
-  1) Protocol update (PROTOCOL.md)
+---
 
-Add this under 2.4 Upgrades → Permanent upgrades (or as its own sub-section):
+### 4.1.1 Big Nose (disposable permanent)
 
-Big Nose (disposable permanent)
+Big Nose is a **special permanent upgrade**.
 
-Kind: permanent (passive)
+- Kind: `permanent`
+- Stackable: ❌ no
+- Limit: **max 1 Big Nose at a time**
+- Acquire rule:
+  - only available via `UPGRADE_OFFER`
+  - only after a correct machine answer
+- Cost: `acquireCost` paid on selection
 
-Limit: max 1 Big Nose at a time (cannot stack)
+Effect:
+- Grants **one shield charge**
+- When a **lethal cake projectile hit** would kill the player:
+  - the hit is blocked
+  - the player survives
+  - knockback may be applied (server rule)
+- Big Nose is **consumed immediately** after blocking
 
-Acquire rule: can only be obtained via UPGRADE_OFFER after a correct machine answer
+Restrictions:
+- Only triggers on **cake projectile hits**
+- Does NOT trigger on:
+  - mines
+  - melee
+  - environmental effects
 
-Cost: acquireCost is paid on selection
+Rebuy:
+- Player must answer another machine correctly
+- Big Nose may then appear again in future offers
 
-Effect: grants +1 life as a single shield charge
-
-Trigger: when a lethal hit would kill the player, Big Nose blocks the kill once
-
-Consumption: after blocking, Big Nose is removed immediately
-
-Rebuy: player must answer another machine correctly to see offers again and may buy Big Nose again
-
-Also add one line under the 🔒 mods rule:
-
-Big Nose is not a mods thing (not speed/FOV/vision). It is a server combat rule.
+⚠️ Big Nose is **NOT** part of `player.mods`
+It is a **server-side combat rule**, not a stat modifier.
 
 ---------------------------------------------------------------------
 
@@ -162,14 +172,12 @@ Big Nose is not a mods thing (not speed/FOV/vision). It is a server combat rule.
 - Max 3 at a time
 
 If slots are full:
-```
 UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }
-```
+
 
 Client must run replace flow and respond with:
-```
 chooseUpgradeReplace { offerId, upgradeId, dropId }
-```
+
 
 ---------------------------------------------------------------------
 
@@ -184,220 +192,66 @@ Server validates:
 - sufficient money
 
 Server emits:
-```
 UPGRADE_USED { ok:true, paid, used, money }
-```
+
 
 ---------------------------------------------------------------------
 
 ## 5) Mods (gameplay modifiers) — 🔒 LOCKED CONTRACT
 
-### Purpose
+The server is the ONLY authority that converts upgrades into gameplay modifiers.
 
-The server is the ONLY authority that converts:
-- upgrades
-- effects
-- statuses
-
-into gameplay modifiers.
-
-The client must NEVER derive gameplay effects from upgrades.
-
----------------------------------------------------------------------
-
-### Snapshot contract
-
-Every player in `STATE_SNAPSHOT.players[]` includes:
-
-```
+Snapshot contract:
 mods: {
-  speedMult: number,
-  visionLenAdd: number,
-  fovAddDeg: number
+speedMult,
+visionLenAdd,
+fovAddDeg
 }
-```
 
-Defaults:
-- `speedMult = 1.0`
-- `visionLenAdd = 0`
-- `fovAddDeg = 0`
 
----------------------------------------------------------------------
-
-### Meaning
-
-- `speedMult`  
-  Multiplier applied to base movement speed
-
-- `visionLenAdd`  
-  Pixels added to base fog-of-war vision length
-
-- `fovAddDeg`  
-  Degrees added to base fog cone angle
-
----------------------------------------------------------------------
-
-### Client rules
-
-Movement:
-- Server authoritative
-- Client must NOT scale speed
-
-Fog-of-war:
-```
-visionLen = BASE_VISION_LEN + mods.visionLenAdd
-coneDeg   = CONE_ANGLE_BASE_DEG + mods.fovAddDeg
-```
-
-Robustness:
-- Missing mods → defaults
-- Never recompute from upgrades
+Client must NEVER derive mods from upgrades.
 
 ---------------------------------------------------------------------
 
 ## 6) Combat, death, and respawn
 
-### Shooting
-
-- Players shoot cakes while holding fire
-- Server authoritative for:
-  - projectiles
-  - collisions
-  - damage
-  - death
-
-Shooting blocked if:
-- math prompt open
-- upgrade offer open
-
----------------------------------------------------------------------
-
-### Death
+- Shooting, collisions, damage, death are server authoritative
 
 On death:
 - `alive = false`
 - Server emits:
   - `PLAYER_DIED`
-  - `RESPAWN_OPTIONS` (to dead player only)
+  - `RESPAWN_OPTIONS`
 
----------------------------------------------------------------------
-
-### Respawn
-
-Available respawn locations:
-- corners (always)
-- cleared machines (player-specific)
-
-Rules:
-- Respawn UI is **mandatory**
-- No close / cancel option
-- Player must choose a spawn
-
-On respawn:
-- `alive = true`
-- `invulnUntil` set
-
-Client behavior:
-- blink effect
-- invulnerability HUD indicator
+Respawn:
+- Mandatory selection
+- No cancel / close
+- Corners + cleared machines
 
 ---------------------------------------------------------------------
 
 ## 7) Sessions and game end
 
-### Standard session
-- Ends when Machine 10 is solved
-```
+Standard:
 GAME_ENDED { reason:"machine10" }
-```
 
-### Timed session
-- Server sets `endAt`
-- Included in:
-  - `GAME_STARTED`
-  - `STATE_SNAPSHOT`
-- Ends when time expires
-```
+
+Timed:
 GAME_ENDED { reason:"time" }
-```
+
 
 ---------------------------------------------------------------------
 
-## 8) Win modes
-
-### Standard
-Priority:
-1) correct
-2) kills
-3) money
-4) deaths (ascending)
-
-### Money
-Priority:
-1) money
-2) correct
-3) kills
-4) deaths
-
-FFA → top player  
-Teams → aggregated team totals
-
----------------------------------------------------------------------
-
-## 9) End screen UX
+## 8) End screen UX
 
 - Large end modal
 - Big winner banner
-- Winning team emphasized
 - Leaderboard shown
 - **Only option:** Back to lobby (reload)
 
 ---------------------------------------------------------------------
 
-## 10) Networking (Socket.IO)
-
-### Client → Server
-
-- hello
-- createGame
-- joinGame
-- assignTeam
-- startGame
-- input
-- tryInteract
-- submitAnswer
-- chooseUpgrade
-- declineUpgrade
-- chooseUpgradeReplace
-- useUpgradeSlot
-- chooseRespawn
-
----------------------------------------------------------------------
-
-### Server → Client
-
-- WELCOME
-- GAME_CREATED
-- JOIN_SUCCESS
-- JOIN_FAILED
-- LOBBY_UPDATE
-- GAME_STARTED
-- STATE_SNAPSHOT
-- MATH_PROMPT
-- ANSWER_RESULT
-- INTERACT_DENIED
-- UPGRADE_OFFER
-- UPGRADE_RESULT
-- UPGRADE_DECLINED
-- UPGRADE_USED
-- PLAYER_DIED
-- RESPAWN_OPTIONS
-- RESPAWN_RESULT
-- GAME_ENDED
-
----------------------------------------------------------------------
-
-## 11) Authoritative server model — 🔒 FINAL
+## 9) Authoritative server model — 🔒 FINAL
 
 Server owns:
 - movement
