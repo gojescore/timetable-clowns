@@ -117,6 +117,35 @@ const UPGRADES = [
   desc: "Blocks ONE lethal cake shot, then falls off. (Bullets only)",
 },
 
+  {
+  id: "jack_in_the_box",
+  name: "Jack in the Box",
+  kind: "consumable",
+  useCost: 150,
+  desc: "Place a JackBox that reveals fog in an area for the rest of the match.",
+  effect: {
+    type: "jack_box_reveal",
+    revealRadius: 260,   // tweak
+    ttlSec: 999999,      // “throughout the game” (we can also treat as infinite)
+    maxActivePerPlayer: 1, // prevents spam; optional but recommended
+  },
+},
+
+{
+  id: "balloon",
+  name: "Balloon",
+  kind: "consumable",
+  useCost: 150,
+  desc: "Float through walls briefly. If you end inside a wall, you die.",
+  effect: {
+    type: "balloon_phase",
+    preStunSec: 0.5,
+    phaseSec: 2.0,
+    postStunSec: 0.5,
+  },
+},
+
+
 ];
 
 function getUpgradeById(id) {
