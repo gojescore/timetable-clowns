@@ -13,7 +13,7 @@
 //
 // Effects phase:
 // - computePlayerMods(player): deterministic modifiers from permanents + temp effects.
-// - ensureEffectState(player): stores temp states like dash/shield.
+// - ensureEffectState(player): stores temp states like dash/shield/balloon.
 // - applyConsumableUse(player, upgradeId, ctx): returns "actions" for server to apply.
 //
 // 🔒 LOCKED CONTRACT (PROTOCOL):
@@ -26,14 +26,12 @@
 //
 // CHANGE in this version:
 // - big_eyes and giraffoscope are now driven via definitions.js `effect` (NOT hardcoded mapping here).
-// - So: remove explicit mapping constants and logic.
 // - Keep XL Shoes via speed_mult.
 // - Support optional fov_add and vision_len_add effects for permanents.
 //
 // ✅ FIX in this version (requested):
 // - Big Nose must NOT stack / no duplicates.
 //   If player already has big_nose, selecting it returns { ok:false, reason:"already_have" }.
-//   (So your server/index.js bullet-saver can consume it once.)
 
 let C = { MAX_PERM_SLOTS: 3, MAX_CONS_SLOTS: 3 };
 try {
@@ -67,12 +65,24 @@ function ensureEffectState(player) {
     player.effects = {
       // dash: { untilMs, speedMult, cooldownUntilMs, invulnDuring, dirX, dirY }
       dash: null,
+
       // shield points: blocks a death (server decides how)
       shield: 0,
+
+      // ✅ balloon phase (server enforces walls + stun windows)
+      // balloon: {
+      //   stage: "pre" | "phase" | "post",
+      //   untilMs: number,
+      //   preUntilMs: number,
+      //   phaseUntilMs: number,
+      //   postUntilMs: number
+      // }
+      balloon: null,
     };
   }
   if (typeof player.effects.shield !== "number") player.effects.shield = 0;
   // dash can be null or an object; leave as-is
+  // balloon can be null or an object; leave as-is
 }
 
 function getUpgradeByIdSafe(id) {
@@ -304,6 +314,9 @@ function computePlayerMods(player, nowMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
+  // ✅ Balloon does NOT change mods in the locked contract.
+  // (Wall phasing / stun is enforced in server/index.js via effect state + collision rules.)
+
   // clamps (keep sane, and keep within client max logic too)
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
@@ -400,6 +413,57 @@ function applyConsumableUse(player, upgradeId, ctx) {
         },
       });
       return { ok: true, actions };
+    }
+
+    // ✅ NEW: Jack in the Box (fog revealer)
+    // Server will create a persistent world object (jack box) that reveals fog.
+    case "jack_box_reveal": {
+      actions.push({
+        type: "spawn_jack_box_at_player",
+        upgradeId: up.id,
+        params: {
+          revealRadius: Number.isFinite(eff.revealRadius) ? eff.revealRadius : 260,
+          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 999999,
+          maxActivePerPlayer: Number.isFinite(eff.maxActivePerPlayer) ? eff.maxActivePerPlayer : 1,
+        },
+      });
+      return { ok: true, actions };
+    }
+
+    // ✅ NEW: Balloon (wall phase with stun windows)
+    // This sets server-owned timers in player.effects.balloon.
+    // Server/index.js must:
+    // - during PRE/POST: block movement input (stun)
+    // - during PHASE: ignore wall collisions
+    // - at PHASE end: if overlapping a wall => kill player
+    case "balloon_phase": {
+      const preSec = Number.isFinite(eff.preStunSec) ? eff.preStunSec : 0.5;
+      const phaseSec = Number.isFinite(eff.phaseSec) ? eff.phaseSec : 2.0;
+      const postSec = Number.isFinite(eff.postStunSec) ? eff.postStunSec : 0.5;
+
+      const preUntilMs = now + Math.floor(preSec * 1000);
+      const phaseUntilMs = preUntilMs + Math.floor(phaseSec * 1000);
+      const postUntilMs = phaseUntilMs + Math.floor(postSec * 1000);
+
+      player.effects.balloon = {
+        stage: "pre",
+        untilMs: postUntilMs,
+        preUntilMs,
+        phaseUntilMs,
+        postUntilMs,
+      };
+
+      actions.push({
+        type: "start_balloon_phase",
+        upgradeId: up.id,
+        params: {
+          preUntilMs,
+          phaseUntilMs,
+          postUntilMs,
+        },
+      });
+
+      return { ok: true, actions, changed: { balloonUntil: postUntilMs } };
     }
 
     default:
