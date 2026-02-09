@@ -86,6 +86,12 @@ const BANANA_KIND = "banana";
 const BANANA_DEFAULT_BOUNCES = 5; // allowed bounces; disappears on the 6th wall hit
 const BANANA_STICK_NUDGE = 0.5; // px nudge after bounce to avoid re-hitting same wall
 
+// ✅ Jack in the Box (fog reveal object)
+const JACK_BOX_HALF = 14; // used for optional collision, and debug sizing
+const JACK_BOX_DEFAULT_TTL_SEC = 999999;
+const JACK_BOX_DEFAULT_REVEAL_R = 260;
+const JACK_BOX_DEFAULT_MAX_ACTIVE = 1;
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -294,6 +300,18 @@ function snapshotForGame(game) {
           r: Number.isFinite(m.r) ? m.r : 26,
         }))
       : [],
+    // ✅ Jack boxes (fog reveal objects)
+    jackBoxes: Array.isArray(game.jackBoxes)
+      ? game.jackBoxes.map((j) => ({
+          id: j.id,
+          ownerId: j.ownerId,
+          ownerTeamId: j.ownerTeamId,
+          x: j.x,
+          y: j.y,
+          revealR: Number.isFinite(j.revealR) ? j.revealR : JACK_BOX_DEFAULT_REVEAL_R,
+          expiresAt: Number.isFinite(j.expiresAt) ? j.expiresAt : null,
+        }))
+      : [],
     bullets: Array.isArray(game.bullets)
       ? game.bullets.map((b) => ({
           id: b.id,
@@ -337,6 +355,13 @@ function snapshotForGame(game) {
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
+        // ✅ expose balloon stage for UI if you want (optional/safe)
+        balloon: p.effects?.balloon
+          ? {
+              stage: p.effects.balloon.stage || null,
+              untilMs: Number.isFinite(p.effects.balloon.untilMs) ? p.effects.balloon.untilMs : null,
+            }
+          : null,
         stats: {
           kills: p.stats?.kills || 0,
           deaths: p.stats?.deaths || 0,
@@ -450,6 +475,9 @@ function makeBulletId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 function makeMineId() {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+function makeJackBoxId() {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
@@ -646,6 +674,7 @@ function resetGameToLobby(game) {
   game.pickups = [];
   game.mines = [];
   game.bullets = [];
+  game.jackBoxes = [];
 
   // clear match timers
   game.startedAt = null;
@@ -679,6 +708,7 @@ function resetGameToLobby(game) {
     upgrades.ensureUpgradeState(p);
     upgrades.ensureEffectState(p);
     p.effects.dash = null;
+    p.effects.balloon = null;
 
     // reset money + stats for a new match (change if you want persistence)
     p.money = 100;
@@ -721,13 +751,96 @@ setInterval(() => {
 
     const world = getWorldForGame(game);
 
+    // ✅ Jack boxes TTL cleanup
+    if (!Array.isArray(game.jackBoxes)) game.jackBoxes = [];
+    for (let j = game.jackBoxes.length - 1; j >= 0; j--) {
+      const box = game.jackBoxes[j];
+      if (!box) {
+        game.jackBoxes.splice(j, 1);
+        continue;
+      }
+      if (Number.isFinite(box.expiresAt) && now >= box.expiresAt) {
+        game.jackBoxes.splice(j, 1);
+        continue;
+      }
+    }
+
     // ---- players move + shoot + dash-hit ----
     for (const p of game.players.values()) {
       if (!p.alive) continue;
 
       upgrades.ensureEffectState(p);
 
-      const dashing = isDashing(p, now);
+      // ✅ BALLOON enforcement
+      // Stages:
+      // - pre: stun (no move, no shoot)
+      // - phase: no wall/machine collision
+      // - post: stun (no move, no shoot)
+      // When phase ends -> if inside wall/machine => die immediately
+      let balloonStage = null;
+      const bs = p.effects.balloon;
+      if (
+        bs &&
+        Number.isFinite(bs.preUntilMs) &&
+        Number.isFinite(bs.phaseUntilMs) &&
+        Number.isFinite(bs.postUntilMs)
+      ) {
+        const prevStage = bs.stage || null;
+
+        if (now < bs.preUntilMs) balloonStage = "pre";
+        else if (now < bs.phaseUntilMs) balloonStage = "phase";
+        else if (now < bs.postUntilMs) balloonStage = "post";
+        else balloonStage = null;
+
+        bs.stage = balloonStage;
+
+        // Transition: phase -> post = check if ended inside wall/machine => die
+        if (prevStage === "phase" && balloonStage === "post") {
+          if (collidesAt(game, p.x, p.y)) {
+            // die immediately
+            if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
+            p.stats.deaths += 1;
+
+            p.killedByName = "Wall";
+            p.killedById = null;
+
+            p.alive = false;
+            p.input = { up: false, down: false, left: false, right: false, fire: false };
+            p.fireCd = 0;
+            p.cakes = 0;
+            p.pendingPrompt = null;
+            p.pendingUpgradeOffer = null;
+
+            const opts = buildRespawnOptions(game, p);
+            p.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
+
+            const targetSocket = p.socketId || p.id;
+
+            io.to(targetSocket).emit("RESPAWN_OPTIONS", {
+              killedBy: p.killedByName || "Wall",
+              options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
+            });
+
+            io.to(code).emit("PLAYER_DIED", { playerId: p.id });
+
+            // stop processing this player further this tick
+            continue;
+          }
+        }
+
+        // End effect after post
+        if (!balloonStage) {
+          p.effects.balloon = null;
+        }
+      }
+
+      const stunnedByBalloon = balloonStage === "pre" || balloonStage === "post";
+      const phaseThroughWalls = balloonStage === "phase";
+
+      // if stunned, kill any active dash right away
+      if (stunnedByBalloon && isDashing(p, now)) endDashNow(p, now);
+
+      const dashing = !stunnedByBalloon && isDashing(p, now);
 
       // Store pre-move position for sweep hits
       const prevPX = p.x;
@@ -737,7 +850,10 @@ setInterval(() => {
       let vx = 0,
         vy = 0;
 
-      if (dashing) {
+      if (stunnedByBalloon) {
+        vx = 0;
+        vy = 0;
+      } else if (dashing) {
         const d = p.effects.dash || {};
         const dx = Number.isFinite(d.dirX) ? d.dirX : Number.isFinite(p.dirX) ? p.dirX : 1;
         const dy = Number.isFinite(d.dirY) ? d.dirY : Number.isFinite(p.dirY) ? p.dirY : 0;
@@ -788,26 +904,33 @@ setInterval(() => {
         endDashNow(p, now);
       }
 
-      // slide: X then Y (dash ends if blocked)
-      let blockedX = false;
-      let blockedY = false;
+      // ✅ Movement with/without collision
+      if (phaseThroughWalls) {
+        // ignore walls/machines
+        p.x = clampedNextX;
+        p.y = clampedNextY;
+      } else {
+        // slide: X then Y (dash ends if blocked)
+        let blockedX = false;
+        let blockedY = false;
 
-      let cx = clampedNextX;
-      let cy = clamp(p.y, minY, maxY);
-      if (!collidesAt(game, cx, cy)) p.x = cx;
-      else blockedX = true;
+        let cx = clampedNextX;
+        let cy = clamp(p.y, minY, maxY);
+        if (!collidesAt(game, cx, cy)) p.x = cx;
+        else blockedX = true;
 
-      cx = clamp(p.x, minX, maxX);
-      cy = clampedNextY;
-      if (!collidesAt(game, cx, cy)) p.y = cy;
-      else blockedY = true;
+        cx = clamp(p.x, minX, maxX);
+        cy = clampedNextY;
+        if (!collidesAt(game, cx, cy)) p.y = cy;
+        else blockedY = true;
 
-      if (dashing && (blockedX || blockedY)) {
-        endDashNow(p, now);
+        if (dashing && (blockedX || blockedY)) {
+          endDashNow(p, now);
+        }
       }
 
       // ✅ DASH HIT (segment sweep): ends dash on hit; hit kills immediately
-      if (isDashing(p, now)) {
+      if (!stunnedByBalloon && isDashing(p, now)) {
         const hitR = PLAYER_HALF + DASH_HIT_R_PLAYER; // include player size
         let victim = null;
 
@@ -880,7 +1003,9 @@ setInterval(() => {
       // ---- shooting ----
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
-      const wantsFire = !!p.input?.fire;
+      // ✅ balloon pre/post = no shooting
+      const wantsFire = !stunnedByBalloon && !!p.input?.fire;
+
       if (wantsFire && p.fireCd <= 0) {
         if (p.pendingPrompt) continue;
         if (p.pendingUpgradeOffer) continue;
@@ -1382,6 +1507,7 @@ io.on("connection", (socket) => {
       pickups: [],
       mines: [],
       bullets: [],
+      jackBoxes: [],
       upgradePool: null,
 
       startedAt: null,
@@ -1430,6 +1556,7 @@ io.on("connection", (socket) => {
     upgrades.ensureUpgradeState(hostPlayer);
     upgrades.ensureEffectState(hostPlayer);
     hostPlayer.effects.dash = null;
+    hostPlayer.effects.balloon = null;
 
     game.players.set(session.playerId, hostPlayer);
     games[code] = game;
@@ -1503,6 +1630,7 @@ io.on("connection", (socket) => {
     upgrades.ensureUpgradeState(joinPlayer);
     upgrades.ensureEffectState(joinPlayer);
     joinPlayer.effects.dash = null;
+    joinPlayer.effects.balloon = null;
 
     game.players.set(session.playerId, joinPlayer);
 
@@ -1593,12 +1721,14 @@ io.on("connection", (socket) => {
       upgrades.ensureUpgradeState(p);
       upgrades.ensureEffectState(p);
       p.effects.dash = null;
+      p.effects.balloon = null;
       if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
     }
 
     game.pickups = [];
     game.mines = [];
     game.bullets = [];
+    game.jackBoxes = [];
 
     game.phase = "running";
     game.startedAt = Date.now();
@@ -2046,6 +2176,49 @@ io.on("connection", (socket) => {
             hitRadiusPlayer,
           });
         }
+
+        // ✅ Jack in the Box spawn (server-authoritative world object)
+        if (a.type === "spawn_jack_box_at_player") {
+          if (!Array.isArray(game.jackBoxes)) game.jackBoxes = [];
+
+          const params = a.params || {};
+          const revealR = Number.isFinite(params.revealRadius) ? params.revealRadius : JACK_BOX_DEFAULT_REVEAL_R;
+          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : JACK_BOX_DEFAULT_TTL_SEC;
+          const maxActive =
+            Number.isFinite(params.maxActivePerPlayer) ? Math.floor(params.maxActivePerPlayer) : JACK_BOX_DEFAULT_MAX_ACTIVE;
+
+          // enforce per-player cap: remove oldest
+          if (maxActive > 0) {
+            const owned = game.jackBoxes.filter((jb) => jb && jb.ownerId === p.id);
+            if (owned.length >= maxActive) {
+              // oldest = smallest createdAt
+              owned.sort((a1, a2) => (a1.createdAt || 0) - (a2.createdAt || 0));
+              const toRemove = owned.length - (maxActive - 1);
+              for (let r = 0; r < toRemove; r++) {
+                const killId = owned[r].id;
+                const idx = game.jackBoxes.findIndex((x) => x && x.id === killId);
+                if (idx >= 0) game.jackBoxes.splice(idx, 1);
+              }
+            }
+          }
+
+          game.jackBoxes.push({
+            id: makeJackBoxId(),
+            ownerId: p.id,
+            ownerTeamId: p.teamId,
+            x: p.x,
+            y: p.y,
+            revealR,
+            createdAt: nowMs,
+            expiresAt: nowMs + Math.floor(ttlSec * 1000),
+          });
+        }
+
+        // ✅ Balloon phase start is already stored in player.effects.balloon in apply.js.
+        // We accept the action for consistency (and future expansion), but nothing required here.
+        if (a.type === "start_balloon_phase") {
+          // no-op (state is in player.effects.balloon already)
+        }
       }
     }
 
@@ -2108,6 +2281,7 @@ io.on("connection", (socket) => {
 
     upgrades.ensureEffectState(p);
     p.effects.dash = null;
+    p.effects.balloon = null;
 
     socket.emit("RESPAWN_RESULT", { ok: true });
   });
