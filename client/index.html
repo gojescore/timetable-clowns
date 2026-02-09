@@ -117,6 +117,8 @@
       align-items:center;
       z-index:5;
       pointer-events:none;
+      flex-wrap:wrap;
+      max-width: calc(100% - 20px);
     }
     .hudPill{
       display:inline-flex;
@@ -152,6 +154,14 @@
       background: rgba(0,0,0,.22);
     }
     .hudPill.timer.hidden{ display:none; }
+
+    /* ✅ Balloon status pill (NEW) */
+    .hudPill.balloon{
+      border-color: rgba(246,196,81,.55);
+      background: rgba(246,196,81,.14);
+      color: rgba(255,255,255,.96);
+    }
+    .hudPill.balloon.hidden{ display:none; }
 
     /* Sidebar (upgrades + leave button) */
     .sidePanel{
@@ -574,6 +584,11 @@
             <div class="hudPill timer hidden" id="hudTimer" title="Time left">
               ⏱️ <span id="hudTimerText">--:--</span>
             </div>
+
+            <!-- ✅ NEW: balloon status (UI only; server decides everything) -->
+            <div class="hudPill balloon hidden" id="hudBalloon" title="Balloon active">
+              🎈 <span id="hudBalloonText">BAL 0.0s</span>
+            </div>
           </div>
 
           <canvas id="game"></canvas>
@@ -746,6 +761,10 @@
       hudTimer: document.getElementById("hudTimer"),
       hudTimerText: document.getElementById("hudTimerText"),
 
+      // ✅ balloon status HUD
+      hudBalloon: document.getElementById("hudBalloon"),
+      hudBalloonText: document.getElementById("hudBalloonText"),
+
       upgradeSlotsCons: document.getElementById("upgradeSlotsCons"),
       upgradeSlotsPerm: document.getElementById("upgradeSlotsPerm"),
 
@@ -860,6 +879,38 @@
         el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
       } else {
         el.hudInvuln.classList.add("hidden");
+      }
+    }
+
+    // ✅ balloon status HUD (UI only; server decides effects)
+    function getBalloonUntilFromMe(me){
+      // Robust: accept multiple possible server shapes without inventing gameplay logic.
+      const direct = Number.isFinite(me?.balloonUntil) ? me.balloonUntil : null;
+      if (direct) return direct;
+
+      const eff = me?.effects;
+      if (eff && Number.isFinite(eff.balloonUntil)) return eff.balloonUntil;
+      if (eff && eff.balloon && Number.isFinite(eff.balloon.until)) return eff.balloon.until;
+      if (eff && eff.balloon && Number.isFinite(eff.balloon.untilMs)) return eff.balloon.untilMs;
+
+      const status = me?.status;
+      if (status && Number.isFinite(status.balloonUntil)) return status.balloonUntil;
+      if (status && status.balloon && Number.isFinite(status.balloon.until)) return status.balloon.until;
+
+      return 0;
+    }
+    function updateBalloonHudFromMe(me){
+      if (!me || me.alive === false) {
+        el.hudBalloon.classList.add("hidden");
+        return;
+      }
+      const until = getBalloonUntilFromMe(me);
+      const msLeft = (Number.isFinite(until) ? until : 0) - Date.now();
+      if (msLeft > 80) {
+        el.hudBalloon.classList.remove("hidden");
+        el.hudBalloonText.textContent = "BAL " + (msLeft / 1000).toFixed(1) + "s";
+      } else {
+        el.hudBalloon.classList.add("hidden");
       }
     }
 
@@ -982,6 +1033,7 @@
       el.hudCakes.textContent = String(MAX_CAKES);
 
       el.hudInvuln.classList.add("hidden");
+      el.hudBalloon.classList.add("hidden");
 
       gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
       if (gameEndAt) {
@@ -1010,6 +1062,7 @@
         el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
         updateInvulnHudFromMe(me);
+        updateBalloonHudFromMe(me);
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
         renderUpgradeBar();
@@ -1332,6 +1385,7 @@
       el.hudLife.textContent = "0";
       el.hudCakes.textContent = "0";
       el.hudInvuln.classList.add("hidden");
+      el.hudBalloon.classList.add("hidden");
     });
 
     // ---------- Prompt UI ----------
@@ -2012,6 +2066,25 @@
       return true;
     }
 
+    // ---------------------------
+    // ✅ Jack-in-the-Box list access (robust)
+    // ---------------------------
+    function getJackBoxesFromSnapshot(snap){
+      if (!snap) return null;
+      // try common names
+      return (
+        (Array.isArray(snap.jackBoxes) ? snap.jackBoxes : null) ||
+        (Array.isArray(snap.jackboxes) ? snap.jackboxes : null) ||
+        (Array.isArray(snap.jacks) ? snap.jacks : null) ||
+        (Array.isArray(snap.revealers) ? snap.revealers : null) // if server uses a generic name
+      );
+    }
+
+    // ---------------------------
+    // ✅ Fog mask + JackBox reveal sources (UI only)
+    //   - Server remains authoritative (client only draws what server sends)
+    //   - If server includes jackBoxes with ownerId/teamId + radius/until, we render extra vis circles
+    // ---------------------------
     function renderFogMask(meObj, camX, camY) {
       if (!FOG_ENABLED) return;
       if (!meObj) return;
@@ -2046,11 +2119,13 @@
       visCtx.globalAlpha = 1;
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
+      // base: player cone
       visCtx.fillStyle = "rgba(255,255,255,1)";
       const okCone = fillConeFromPlayerApex(
         visCtx, meX, meY, ang, half, visionLen, segs, cornerAngles
       );
 
+      // tiny dot at player
       visCtx.beginPath();
       visCtx.arc(meX, meY, 2, 0, Math.PI*2);
       visCtx.fill();
@@ -2059,6 +2134,44 @@
         visCtx.beginPath();
         visCtx.arc(meX, meY, 80, 0, Math.PI*2);
         visCtx.fill();
+      }
+
+      // ✅ extra visibility from Jack-in-the-Box (if server sends them)
+      const jacks = getJackBoxesFromSnapshot(lastSnapshot);
+      if (Array.isArray(jacks) && jacks.length) {
+        const now = Date.now();
+        const myTeam = (Number.isFinite(meObj.teamId) ? meObj.teamId : null);
+
+        for (const jb of jacks) {
+          if (!jb) continue;
+
+          // Ownership gates (server decides; we only *display* if present)
+          const ownerOk = (jb.ownerId && jb.ownerId === myId);
+          const teamOk = (myTeam !== null && Number.isFinite(jb.teamId) && jb.teamId === myTeam);
+
+          // If server doesn't include ownership, we still can render ALL as "known revealers".
+          // But default to owner/team if present.
+          const hasOwnership = (jb.ownerId !== undefined || jb.teamId !== undefined);
+          if (hasOwnership && !(ownerOk || teamOk)) continue;
+
+          // Expiration if provided
+          const until = Number.isFinite(jb.until) ? jb.until
+                      : Number.isFinite(jb.untilMs) ? jb.untilMs
+                      : Number.isFinite(jb.expiresAt) ? jb.expiresAt
+                      : 0;
+          if (until && (until - now) <= 0) continue;
+
+          const r = Number.isFinite(jb.radius) ? jb.radius
+                  : Number.isFinite(jb.revealRadius) ? jb.revealRadius
+                  : 260;
+
+          const x = (Number.isFinite(jb.x) ? jb.x : 0) - camX;
+          const y = (Number.isFinite(jb.y) ? jb.y : 0) - camY;
+
+          visCtx.beginPath();
+          visCtx.arc(x, y, Math.max(40, Math.min(900, r)), 0, Math.PI * 2);
+          visCtx.fill();
+        }
       }
 
       visCtx.restore();
@@ -2170,9 +2283,7 @@
     }
 
     // ---------------------------
-    // ✅ Mines / bombs / traps rendering (NEW)
-    //   This is why it "did not show" before: client had no renderer for them.
-    //   We try common names to be robust: mines / bombs / traps
+    // ✅ Mines / bombs / traps rendering
     // ---------------------------
     function drawMines(camX, camY){
       const list =
@@ -2192,14 +2303,12 @@
         const x = (m.x ?? 0) - camX;
         const y = (m.y ?? 0) - camY;
 
-        // ring (visible even with fog overlay)
         ctx.beginPath();
         ctx.arc(x, y, 10, 0, Math.PI * 2);
         ctx.strokeStyle = "rgba(255,80,80,.95)";
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // marker
         ctx.font = "18px system-ui";
         ctx.fillText("💣", x, y);
       }
@@ -2209,7 +2318,73 @@
     }
 
     // ---------------------------
-    // ✅ Banana bullets (what we agreed: banana shot should look like banana)
+    // ✅ Jack-in-the-Box rendering (NEW)
+    //   Visible world object; no gameplay computed client-side.
+    // ---------------------------
+    function drawJackBoxes(camX, camY){
+      const list = getJackBoxesFromSnapshot(lastSnapshot);
+      if (!Array.isArray(list)) return;
+
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      const now = Date.now();
+
+      for (const jb of list) {
+        if (!jb) continue;
+
+        const x = (Number.isFinite(jb.x) ? jb.x : 0) - camX;
+        const y = (Number.isFinite(jb.y) ? jb.y : 0) - camY;
+
+        // if server sends expiration, fade out near end (purely visual)
+        const until = Number.isFinite(jb.until) ? jb.until
+                    : Number.isFinite(jb.untilMs) ? jb.untilMs
+                    : Number.isFinite(jb.expiresAt) ? jb.expiresAt
+                    : 0;
+        let a = 1;
+        if (until) {
+          const msLeft = until - now;
+          if (msLeft <= 0) continue;
+          if (msLeft < 600) a = Math.max(0.15, msLeft / 600);
+        }
+
+        // base tile
+        ctx.globalAlpha = a;
+        ctx.fillStyle = "rgba(246,196,81,.22)";
+        ctx.strokeStyle = "rgba(246,196,81,.55)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 14, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+
+        // icon
+        ctx.font = "18px system-ui";
+        ctx.fillText("🎁", x, y + 1);
+
+        // subtle radius ring if server includes one (helps read the reveal)
+        const r = Number.isFinite(jb.radius) ? jb.radius
+                : Number.isFinite(jb.revealRadius) ? jb.revealRadius
+                : 0;
+        if (r > 0 && r <= 420) {
+          ctx.globalAlpha = a * 0.22;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI*2);
+          ctx.strokeStyle = "rgba(246,196,81,.55)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.restore();
+      ctx.lineWidth = 1;
+    }
+
+    // ---------------------------
+    // ✅ Banana bullets
     // ---------------------------
     const bulletPrev = new Map(); // id -> {x,y,ang}
 
@@ -2268,7 +2443,6 @@
         const x = b.x - camX;
         const y = b.y - camY;
 
-        // slight fade for non-me bullets (readability)
         ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
 
         const kind = (typeof b.kind === "string")
@@ -2276,7 +2450,6 @@
           : "cake";
 
         if (kind === "banana") {
-          // angle from motion (snapshot has x/y only)
           let ang = 0;
           if (b.id) {
             const prev = bulletPrev.get(b.id);
@@ -2292,9 +2465,7 @@
           continue;
         }
 
-        // ✅ cake surprise (make it clearly visible again)
         if (kind === "cake_surprise") {
-          // glow ring
           ctx.save();
           ctx.globalAlpha *= 0.95;
           ctx.beginPath();
@@ -2304,7 +2475,6 @@
           ctx.stroke();
           ctx.restore();
 
-          // emoji + sparkle overlay
           ctx.font = "18px system-ui";
           ctx.fillText("🍰", x, y);
           ctx.font = "14px system-ui";
@@ -2314,7 +2484,6 @@
           continue;
         }
 
-        // ✅ default / normal shot = cake
         ctx.font = "18px system-ui";
         ctx.fillText("🍰", x, y);
 
@@ -2430,6 +2599,7 @@
       const me = lastSnapshot.players.find(p => p.id === myId);
 
       updateInvulnHudFromMe(me);
+      updateBalloonHudFromMe(me);
       updateTimerHudFrame();
 
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
@@ -2446,8 +2616,9 @@
       drawWalls(camX, camY);
       drawMachines(camX, camY);
 
-      // ✅ NEW: draw mines/bombs/traps before bullets so they appear as ground objects
+      // ✅ ground objects
       drawMines(camX, camY);
+      drawJackBoxes(camX, camY);
 
       drawBullets(camX, camY);
 
