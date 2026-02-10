@@ -105,6 +105,9 @@
       height:100%;
       display:block;
       background:transparent;
+      /* allow better pointer events */
+      touch-action:none;
+      user-select:none;
     }
 
     /* HUD overlay (z-axis in front of arena) */
@@ -434,7 +437,7 @@
       color: rgba(255,255,255,.98);
     }
 
-    /* ✅ Only one end option: back to lobby (reload) */
+    /* ✅ Only one end option: back to lobby */
     .endActionsSolo{
       display:flex;
       justify-content:flex-end;
@@ -549,7 +552,7 @@
         </div>
         <div>
           <div class="muted">Navigation</div>
-          <button id="leaveLobby" class="danger" title="Safe: reload page">Leave / Back</button>
+          <button id="leaveLobby" class="danger" title="Back to start screen">Leave / Back</button>
         </div>
       </div>
 
@@ -597,7 +600,7 @@
         <div class="sidePanel">
           <div class="sideCard">
             <div class="sideTitle">Menu</div>
-            <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
+            <button id="leaveGame" class="danger" title="Back to lobby (host only)">Back to lobby</button>
           </div>
 
           <div class="sideCard" style="flex:1 1 auto">
@@ -707,7 +710,7 @@
 
       <!-- ✅ ONLY OPTION: back to lobby -->
       <div class="endActionsSolo">
-        <button class="primary" id="endBackBtn" title="Back to lobby (reload)">Back to lobby</button>
+        <button class="primary" id="endBackBtn" title="Back to lobby (host only)">Back to lobby</button>
       </div>
 
       <div class="msg" id="endMsg"></div>
@@ -808,9 +811,66 @@
       winnerLabel: document.getElementById("winnerLabel"),
     };
 
-    el.leaveLobby.addEventListener("click", () => location.reload());
-    el.leaveGame.addEventListener("click", () => location.reload());
-    el.endBackBtn.addEventListener("click", () => location.reload());
+    // -------------------------------
+    // ✅ UI state helpers (NO reload)
+    // -------------------------------
+    function showStartScreen(){
+      document.body.classList.remove("inGame");
+      el.start.classList.remove("hidden");
+      el.lobby.classList.add("hidden");
+      el.running.classList.add("hidden");
+      closeAllOverlays();
+      el.status.textContent = "Connected.";
+    }
+
+    function showLobbyScreen(){
+      document.body.classList.remove("inGame");
+      el.start.classList.add("hidden");
+      el.lobby.classList.remove("hidden");
+      el.running.classList.add("hidden");
+      closeAllOverlays();
+    }
+
+    function showRunningScreen(){
+      document.body.classList.add("inGame");
+      el.start.classList.add("hidden");
+      el.lobby.classList.add("hidden");
+      el.running.classList.remove("hidden");
+      closeAllOverlays();
+    }
+
+    function closeAllOverlays(){
+      closePrompt();
+      closeDropPicker();
+      closeRespawnOverlay();
+      // upgrade overlay: close without auto-decline here (we call closeUpgradeOffer explicitly when needed)
+      el.upgradeOverlay.classList.remove("show");
+      el.endOverlay.classList.remove("show");
+    }
+
+    function requestBackToLobby(){
+      // Only host can trigger server-side "backToLobby" in our contract.
+      if (!isHost) {
+        showBubble("Only the host can return to lobby.", 1600);
+        return;
+      }
+      // make it explicit: close UI blockers before sending
+      closePrompt();
+      closeDropPicker();
+      closeRespawnOverlay();
+      if (activeOfferId) closeUpgradeOffer();
+
+      socket.emit("backToLobby");
+      showBubble("Returning to lobby…", 1200);
+    }
+
+    el.leaveLobby.addEventListener("click", () => {
+      // pure client navigation back to start (do not kill socket)
+      showStartScreen();
+    });
+
+    el.leaveGame.addEventListener("click", () => requestBackToLobby());
+    el.endBackBtn.addEventListener("click", () => requestBackToLobby());
 
     let myId = null;
     let isHost = false;
@@ -834,6 +894,7 @@
 
     // ✅ timed session UI/runtime
     let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
+
     function formatMMSS(msLeft){
       const s = Math.max(0, Math.ceil(msLeft / 1000));
       const mm = Math.floor(s / 60);
@@ -983,15 +1044,12 @@
 
     socket.on("GAME_CREATED", ({ gameCode }) => {
       el.gameCode.textContent = gameCode;
-      el.start.classList.add("hidden");
-      el.lobby.classList.remove("hidden");
       el.hostControls.style.display = "block";
+      showLobbyScreen();
     });
 
     socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
       el.gameCode.textContent = gameCode;
-      el.start.classList.add("hidden");
-      el.lobby.classList.remove("hidden");
       el.hostControls.style.display = isHost ? "block" : "none";
 
       settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
@@ -1003,24 +1061,27 @@
           : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF.") + win);
 
       renderPlayers(Array.isArray(players) ? players : []);
+      showLobbyScreen();
     });
 
     socket.on("JOIN_FAILED", ({ reason }) => {
       el.status.textContent = "Join failed: " + reason;
     });
 
-    socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
+    socket.on("LOBBY_UPDATE", ({ players, settings: s, phase }) => {
       if (s) settings = s;
       renderPlayers(Array.isArray(players) ? players : []);
+
+      // ✅ if server includes phase, respect it
+      if (phase === "lobby") showLobbyScreen();
+      if (phase === "running") showRunningScreen();
     });
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
     socket.on("GAME_STARTED", (payload = {}) => {
-      document.body.classList.add("inGame");
+      showRunningScreen();
 
-      el.lobby.classList.add("hidden");
-      el.running.classList.remove("hidden");
       el.status.textContent = "Game running.";
 
       mapData = payload.map || null;
@@ -1049,9 +1110,33 @@
       el.endOverlay.classList.remove("show");
     });
 
+    // ✅ optional server event (if implemented)
+    socket.on("RETURNED_TO_LOBBY", ({ players, settings: s } = {}) => {
+      if (s) settings = s;
+      if (Array.isArray(players)) renderPlayers(players);
+
+      // reset run-specific state so next match starts clean
+      lastSnapshot = null;
+      mapData = null;
+      gameEndAt = null;
+      activeOfferId = null;
+      pendingReplace = null;
+      activeRespawn = null;
+
+      showLobbyScreen();
+      showBubble("Back in lobby ✅", 1200);
+    });
+
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
+
+      // ✅ if server gives phase inside snapshot, respect it (most robust)
+      if (snap.phase === "lobby") {
+        showLobbyScreen();
+      } else if (snap.phase === "running") {
+        showRunningScreen();
+      }
 
       updateTimerHudFromSnapshot(snap);
 
@@ -1223,7 +1308,7 @@
     }
 
     // ---------- Input ----------
-    const inputState = { up:false, down:false, left:false, right:false, fire:false };
+    const inputState = { up:false, down:false, left:false, right:false, fire:false, aimX:null, aimY:null };
 
     function isUiBlockingInput() {
       return !!activePromptId ||
@@ -1240,9 +1325,70 @@
       const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
       return (tag === "input" || tag === "textarea" || tag === "select");
     }
-    function sendInput(){
-      socket.emit("input", inputState);
+
+    // ✅ aim tracking (KBM). Server uses aim only if it wants.
+    let lastCamX = 0;
+    let lastCamY = 0;
+    let aimDirty = false;
+
+    function isKbmMode(){
+      const m = String(settings?.inputMode || el.inputMode?.value || "kbm");
+      return m.includes("kbm");
     }
+
+    function sendInput(){
+      // keep payload stable: server ignores unknown fields
+      const payload = {
+        up: !!inputState.up,
+        down: !!inputState.down,
+        left: !!inputState.left,
+        right: !!inputState.right,
+        fire: !!inputState.fire,
+      };
+
+      if (isKbmMode() && Number.isFinite(inputState.aimX) && Number.isFinite(inputState.aimY)) {
+        payload.aimX = inputState.aimX;
+        payload.aimY = inputState.aimY;
+      }
+
+      socket.emit("input", payload);
+    }
+
+    function scheduleAimSend(){
+      if (aimDirty) return;
+      aimDirty = true;
+      requestAnimationFrame(() => {
+        aimDirty = false;
+        if (!isGameRunning()) return;
+        if (isUiBlockingInput()) return;
+        if (!isKbmMode()) return;
+        sendInput();
+      });
+    }
+
+    function updateAimFromEvent(e){
+      if (!isGameRunning()) return;
+      if (!isKbmMode()) return;
+
+      const rect = el.canvas.getBoundingClientRect();
+      const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+      const clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+
+      const worldX = lastCamX + px;
+      const worldY = lastCamY + py;
+
+      inputState.aimX = worldX;
+      inputState.aimY = worldY;
+
+      scheduleAimSend();
+    }
+
+    // pointer events on canvas
+    el.canvas.addEventListener("mousemove", (e) => updateAimFromEvent(e));
+    el.canvas.addEventListener("touchmove", (e) => { updateAimFromEvent(e); }, { passive:true });
 
     function setKey(e, isDown){
       if (!isGameRunning()) return;
@@ -1270,11 +1416,11 @@
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
-      // end overlay: only allow Enter/Escape to go back
+      // end overlay: only allow Enter/Escape to go back (host only)
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
-          location.reload();
+          requestBackToLobby();
         }
         return;
       }
@@ -2076,14 +2222,12 @@
         (Array.isArray(snap.jackBoxes) ? snap.jackBoxes : null) ||
         (Array.isArray(snap.jackboxes) ? snap.jackboxes : null) ||
         (Array.isArray(snap.jacks) ? snap.jacks : null) ||
-        (Array.isArray(snap.revealers) ? snap.revealers : null) // if server uses a generic name
+        (Array.isArray(snap.revealers) ? snap.revealers : null)
       );
     }
 
     // ---------------------------
     // ✅ Fog mask + JackBox reveal sources (UI only)
-    //   - Server remains authoritative (client only draws what server sends)
-    //   - If server includes jackBoxes with ownerId/teamId + radius/until, we render extra vis circles
     // ---------------------------
     function renderFogMask(meObj, camX, camY) {
       if (!FOG_ENABLED) return;
@@ -2145,16 +2289,12 @@
         for (const jb of jacks) {
           if (!jb) continue;
 
-          // Ownership gates (server decides; we only *display* if present)
           const ownerOk = (jb.ownerId && jb.ownerId === myId);
           const teamOk = (myTeam !== null && Number.isFinite(jb.teamId) && jb.teamId === myTeam);
 
-          // If server doesn't include ownership, we still can render ALL as "known revealers".
-          // But default to owner/team if present.
           const hasOwnership = (jb.ownerId !== undefined || jb.teamId !== undefined);
           if (hasOwnership && !(ownerOk || teamOk)) continue;
 
-          // Expiration if provided
           const until = Number.isFinite(jb.until) ? jb.until
                       : Number.isFinite(jb.untilMs) ? jb.untilMs
                       : Number.isFinite(jb.expiresAt) ? jb.expiresAt
@@ -2319,7 +2459,6 @@
 
     // ---------------------------
     // ✅ Jack-in-the-Box rendering (NEW)
-    //   Visible world object; no gameplay computed client-side.
     // ---------------------------
     function drawJackBoxes(camX, camY){
       const list = getJackBoxesFromSnapshot(lastSnapshot);
@@ -2337,7 +2476,6 @@
         const x = (Number.isFinite(jb.x) ? jb.x : 0) - camX;
         const y = (Number.isFinite(jb.y) ? jb.y : 0) - camY;
 
-        // if server sends expiration, fade out near end (purely visual)
         const until = Number.isFinite(jb.until) ? jb.until
                     : Number.isFinite(jb.untilMs) ? jb.untilMs
                     : Number.isFinite(jb.expiresAt) ? jb.expiresAt
@@ -2349,7 +2487,6 @@
           if (msLeft < 600) a = Math.max(0.15, msLeft / 600);
         }
 
-        // base tile
         ctx.globalAlpha = a;
         ctx.fillStyle = "rgba(246,196,81,.22)";
         ctx.strokeStyle = "rgba(246,196,81,.55)";
@@ -2359,11 +2496,9 @@
         ctx.fill();
         ctx.stroke();
 
-        // icon
         ctx.font = "18px system-ui";
         ctx.fillText("🎁", x, y + 1);
 
-        // subtle radius ring if server includes one (helps read the reveal)
         const r = Number.isFinite(jb.radius) ? jb.radius
                 : Number.isFinite(jb.revealRadius) ? jb.revealRadius
                 : 0;
@@ -2396,7 +2531,6 @@
       ctx2.lineCap = "round";
       ctx2.lineJoin = "round";
 
-      // body
       ctx2.lineWidth = 6;
       ctx2.strokeStyle = "#f4d000";
       ctx2.beginPath();
@@ -2404,7 +2538,6 @@
       ctx2.quadraticCurveTo(0, -10, 12, 2);
       ctx2.stroke();
 
-      // highlight
       ctx2.lineWidth = 3;
       ctx2.strokeStyle = "rgba(255,255,255,0.35)";
       ctx2.beginPath();
@@ -2412,7 +2545,6 @@
       ctx2.quadraticCurveTo(0, -7, 10, 2);
       ctx2.stroke();
 
-      // tips
       ctx2.fillStyle = "#7a4a12";
       ctx2.beginPath();
       ctx2.arc(-10, 6, 2, 0, Math.PI * 2);
@@ -2426,7 +2558,6 @@
       const list = lastSnapshot?.bullets;
       if (!Array.isArray(list)) return;
 
-      // cleanup map so it doesn't grow forever
       const aliveIds = new Set();
       for (const b of list) if (b && b.id) aliveIds.add(b.id);
       for (const id of bulletPrev.keys()) {
@@ -2608,6 +2739,10 @@
       const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
       const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
 
+      // ✅ store for aim conversion
+      lastCamX = camX;
+      lastCamY = camY;
+
       ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
       ctx.strokeStyle = "rgba(255,255,255,.12)";
@@ -2616,7 +2751,6 @@
       drawWalls(camX, camY);
       drawMachines(camX, camY);
 
-      // ✅ ground objects
       drawMines(camX, camY);
       drawJackBoxes(camX, camY);
 
@@ -2671,6 +2805,9 @@
 
     // initial render
     renderUpgradeBar();
+
+    // ✅ start screen by default
+    showStartScreen();
   </script>
 </body>
 </html>
