@@ -587,6 +587,7 @@ function computeTeamWinner(game, leaderboard) {
 
   for (const row of leaderboard) {
     const tid = row.teamId;
+    const friendlyFire = undefined; // (unused; keep structure stable)
     if (tid === null || tid === undefined) continue;
     if (!byTeam.has(tid)) byTeam.set(tid, { teamId: tid, correct: 0, kills: 0, money: 0, deaths: 0 });
     const agg = byTeam.get(tid);
@@ -714,8 +715,8 @@ function resetGameToLobby(game) {
     p.money = 100;
     p.stats = { kills: 0, deaths: 0, correct: 0 };
 
-    // clear input
-    p.input = { up: false, down: false, left: false, right: false, fire: false };
+    // clear input (includes aim)
+    p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
   }
 }
 
@@ -805,7 +806,7 @@ setInterval(() => {
             p.killedById = null;
 
             p.alive = false;
-            p.input = { up: false, down: false, left: false, right: false, fire: false };
+            p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
             p.fireCd = 0;
             p.cakes = 0;
             p.pendingPrompt = null;
@@ -846,6 +847,14 @@ setInterval(() => {
       const prevPX = p.x;
       const prevPY = p.y;
 
+      // ✅ Aim presence (for KBM): if aimX/aimY present, use it for facing
+      const hasAim =
+        !stunnedByBalloon &&
+        !dashing &&
+        Number.isFinite(p.input?.aimX) &&
+        Number.isFinite(p.input?.aimY) &&
+        Math.hypot(p.input.aimX, p.input.aimY) > 1e-6;
+
       // If dashing: force movement direction from dash.dirX/Y (no "only hits at end")
       let vx = 0,
         vy = 0;
@@ -879,11 +888,24 @@ setInterval(() => {
         if (len > 1e-9) {
           vx /= len;
           vy /= len;
-          p.dirX = vx;
-          p.dirY = vy;
+
+          // Movement still moves you, but facing can come from aim (KBM)
+          if (hasAim) {
+            p.dirX = p.input.aimX;
+            p.dirY = p.input.aimY;
+          } else {
+            p.dirX = vx;
+            p.dirY = vy;
+          }
         } else {
           vx = 0;
           vy = 0;
+
+          // Standing still: KBM can still aim/facing with mouse
+          if (hasAim) {
+            p.dirX = p.input.aimX;
+            p.dirY = p.input.aimY;
+          }
         }
       }
 
@@ -979,7 +1001,7 @@ setInterval(() => {
             victim.killedById = p.id;
 
             victim.alive = false;
-            victim.input = { up: false, down: false, left: false, right: false, fire: false };
+            victim.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
             victim.fireCd = 0;
             victim.cakes = 0;
             victim.pendingPrompt = null;
@@ -1226,7 +1248,16 @@ setInterval(() => {
           }
 
           // reflect velocity based on which face was hit
-          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
+          const refl = reflectVelocityOnAABBHit(
+            hitX,
+            hitY,
+            bestHit.rx,
+            bestHit.ry,
+            bestHit.rw,
+            bestHit.rh,
+            b.vx,
+            b.vy
+          );
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1324,7 +1355,7 @@ setInterval(() => {
           hitPlayer.killedById = shooter ? shooter.id : null;
 
           hitPlayer.alive = false;
-          hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false };
+          hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
           hitPlayer.fireCd = 0;
           hitPlayer.cakes = 0;
           hitPlayer.pendingPrompt = null;
@@ -1409,7 +1440,7 @@ setInterval(() => {
         if (!victim || !victim.alive) continue;
 
         victim.alive = false;
-        victim.input = { up: false, down: false, left: false, right: false, fire: false };
+        victim.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
         victim.fireCd = 0;
         victim.cakes = 0;
         victim.pendingPrompt = null;
@@ -1524,7 +1555,7 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false },
+      input: { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -1593,7 +1624,7 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false },
+      input: { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -1765,8 +1796,27 @@ io.on("connection", (socket) => {
     if (!p) return;
 
     if (!p.alive) {
-      p.input = { up: false, down: false, left: false, right: false, fire: false };
+      p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
       return;
+    }
+
+    // ✅ Accept mouse aim direction for KBM.
+    // Client should send aimX/aimY as a direction (can be unnormalized); we normalize here.
+    let ax = Number(payload.aimX);
+    let ay = Number(payload.aimY);
+
+    if (!Number.isFinite(ax) || !Number.isFinite(ay)) {
+      ax = 0;
+      ay = 0;
+    } else {
+      const alen = Math.hypot(ax, ay);
+      if (alen > 1e-9) {
+        ax /= alen;
+        ay /= alen;
+      } else {
+        ax = 0;
+        ay = 0;
+      }
     }
 
     p.input = {
@@ -1775,6 +1825,8 @@ io.on("connection", (socket) => {
       left: !!payload.left,
       right: !!payload.right,
       fire: !!payload.fire,
+      aimX: ax,
+      aimY: ay,
     };
   });
 
@@ -2192,7 +2244,7 @@ io.on("connection", (socket) => {
             const owned = game.jackBoxes.filter((jb) => jb && jb.ownerId === p.id);
             if (owned.length >= maxActive) {
               // oldest = smallest createdAt
-              owned.sort((a1, a2) => (a1.createdAt || 0) - (a2.createdAt || 0));
+              owned.sort((a1, a2) => (a1.createdAt || 0) - (b1.createdAt || 0));
               const toRemove = owned.length - (maxActive - 1);
               for (let r = 0; r < toRemove; r++) {
                 const killId = owned[r].id;
@@ -2268,7 +2320,7 @@ io.on("connection", (socket) => {
     p.alive = true;
     p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
 
-    p.input = { up: false, down: false, left: false, right: false, fire: false };
+    p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
     p.fireCd = 0;
     p.cakes = MAX_CAKES;
 
