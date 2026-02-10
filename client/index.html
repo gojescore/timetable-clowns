@@ -99,8 +99,8 @@
       max-height: 980px;
     }
 
-    /* ✅ Hide cursor in-game (KBM aim still works) */
-    body.inGame .canvasWrap{ cursor:default; }
+    /* ✅ Hide OS cursor in-game; we draw our own dot inside the canvas */
+    body.inGame .canvasWrap{ cursor:none; }
 
     /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
@@ -1083,6 +1083,9 @@
       // reset kb picker
       upgradePicker = { buttons: [], cols: 3, index: 0, open: false };
 
+      // reset aim so dot doesn't "stick" from old game
+      mouseAim.has = false;
+
       el.endOverlay.classList.remove("show");
     });
 
@@ -1350,6 +1353,16 @@
       if (localInputMode !== "kbm") return;
       updateMouseAimFromEvent(e);
       // We do NOT spam sendInput() every mousemove. Direction visuals update locally; server can use aimX/aimY on next input tick.
+    });
+
+    // ✅ Ensure we only show the dot when the mouse is actually over the arena
+    el.canvasWrap.addEventListener("mouseenter", () => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      mouseAim.has = true;
+    });
+    el.canvasWrap.addEventListener("mouseleave", () => {
+      mouseAim.has = false;
     });
 
     el.canvasWrap.addEventListener("mousedown", (e) => {
@@ -2811,6 +2824,42 @@
       ctx.lineWidth = 1;
     }
 
+    // ✅ Mouse cursor dot (drawn on top of everything)
+    function drawAimDot(){
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      if (!mouseAim.has) return;
+
+      // Keep it visible even if UI overlays are open
+      const x = mouseAim.x;
+      const y = mouseAim.y;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+
+      // outer ring
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0,0,0,.75)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // inner ring
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,.9)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // center dot
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,.95)";
+      ctx.fill();
+
+      ctx.restore();
+    }
+
     function draw(){
       if (!lastSnapshot) return;
 
@@ -2880,6 +2929,9 @@
       }
 
       if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY);
+
+      // ✅ draw the cursor dot last (on top of fog + everything)
+      drawAimDot();
     }
 
     function loop(){
