@@ -275,26 +275,6 @@ function pushVictimAwayFromShooter(game, victim, shooter, dist) {
   victim.dirY = dy;
 }
 
-// ✅ NEW: authoritative aim direction helper for shooting.
-// Prefer input.aimX/aimY if non-zero; otherwise fall back to facing dirX/dirY; otherwise default right.
-function getShotDir(player) {
-  const ax = Number(player?.input?.aimX);
-  const ay = Number(player?.input?.aimY);
-  if (Number.isFinite(ax) && Number.isFinite(ay)) {
-    const alen = Math.hypot(ax, ay);
-    if (alen > 1e-6) return { x: ax / alen, y: ay / alen };
-  }
-
-  const dx = Number(player?.dirX);
-  const dy = Number(player?.dirY);
-  if (Number.isFinite(dx) && Number.isFinite(dy)) {
-    const dlen = Math.hypot(dx, dy);
-    if (dlen > 1e-6) return { x: dx / dlen, y: dy / dlen };
-  }
-
-  return { x: 1, y: 0 };
-}
-
 function snapshotForGame(game) {
   const world = getWorldForGame(game);
   const nowMs = Date.now();
@@ -727,7 +707,18 @@ function resetGameToLobby(game) {
     p.stats = { kills: 0, deaths: 0, correct: 0 };
 
     // clear input (includes aim)
-    p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+    // NOTE: aimWorldX/Y are world coords; aimDirX/Y are normalized direction
+    p.input = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      fire: false,
+      aimWorldX: null,
+      aimWorldY: null,
+      aimDirX: 0,
+      aimDirY: 0,
+    };
   }
 }
 
@@ -814,7 +805,17 @@ setInterval(() => {
             p.killedById = null;
 
             p.alive = false;
-            p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+            p.input = {
+              up: false,
+              down: false,
+              left: false,
+              right: false,
+              fire: false,
+              aimWorldX: null,
+              aimWorldY: null,
+              aimDirX: 0,
+              aimDirY: 0,
+            };
             p.fireCd = 0;
             p.cakes = 0;
             p.pendingPrompt = null;
@@ -853,14 +854,36 @@ setInterval(() => {
       const prevPX = p.x;
       const prevPY = p.y;
 
-      // ✅ Aim presence (for KBM): if aimX/aimY present, use it for facing
-      const hasAim =
-        !stunnedByBalloon &&
-        !uiBlocksGameplay &&
-        !dashing &&
-        Number.isFinite(p.input?.aimX) &&
-        Number.isFinite(p.input?.aimY) &&
-        Math.hypot(p.input.aimX, p.input.aimY) > 1e-6;
+      // ✅ Aim presence (KBM): compute a normalized direction from stored aim info.
+      // We store BOTH: aimWorldX/Y (cursor in world coords) and/or aimDirX/Y (already normalized).
+      let aimDX = 0;
+      let aimDY = 0;
+
+      if (!stunnedByBalloon && !uiBlocksGameplay && !dashing) {
+        const iw = p.input || {};
+        const wx = Number(iw.aimWorldX);
+        const wy = Number(iw.aimWorldY);
+
+        if (Number.isFinite(wx) && Number.isFinite(wy)) {
+          const dx = wx - p.x;
+          const dy = wy - p.y;
+          const m = Math.hypot(dx, dy);
+          if (m > 1e-6) {
+            aimDX = dx / m;
+            aimDY = dy / m;
+          }
+        } else {
+          const dx = Number(iw.aimDirX);
+          const dy = Number(iw.aimDirY);
+          const m = Math.hypot(dx, dy);
+          if (Number.isFinite(m) && m > 1e-6) {
+            aimDX = dx / m;
+            aimDY = dy / m;
+          }
+        }
+      }
+
+      const hasAim = Math.hypot(aimDX, aimDY) > 1e-6;
 
       // If dashing: force movement direction from dash.dirX/Y
       let vx = 0,
@@ -870,10 +893,10 @@ setInterval(() => {
         vx = 0;
         vy = 0;
 
-        // allow standing aim direction to update facing for KBM (optional, safe)
+        // optional: allow facing to update from aim even while standing (your previous behavior)
         if (hasAim) {
-          p.dirX = p.input.aimX;
-          p.dirY = p.input.aimY;
+          p.dirX = aimDX;
+          p.dirY = aimDY;
         }
       } else if (dashing) {
         const d = p.effects.dash || {};
@@ -903,8 +926,8 @@ setInterval(() => {
           vy /= len;
 
           if (hasAim) {
-            p.dirX = p.input.aimX;
-            p.dirY = p.input.aimY;
+            p.dirX = aimDX;
+            p.dirY = aimDY;
           } else {
             p.dirX = vx;
             p.dirY = vy;
@@ -914,8 +937,8 @@ setInterval(() => {
           vy = 0;
 
           if (hasAim) {
-            p.dirX = p.input.aimX;
-            p.dirY = p.input.aimY;
+            p.dirX = aimDX;
+            p.dirY = aimDY;
           }
         }
       }
@@ -1009,7 +1032,17 @@ setInterval(() => {
             victim.killedById = p.id;
 
             victim.alive = false;
-            victim.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+            victim.input = {
+              up: false,
+              down: false,
+              left: false,
+              right: false,
+              fire: false,
+              aimWorldX: null,
+              aimWorldY: null,
+              aimDirX: 0,
+              aimDirY: 0,
+            };
             victim.fireCd = 0;
             victim.cakes = 0;
             victim.pendingPrompt = null;
@@ -1043,11 +1076,12 @@ setInterval(() => {
           continue;
         }
 
-        // ✅ FIX: shoot direction prefers mouse aim (input.aimX/aimY) when provided,
-        // not only p.dirX/p.dirY (which can remain default (1,0) when standing still).
-        const shot = getShotDir(p);
-        const ndx = shot.x;
-        const ndy = shot.y;
+        const dx = typeof p.dirX === "number" ? p.dirX : 1;
+        const dy = typeof p.dirY === "number" ? p.dirY : 0;
+        const dlen = Math.hypot(dx, dy) || 1;
+
+        const ndx = dx / dlen;
+        const ndy = dy / dlen;
 
         let spawnX = p.x + ndx * (PLAYER_HALF + 6);
         let spawnY = p.y + ndy * (PLAYER_HALF + 6);
@@ -1242,16 +1276,7 @@ setInterval(() => {
             break;
           }
 
-          const refl = reflectVelocityOnAABBHit(
-            hitX,
-            hitY,
-            bestHit.rx,
-            bestHit.ry,
-            bestHit.rw,
-            bestHit.rh,
-            b.vx,
-            b.vy
-          );
+          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1343,7 +1368,17 @@ setInterval(() => {
           hitPlayer.killedById = shooter ? shooter.id : null;
 
           hitPlayer.alive = false;
-          hitPlayer.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+          hitPlayer.input = {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            fire: false,
+            aimWorldX: null,
+            aimWorldY: null,
+            aimDirX: 0,
+            aimDirY: 0,
+          };
           hitPlayer.fireCd = 0;
           hitPlayer.cakes = 0;
           hitPlayer.pendingPrompt = null;
@@ -1430,7 +1465,17 @@ setInterval(() => {
         if (!victim || !victim.alive) continue;
 
         victim.alive = false;
-        victim.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+        victim.input = {
+          up: false,
+          down: false,
+          left: false,
+          right: false,
+          fire: false,
+          aimWorldX: null,
+          aimWorldY: null,
+          aimDirX: 0,
+          aimDirY: 0,
+        };
         victim.fireCd = 0;
         victim.cakes = 0;
         victim.pendingPrompt = null;
@@ -1545,7 +1590,17 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 },
+      input: {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        aimWorldX: null,
+        aimWorldY: null,
+        aimDirX: 0,
+        aimDirY: 0,
+      },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -1614,7 +1669,17 @@ io.on("connection", (socket) => {
       y: randInt(200, 500),
       dirX: 1,
       dirY: 0,
-      input: { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 },
+      input: {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        aimWorldX: null,
+        aimWorldY: null,
+        aimDirX: 0,
+        aimDirY: 0,
+      },
 
       pendingPrompt: null,
       lastCorrectMachineId: null,
@@ -1786,25 +1851,46 @@ io.on("connection", (socket) => {
     if (!p) return;
 
     if (!p.alive) {
-      p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+      p.input = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        aimWorldX: null,
+        aimWorldY: null,
+        aimDirX: 0,
+        aimDirY: 0,
+      };
       return;
     }
 
-    // ✅ Accept mouse aim direction for KBM.
-    let ax = Number(payload.aimX);
-    let ay = Number(payload.aimY);
+    // ✅ IMPORTANT FIX:
+    // Treat payload.aimX / payload.aimY as *WORLD COORDINATES* (cursor in world),
+    // and store them as aimWorldX/Y.
+    // Also accept a fallback where aimX/aimY are already a direction (small values near -1..1).
+    const rx = Number(payload.aimX);
+    const ry = Number(payload.aimY);
 
-    if (!Number.isFinite(ax) || !Number.isFinite(ay)) {
-      ax = 0;
-      ay = 0;
-    } else {
-      const alen = Math.hypot(ax, ay);
-      if (alen > 1e-9) {
-        ax /= alen;
-        ay /= alen;
+    let aimWorldX = null;
+    let aimWorldY = null;
+    let aimDirX = 0;
+    let aimDirY = 0;
+
+    if (Number.isFinite(rx) && Number.isFinite(ry)) {
+      // Heuristic: if values look like a unit-ish vector, treat as direction
+      // (world coords are typically 0..2400 and 0..1600, so this is safe).
+      const looksLikeDir = Math.abs(rx) <= 2 && Math.abs(ry) <= 2 && Math.hypot(rx, ry) <= 2;
+
+      if (looksLikeDir) {
+        const m = Math.hypot(rx, ry);
+        if (m > 1e-6) {
+          aimDirX = rx / m;
+          aimDirY = ry / m;
+        }
       } else {
-        ax = 0;
-        ay = 0;
+        aimWorldX = rx;
+        aimWorldY = ry;
       }
     }
 
@@ -1814,8 +1900,10 @@ io.on("connection", (socket) => {
       left: !!payload.left,
       right: !!payload.right,
       fire: !!payload.fire,
-      aimX: ax,
-      aimY: ay,
+      aimWorldX,
+      aimWorldY,
+      aimDirX,
+      aimDirY,
     };
   });
 
@@ -2161,10 +2249,11 @@ io.on("connection", (socket) => {
           const bounces = Number.isFinite(params.bounces) ? Math.floor(params.bounces) : BANANA_DEFAULT_BOUNCES;
           const hitRadiusPlayer = Number.isFinite(params.hitRadiusPlayer) ? params.hitRadiusPlayer : CAKE_HIT_R_PLAYER;
 
-          // ✅ FIX: banana also prefers aim direction when present.
-          const shot = getShotDir(p);
-          const ndx = shot.x;
-          const ndy = shot.y;
+          const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+          const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+          const dlen = Math.hypot(dx, dy) || 1;
+          const ndx = dx / dlen;
+          const ndy = dy / dlen;
 
           let spawnX = p.x + ndx * (PLAYER_HALF + 8);
           let spawnY = p.y + ndy * (PLAYER_HALF + 8);
@@ -2311,7 +2400,17 @@ io.on("connection", (socket) => {
     p.alive = true;
     p.invulnUntil = Date.now() + RESPAWN_INVULN * 1000;
 
-    p.input = { up: false, down: false, left: false, right: false, fire: false, aimX: 0, aimY: 0 };
+    p.input = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      fire: false,
+      aimWorldX: null,
+      aimWorldY: null,
+      aimDirX: 0,
+      aimDirY: 0,
+    };
     p.fireCd = 0;
     p.cakes = MAX_CAKES;
 
