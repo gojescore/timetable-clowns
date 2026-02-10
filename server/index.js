@@ -246,7 +246,6 @@ function pushVictimAwayFromShooter(game, victim, shooter, dist) {
     dx = victim.x - shooter.x;
     dy = victim.y - shooter.y;
   } else if (Number.isFinite(victim.dirX) && Number.isFinite(victim.dirY)) {
-    // fallback: push along victim facing
     dx = victim.dirX;
     dy = victim.dirY;
   }
@@ -272,7 +271,6 @@ function pushVictimAwayFromShooter(game, victim, shooter, dist) {
   victim.x = x;
   victim.y = y;
 
-  // optional: face away
   victim.dirX = dx;
   victim.dirY = dy;
 }
@@ -300,7 +298,6 @@ function snapshotForGame(game) {
           r: Number.isFinite(m.r) ? m.r : 26,
         }))
       : [],
-    // ✅ Jack boxes (fog reveal objects)
     jackBoxes: Array.isArray(game.jackBoxes)
       ? game.jackBoxes.map((j) => ({
           id: j.id,
@@ -317,7 +314,7 @@ function snapshotForGame(game) {
           id: b.id,
           ownerId: b.ownerId,
           ownerTeamId: b.ownerTeamId,
-          kind: b.kind || "cake", // ✅ client can render banana differently if desired
+          kind: b.kind || "cake",
           x: b.x,
           y: b.y,
         }))
@@ -355,7 +352,6 @@ function snapshotForGame(game) {
         cakes: Number.isFinite(p.cakes) ? p.cakes : MAX_CAKES,
         alive: !!p.alive,
         invulnUntil: Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0,
-        // ✅ expose balloon stage for UI if you want (optional/safe)
         balloon: p.effects?.balloon
           ? {
               stage: p.effects.balloon.stage || null,
@@ -587,7 +583,6 @@ function computeTeamWinner(game, leaderboard) {
 
   for (const row of leaderboard) {
     const tid = row.teamId;
-    const friendlyFire = undefined; // (unused; keep structure stable)
     if (tid === null || tid === undefined) continue;
     if (!byTeam.has(tid)) byTeam.set(tid, { teamId: tid, correct: 0, kills: 0, money: 0, deaths: 0 });
     const agg = byTeam.get(tid);
@@ -684,23 +679,19 @@ function resetGameToLobby(game) {
 
   // keep settings + players + teams
   for (const p of game.players.values()) {
-    // progression
     p.nextMachineNum = 1;
     p.clearedMachines = new Set();
     p.lastCorrectMachineId = null;
 
-    // prompts/offers/respawn
     p.pendingPrompt = null;
     p.pendingUpgradeOffer = null;
     p.pendingRespawn = null;
 
-    // combat
     p.alive = true;
     p.invulnUntil = 0;
     p.fireCd = 0;
     p.cakes = MAX_CAKES;
 
-    // kill info
     p.killedByName = null;
     p.killedById = null;
 
@@ -711,7 +702,7 @@ function resetGameToLobby(game) {
     p.effects.dash = null;
     p.effects.balloon = null;
 
-    // reset money + stats for a new match (change if you want persistence)
+    // reset money + stats for a new match
     p.money = 100;
     p.stats = { kills: 0, deaths: 0, correct: 0 };
 
@@ -772,12 +763,10 @@ setInterval(() => {
 
       upgrades.ensureEffectState(p);
 
+      // 🔒 Prompt/offer open blocks gameplay input (move + shoot) on server
+      const uiBlocksGameplay = !!(p.pendingPrompt || p.pendingUpgradeOffer);
+
       // ✅ BALLOON enforcement
-      // Stages:
-      // - pre: stun (no move, no shoot)
-      // - phase: no wall/machine collision
-      // - post: stun (no move, no shoot)
-      // When phase ends -> if inside wall/machine => die immediately
       let balloonStage = null;
       const bs = p.effects.balloon;
       if (
@@ -798,7 +787,6 @@ setInterval(() => {
         // Transition: phase -> post = check if ended inside wall/machine => die
         if (prevStage === "phase" && balloonStage === "post") {
           if (collidesAt(game, p.x, p.y)) {
-            // die immediately
             if (!p.stats) p.stats = { kills: 0, deaths: 0, correct: 0 };
             p.stats.deaths += 1;
 
@@ -823,8 +811,6 @@ setInterval(() => {
             });
 
             io.to(code).emit("PLAYER_DIED", { playerId: p.id });
-
-            // stop processing this player further this tick
             continue;
           }
         }
@@ -838,10 +824,10 @@ setInterval(() => {
       const stunnedByBalloon = balloonStage === "pre" || balloonStage === "post";
       const phaseThroughWalls = balloonStage === "phase";
 
-      // if stunned, kill any active dash right away
-      if (stunnedByBalloon && isDashing(p, now)) endDashNow(p, now);
+      // if stunned OR UI-blocked, kill any active dash right away
+      if ((stunnedByBalloon || uiBlocksGameplay) && isDashing(p, now)) endDashNow(p, now);
 
-      const dashing = !stunnedByBalloon && isDashing(p, now);
+      const dashing = !stunnedByBalloon && !uiBlocksGameplay && isDashing(p, now);
 
       // Store pre-move position for sweep hits
       const prevPX = p.x;
@@ -850,18 +836,25 @@ setInterval(() => {
       // ✅ Aim presence (for KBM): if aimX/aimY present, use it for facing
       const hasAim =
         !stunnedByBalloon &&
+        !uiBlocksGameplay &&
         !dashing &&
         Number.isFinite(p.input?.aimX) &&
         Number.isFinite(p.input?.aimY) &&
         Math.hypot(p.input.aimX, p.input.aimY) > 1e-6;
 
-      // If dashing: force movement direction from dash.dirX/Y (no "only hits at end")
+      // If dashing: force movement direction from dash.dirX/Y
       let vx = 0,
         vy = 0;
 
-      if (stunnedByBalloon) {
+      if (stunnedByBalloon || uiBlocksGameplay) {
         vx = 0;
         vy = 0;
+
+        // allow standing aim direction to update facing for KBM (optional, safe)
+        if (hasAim) {
+          p.dirX = p.input.aimX;
+          p.dirY = p.input.aimY;
+        }
       } else if (dashing) {
         const d = p.effects.dash || {};
         const dx = Number.isFinite(d.dirX) ? d.dirX : Number.isFinite(p.dirX) ? p.dirX : 1;
@@ -889,7 +882,6 @@ setInterval(() => {
           vx /= len;
           vy /= len;
 
-          // Movement still moves you, but facing can come from aim (KBM)
           if (hasAim) {
             p.dirX = p.input.aimX;
             p.dirY = p.input.aimY;
@@ -901,7 +893,6 @@ setInterval(() => {
           vx = 0;
           vy = 0;
 
-          // Standing still: KBM can still aim/facing with mouse
           if (hasAim) {
             p.dirX = p.input.aimX;
             p.dirY = p.input.aimY;
@@ -928,11 +919,9 @@ setInterval(() => {
 
       // ✅ Movement with/without collision
       if (phaseThroughWalls) {
-        // ignore walls/machines
         p.x = clampedNextX;
         p.y = clampedNextY;
       } else {
-        // slide: X then Y (dash ends if blocked)
         let blockedX = false;
         let blockedY = false;
 
@@ -951,9 +940,9 @@ setInterval(() => {
         }
       }
 
-      // ✅ DASH HIT (segment sweep): ends dash on hit; hit kills immediately
-      if (!stunnedByBalloon && isDashing(p, now)) {
-        const hitR = PLAYER_HALF + DASH_HIT_R_PLAYER; // include player size
+      // ✅ DASH HIT (segment sweep)
+      if (!stunnedByBalloon && !uiBlocksGameplay && isDashing(p, now)) {
+        const hitR = PLAYER_HALF + DASH_HIT_R_PLAYER;
         let victim = null;
 
         for (const other of game.players.values()) {
@@ -977,7 +966,6 @@ setInterval(() => {
         }
 
         if (victim) {
-          // dash ends on player hit
           endDashNow(p, now);
 
           upgrades.ensureEffectState(victim);
@@ -1025,13 +1013,10 @@ setInterval(() => {
       // ---- shooting ----
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
-      // ✅ balloon pre/post = no shooting
-      const wantsFire = !stunnedByBalloon && !!p.input?.fire;
+      // ✅ balloon pre/post OR UI-block = no shooting
+      const wantsFire = !stunnedByBalloon && !uiBlocksGameplay && !!p.input?.fire;
 
       if (wantsFire && p.fireCd <= 0) {
-        if (p.pendingPrompt) continue;
-        if (p.pendingUpgradeOffer) continue;
-
         if (!Number.isFinite(p.cakes)) p.cakes = MAX_CAKES;
         if (p.cakes <= 0) {
           p.fireCd = FIRE_COOLDOWN;
@@ -1152,8 +1137,6 @@ setInterval(() => {
         let nextY = prevY + b.vy * stepDt;
 
         // ✅ Arena bounds:
-        // - cakes: remove if leaving world
-        // - banana: treat arena edges as WALL bounces (counts toward bounces)
         if (nextX < 0 || nextX > world.w || nextY < 0 || nextY > world.h) {
           if (!isBanana) {
             game.bullets.splice(i, 1);
@@ -1161,7 +1144,6 @@ setInterval(() => {
             break;
           }
 
-          // banana bounce on arena boundary
           b.bouncesLeft = (Number.isFinite(b.bouncesLeft) ? (b.bouncesLeft | 0) : BANANA_DEFAULT_BOUNCES) - 1;
           if (b.bouncesLeft < 0) {
             game.bullets.splice(i, 1);
@@ -1169,11 +1151,9 @@ setInterval(() => {
             break;
           }
 
-          // reflect depending on which boundary was crossed
           if (nextX < 0 || nextX > world.w) b.vx = -b.vx;
           if (nextY < 0 || nextY > world.h) b.vy = -b.vy;
 
-          // clamp back inside and nudge
           b.x = clamp(nextX, 0, world.w);
           b.y = clamp(nextY, 0, world.h);
 
@@ -1181,7 +1161,6 @@ setInterval(() => {
           b.x += (b.vx / nlen) * BANANA_STICK_NUDGE;
           b.y += (b.vy / nlen) * BANANA_STICK_NUDGE;
 
-          // continue stepping with new velocity
           continue;
         }
 
@@ -1225,21 +1204,18 @@ setInterval(() => {
           b.x = hitX;
           b.y = hitY;
 
-          // cake: die on any wall/machine hit
           if (!isBanana) {
             game.bullets.splice(i, 1);
             removed = true;
             break;
           }
 
-          // banana: bounce ONLY on walls (machines still remove it)
           if (bestHit.kind !== "wall") {
             game.bullets.splice(i, 1);
             removed = true;
             break;
           }
 
-          // consume a bounce; disappears on the 6th wall hit
           b.bouncesLeft = (Number.isFinite(b.bouncesLeft) ? (b.bouncesLeft | 0) : BANANA_DEFAULT_BOUNCES) - 1;
           if (b.bouncesLeft < 0) {
             game.bullets.splice(i, 1);
@@ -1247,7 +1223,6 @@ setInterval(() => {
             break;
           }
 
-          // reflect velocity based on which face was hit
           const refl = reflectVelocityOnAABBHit(
             hitX,
             hitY,
@@ -1261,12 +1236,10 @@ setInterval(() => {
           b.vx = refl.vx;
           b.vy = refl.vy;
 
-          // tiny nudge forward to avoid sticking
           const nlen = Math.hypot(b.vx, b.vy) || 1;
           b.x += (b.vx / nlen) * BANANA_STICK_NUDGE;
           b.y += (b.vy / nlen) * BANANA_STICK_NUDGE;
 
-          // continue stepping after bounce
           continue;
         }
 
@@ -1274,7 +1247,7 @@ setInterval(() => {
         b.x = nextX;
         b.y = nextY;
 
-        // player hit check (banana dies on player hit, same as cake)
+        // player hit check
         let hitPlayer = null;
 
         for (const p of game.players.values()) {
@@ -1325,23 +1298,19 @@ setInterval(() => {
             break;
           }
 
-          // ✅ BIG NOSE: bullets-only lethal save, then falls off (permanent consumed)
+          // ✅ BIG NOSE: bullets-only lethal save
           if (hasBigNose(hitPlayer)) {
             consumeBigNose(hitPlayer);
 
-            // brief invuln window to avoid instant re-kill during/after push
             hitPlayer.invulnUntil = Math.max(hitPlayer.invulnUntil || 0, now + BIG_NOSE_INVULN_MS);
-
-            // knockback away from shooter, blocked by walls/machines
             pushVictimAwayFromShooter(game, hitPlayer, shooter, BIG_NOSE_PUSH_DIST);
 
-            // optional event (client may ignore for now)
             io.to(code).emit("BIG_NOSE_USED", {
               playerId: hitPlayer.id,
               by: shooter ? shooter.id : null,
             });
 
-            break; // IMPORTANT: do not kill
+            break;
           }
 
           if (shooter) {
@@ -1367,7 +1336,9 @@ setInterval(() => {
             createdAt: now,
           };
 
-          io.to(hitPlayer.socketId).emit("RESPAWN_OPTIONS", {
+          const targetSocket = hitPlayer.socketId || hitPlayer.id;
+
+          io.to(targetSocket).emit("RESPAWN_OPTIONS", {
             killedBy: hitPlayer.killedByName || "Unknown",
             options: opts.map((o) => ({ id: o.id, label: o.label, kind: o.kind })),
           });
@@ -1801,7 +1772,6 @@ io.on("connection", (socket) => {
     }
 
     // ✅ Accept mouse aim direction for KBM.
-    // Client should send aimX/aimY as a direction (can be unnormalized); we normalize here.
     let ax = Number(payload.aimX);
     let ay = Number(payload.aimY);
 
@@ -1981,6 +1951,8 @@ io.on("connection", (socket) => {
 
     if (!Number.isFinite(p.money)) p.money = 0;
 
+    // charge permanent acquireCost (refund on failure)
+    let charged = 0;
     if (info.kind === "permanent") {
       const cost = Number.isFinite(info.acquireCost) ? info.acquireCost : 0;
       if (p.money < cost) {
@@ -1993,25 +1965,30 @@ io.on("connection", (socket) => {
         });
       }
       p.money -= cost;
+      charged = cost;
     }
 
     const res = upgrades.applyUpgradeSelection ? upgrades.applyUpgradeSelection(p, upgradeId) : { ok: false };
-    if (!res.ok && res.reason === "slots_full") {
-      const slots = (p.upgrades?.consSlots || []).map((s) => ({
-        id: s.id,
-        usesLeft: s.usesLeft,
-        info: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null,
-      }));
-      return socket.emit("UPGRADE_RESULT", {
-        ok: false,
-        reason: "slots_full",
-        requested: info,
-        slots,
-        money: p.money,
-      });
-    }
+    if (!res.ok) {
+      if (charged) p.money += charged;
 
-    if (!res.ok) return socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
+      if (res.reason === "slots_full") {
+        const slots = (p.upgrades?.consSlots || []).map((s) => ({
+          id: s.id,
+          usesLeft: s.usesLeft,
+          info: upgrades.getUpgradeInfo ? upgrades.getUpgradeInfo(s.id) : null,
+        }));
+        return socket.emit("UPGRADE_RESULT", {
+          ok: false,
+          reason: "slots_full",
+          requested: info,
+          slots,
+          money: p.money,
+        });
+      }
+
+      return socket.emit("UPGRADE_RESULT", { ok: false, reason: res.reason });
+    }
 
     p.pendingUpgradeOffer = null;
 
@@ -2171,7 +2148,6 @@ io.on("connection", (socket) => {
           const ndx = dx / dlen;
           const ndy = dy / dlen;
 
-          // spawn slightly forward; push out if inside a wall/machine
           let spawnX = p.x + ndx * (PLAYER_HALF + 8);
           let spawnY = p.y + ndy * (PLAYER_HALF + 8);
 
@@ -2224,7 +2200,7 @@ io.on("connection", (socket) => {
             vx: ndx * speed,
             vy: ndy * speed,
             ttl: ttlSec,
-            bouncesLeft: Math.max(0, bounces), // disappears on the 6th wall hit (goes to -1)
+            bouncesLeft: Math.max(0, bounces),
             hitRadiusPlayer,
           });
         }
@@ -2239,12 +2215,11 @@ io.on("connection", (socket) => {
           const maxActive =
             Number.isFinite(params.maxActivePerPlayer) ? Math.floor(params.maxActivePerPlayer) : JACK_BOX_DEFAULT_MAX_ACTIVE;
 
-          // enforce per-player cap: remove oldest
+          // enforce per-player cap: remove oldest first
           if (maxActive > 0) {
             const owned = game.jackBoxes.filter((jb) => jb && jb.ownerId === p.id);
             if (owned.length >= maxActive) {
-              // oldest = smallest createdAt
-              owned.sort((a1, a2) => (a1.createdAt || 0) - (b1.createdAt || 0));
+              owned.sort((a1, b1) => (a1.createdAt || 0) - (b1.createdAt || 0));
               const toRemove = owned.length - (maxActive - 1);
               for (let r = 0; r < toRemove; r++) {
                 const killId = owned[r].id;
@@ -2266,10 +2241,8 @@ io.on("connection", (socket) => {
           });
         }
 
-        // ✅ Balloon phase start is already stored in player.effects.balloon in apply.js.
-        // We accept the action for consistency (and future expansion), but nothing required here.
         if (a.type === "start_balloon_phase") {
-          // no-op (state is in player.effects.balloon already)
+          // no-op (state already stored in player.effects.balloon)
         }
       }
     }
@@ -2349,12 +2322,11 @@ io.on("connection", (socket) => {
     // host only
     if (session.playerId !== game.hostPlayerId) return;
 
-    // only when ended (so players can’t escape mid-match)
+    // only when ended
     if (game.phase !== "ended") return;
 
     resetGameToLobby(game);
 
-    // clients should switch UI on LOBBY_UPDATE (or optional event below)
     emitLobbyUpdate(io, game);
     io.to(code).emit("RETURNED_TO_LOBBY", { ok: true });
   });
