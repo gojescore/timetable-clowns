@@ -99,15 +99,15 @@
       max-height: 980px;
     }
 
+    /* ✅ Hide cursor in-game (KBM aim still works) */
+    body.inGame .canvasWrap{ cursor:none; }
+
     /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
       width:100%;
       height:100%;
       display:block;
       background:transparent;
-      /* allow better pointer events */
-      touch-action:none;
-      user-select:none;
     }
 
     /* HUD overlay (z-axis in front of arena) */
@@ -202,6 +202,10 @@
       padding:10px 10px;
       position:relative;
       box-shadow:0 0 0 2px rgba(0,0,0,.10) inset;
+    }
+    .uSlot.active{
+      border-color: rgba(246,196,81,.55);
+      box-shadow: 0 0 0 2px rgba(246,196,81,.18) inset, 0 12px 26px rgba(0,0,0,.18);
     }
     .uLeft{
       display:flex;
@@ -306,6 +310,11 @@
       transition: transform .06s ease, border-color .06s ease;
     }
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
+    .upgTile.sel{
+      border-color: rgba(43,102,255,.85);
+      box-shadow: 0 0 0 3px rgba(43,102,255,.28) inset, 0 16px 32px rgba(0,0,0,.22);
+      transform: translateY(-1px);
+    }
     .upgName{ font-weight:900; font-size:14px; line-height:1.1; }
     .upgKind{ font-size:12px; color:var(--muted); margin-top:6px; }
     .upgFoot{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:10px; }
@@ -437,7 +446,7 @@
       color: rgba(255,255,255,.98);
     }
 
-    /* ✅ Only one end option: back to lobby */
+    /* ✅ Only one end option: back to lobby (reload) */
     .endActionsSolo{
       display:flex;
       justify-content:flex-end;
@@ -552,7 +561,7 @@
         </div>
         <div>
           <div class="muted">Navigation</div>
-          <button id="leaveLobby" class="danger" title="Back to start screen">Leave / Back</button>
+          <button id="leaveLobby" class="danger" title="Safe: reload page">Leave / Back</button>
         </div>
       </div>
 
@@ -600,7 +609,7 @@
         <div class="sidePanel">
           <div class="sideCard">
             <div class="sideTitle">Menu</div>
-            <button id="leaveGame" class="danger" title="Back to lobby (host only)">Back to lobby</button>
+            <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
           </div>
 
           <div class="sideCard" style="flex:1 1 auto">
@@ -710,7 +719,7 @@
 
       <!-- ✅ ONLY OPTION: back to lobby -->
       <div class="endActionsSolo">
-        <button class="primary" id="endBackBtn" title="Back to lobby (host only)">Back to lobby</button>
+        <button class="primary" id="endBackBtn" title="Back to lobby (reload)">Back to lobby</button>
       </div>
 
       <div class="msg" id="endMsg"></div>
@@ -811,66 +820,9 @@
       winnerLabel: document.getElementById("winnerLabel"),
     };
 
-    // -------------------------------
-    // ✅ UI state helpers (NO reload)
-    // -------------------------------
-    function showStartScreen(){
-      document.body.classList.remove("inGame");
-      el.start.classList.remove("hidden");
-      el.lobby.classList.add("hidden");
-      el.running.classList.add("hidden");
-      closeAllOverlays();
-      el.status.textContent = "Connected.";
-    }
-
-    function showLobbyScreen(){
-      document.body.classList.remove("inGame");
-      el.start.classList.add("hidden");
-      el.lobby.classList.remove("hidden");
-      el.running.classList.add("hidden");
-      closeAllOverlays();
-    }
-
-    function showRunningScreen(){
-      document.body.classList.add("inGame");
-      el.start.classList.add("hidden");
-      el.lobby.classList.add("hidden");
-      el.running.classList.remove("hidden");
-      closeAllOverlays();
-    }
-
-    function closeAllOverlays(){
-      closePrompt();
-      closeDropPicker();
-      closeRespawnOverlay();
-      // upgrade overlay: close without auto-decline here (we call closeUpgradeOffer explicitly when needed)
-      el.upgradeOverlay.classList.remove("show");
-      el.endOverlay.classList.remove("show");
-    }
-
-    function requestBackToLobby(){
-      // Only host can trigger server-side "backToLobby" in our contract.
-      if (!isHost) {
-        showBubble("Only the host can return to lobby.", 1600);
-        return;
-      }
-      // make it explicit: close UI blockers before sending
-      closePrompt();
-      closeDropPicker();
-      closeRespawnOverlay();
-      if (activeOfferId) closeUpgradeOffer();
-
-      socket.emit("backToLobby");
-      showBubble("Returning to lobby…", 1200);
-    }
-
-    el.leaveLobby.addEventListener("click", () => {
-      // pure client navigation back to start (do not kill socket)
-      showStartScreen();
-    });
-
-    el.leaveGame.addEventListener("click", () => requestBackToLobby());
-    el.endBackBtn.addEventListener("click", () => requestBackToLobby());
+    el.leaveLobby.addEventListener("click", () => location.reload());
+    el.leaveGame.addEventListener("click", () => location.reload());
+    el.endBackBtn.addEventListener("click", () => location.reload());
 
     let myId = null;
     let isHost = false;
@@ -892,9 +844,25 @@
     const MAX_CAKES = 7;
     const INVULN_SHOW_THRESHOLD_MS = 80;
 
+    // ✅ input mode is server setting; we keep local copy for UI routing
+    let localInputMode = "kbm";
+
+    // ✅ KBM: consumable slot selection 0..2 (used by mouse wheel / RMB)
+    let activeConsumableSlotIndex = 0;
+
+    // ✅ KB-only upgrade picker navigation state
+    let upgradePicker = {
+      buttons: [],
+      cols: 3,
+      index: 0,
+      open: false,
+    };
+
+    // ✅ KBM aiming: mouse position inside canvas (CSS pixels)
+    const mouseAim = { x: 0, y: 0, has: false };
+
     // ✅ timed session UI/runtime
     let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
-
     function formatMMSS(msLeft){
       const s = Math.max(0, Math.ceil(msLeft / 1000));
       const mm = Math.floor(s / 60);
@@ -945,7 +913,6 @@
 
     // ✅ balloon status HUD (UI only; server decides effects)
     function getBalloonUntilFromMe(me){
-      // Robust: accept multiple possible server shapes without inventing gameplay logic.
       const direct = Number.isFinite(me?.balloonUntil) ? me.balloonUntil : null;
       if (direct) return direct;
 
@@ -1044,15 +1011,19 @@
 
     socket.on("GAME_CREATED", ({ gameCode }) => {
       el.gameCode.textContent = gameCode;
+      el.start.classList.add("hidden");
+      el.lobby.classList.remove("hidden");
       el.hostControls.style.display = "block";
-      showLobbyScreen();
     });
 
     socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
       el.gameCode.textContent = gameCode;
+      el.start.classList.add("hidden");
+      el.lobby.classList.remove("hidden");
       el.hostControls.style.display = isHost ? "block" : "none";
 
       settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
+      localInputMode = settings?.inputMode || el.inputMode?.value || "kbm";
 
       const win = (settings.winMode === "money") ? " Win: Money." : " Win: Standard.";
       el.lobbyHint.textContent =
@@ -1061,33 +1032,34 @@
           : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF.") + win);
 
       renderPlayers(Array.isArray(players) ? players : []);
-      showLobbyScreen();
     });
 
     socket.on("JOIN_FAILED", ({ reason }) => {
       el.status.textContent = "Join failed: " + reason;
     });
 
-    socket.on("LOBBY_UPDATE", ({ players, settings: s, phase }) => {
-      if (s) settings = s;
+    socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
+      if (s) {
+        settings = s;
+        localInputMode = settings?.inputMode || localInputMode;
+      }
       renderPlayers(Array.isArray(players) ? players : []);
-
-      // ✅ if server includes phase, respect it
-      if (phase === "lobby") showLobbyScreen();
-      if (phase === "running") showRunningScreen();
     });
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
     socket.on("GAME_STARTED", (payload = {}) => {
-      showRunningScreen();
+      document.body.classList.add("inGame");
 
+      el.lobby.classList.add("hidden");
+      el.running.classList.remove("hidden");
       el.status.textContent = "Game running.";
 
       mapData = payload.map || null;
       if (mapData?.world) world = mapData.world;
 
       settings = payload.settings || settings;
+      localInputMode = settings?.inputMode || localInputMode;
 
       el.hudMoney.textContent = "$0";
       el.hudLife.textContent = "1";
@@ -1105,38 +1077,18 @@
       }
 
       myServerUpgrades = { permanent: [], slots: [] };
+      activeConsumableSlotIndex = 0;
       renderUpgradeBar();
 
+      // reset kb picker
+      upgradePicker = { buttons: [], cols: 3, index: 0, open: false };
+
       el.endOverlay.classList.remove("show");
-    });
-
-    // ✅ optional server event (if implemented)
-    socket.on("RETURNED_TO_LOBBY", ({ players, settings: s } = {}) => {
-      if (s) settings = s;
-      if (Array.isArray(players)) renderPlayers(players);
-
-      // reset run-specific state so next match starts clean
-      lastSnapshot = null;
-      mapData = null;
-      gameEndAt = null;
-      activeOfferId = null;
-      pendingReplace = null;
-      activeRespawn = null;
-
-      showLobbyScreen();
-      showBubble("Back in lobby ✅", 1200);
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
-
-      // ✅ if server gives phase inside snapshot, respect it (most robust)
-      if (snap.phase === "lobby") {
-        showLobbyScreen();
-      } else if (snap.phase === "running") {
-        showRunningScreen();
-      }
 
       updateTimerHudFromSnapshot(snap);
 
@@ -1165,6 +1117,10 @@
       el.upgradeOverlay.classList.remove("show");
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
+
+      // close picker state
+      upgradePicker.open = false;
+      upgradePicker.buttons = [];
 
       const reason = String(p.reason || "unknown");
       el.endReason.textContent = "ended: " + reason;
@@ -1308,7 +1264,7 @@
     }
 
     // ---------- Input ----------
-    const inputState = { up:false, down:false, left:false, right:false, fire:false, aimX:null, aimY:null };
+    const inputState = { up:false, down:false, left:false, right:false, fire:false };
 
     function isUiBlockingInput() {
       return !!activePromptId ||
@@ -1326,72 +1282,39 @@
       return (tag === "input" || tag === "textarea" || tag === "select");
     }
 
-    // ✅ aim tracking (KBM). Server uses aim only if it wants.
-    let lastCamX = 0;
-    let lastCamY = 0;
-    let aimDirty = false;
+    function buildInputPayload(){
+      // Backward compatible: server can ignore aimX/aimY if not used yet.
+      const payload = { ...inputState };
 
-    function isKbmMode(){
-      const m = String(settings?.inputMode || el.inputMode?.value || "kbm");
-      return m.includes("kbm");
+      if (localInputMode === "kbm" && mouseAim.has && lastSnapshot) {
+        const me = lastSnapshot.players?.find(p => p.id === myId);
+        if (me) {
+          // Convert mouse (screen/canvas px) -> world coords using current cam
+          const camXraw = (me.x - VIEW_W / 2);
+          const camYraw = (me.y - VIEW_H / 2);
+          const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
+          const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
+
+          payload.aimX = camX + mouseAim.x;
+          payload.aimY = camY + mouseAim.y;
+        }
+      }
+
+      return payload;
     }
 
     function sendInput(){
-      // keep payload stable: server ignores unknown fields
-      const payload = {
-        up: !!inputState.up,
-        down: !!inputState.down,
-        left: !!inputState.left,
-        right: !!inputState.right,
-        fire: !!inputState.fire,
-      };
-
-      if (isKbmMode() && Number.isFinite(inputState.aimX) && Number.isFinite(inputState.aimY)) {
-        payload.aimX = inputState.aimX;
-        payload.aimY = inputState.aimY;
-      }
-
-      socket.emit("input", payload);
+      socket.emit("input", buildInputPayload());
     }
-
-    function scheduleAimSend(){
-      if (aimDirty) return;
-      aimDirty = true;
-      requestAnimationFrame(() => {
-        aimDirty = false;
-        if (!isGameRunning()) return;
-        if (isUiBlockingInput()) return;
-        if (!isKbmMode()) return;
-        sendInput();
-      });
-    }
-
-    function updateAimFromEvent(e){
-      if (!isGameRunning()) return;
-      if (!isKbmMode()) return;
-
-      const rect = el.canvas.getBoundingClientRect();
-      const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
-      const clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
-
-      const px = clientX - rect.left;
-      const py = clientY - rect.top;
-
-      const worldX = lastCamX + px;
-      const worldY = lastCamY + py;
-
-      inputState.aimX = worldX;
-      inputState.aimY = worldY;
-
-      scheduleAimSend();
-    }
-
-    // pointer events on canvas
-    el.canvas.addEventListener("mousemove", (e) => updateAimFromEvent(e));
-    el.canvas.addEventListener("touchmove", (e) => { updateAimFromEvent(e); }, { passive:true });
 
     function setKey(e, isDown){
       if (!isGameRunning()) return;
+
+      // If upgrade picker is open AND kb-only mode, WASD should navigate UI, not move.
+      if (el.upgradeOverlay.classList.contains("show") && localInputMode === "kb") {
+        return;
+      }
+
       if (isUiBlockingInput()) return;
       if (isTypingInForm(e)) return;
 
@@ -1412,15 +1335,92 @@
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
 
+    // ---- KBM mouse handling (aim + fire + consumables) ----
+    function updateMouseAimFromEvent(e){
+      const rect = el.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      mouseAim.x = Math.max(0, Math.min(VIEW_W, x));
+      mouseAim.y = Math.max(0, Math.min(VIEW_H, y));
+      mouseAim.has = true;
+    }
+
+    el.canvasWrap.addEventListener("mousemove", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      updateMouseAimFromEvent(e);
+      // We do NOT spam sendInput() every mousemove. Direction visuals update locally; server can use aimX/aimY on next input tick.
+    });
+
+    el.canvasWrap.addEventListener("mousedown", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+
+      // block if UI overlays are open
+      if (isUiBlockingInput() || el.upgradeOverlay.classList.contains("show") || el.overlay.classList.contains("show")) return;
+
+      updateMouseAimFromEvent(e);
+
+      // Left click: fire
+      if (e.button === 0) {
+        e.preventDefault();
+        inputState.fire = true;
+        sendInput();
+        return;
+      }
+
+      // Right click: use currently selected consumable slot (1/2/3 selection via wheel)
+      if (e.button === 2) {
+        e.preventDefault();
+        socket.emit("useUpgradeSlot", { slotIndex: activeConsumableSlotIndex });
+        return;
+      }
+    });
+
+    el.canvasWrap.addEventListener("mouseup", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+
+      if (e.button === 0) {
+        e.preventDefault();
+        inputState.fire = false;
+        sendInput();
+      }
+    });
+
+    // prevent context menu so RMB can be used
+    el.canvasWrap.addEventListener("contextmenu", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      e.preventDefault();
+    });
+
+    // mouse wheel cycles consumable slot (0..2)
+    el.canvasWrap.addEventListener("wheel", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      if (isUiBlockingInput() || el.upgradeOverlay.classList.contains("show") || el.overlay.classList.contains("show")) return;
+
+      e.preventDefault();
+      const dir = Math.sign(e.deltaY); // +1 down, -1 up
+      if (dir === 0) return;
+
+      if (dir > 0) activeConsumableSlotIndex = (activeConsumableSlotIndex + 1) % 3;
+      else activeConsumableSlotIndex = (activeConsumableSlotIndex + 2) % 3;
+
+      renderUpgradeBar();
+      showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 700);
+    }, { passive:false });
+
     // Non-movement hotkeys in ONE place (prevents nested/duplicate handlers)
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
-      // end overlay: only allow Enter/Escape to go back (host only)
+      // end overlay: only allow Enter/Escape to go back
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
-          requestBackToLobby();
+          location.reload();
         }
         return;
       }
@@ -1449,12 +1449,33 @@
         return;
       }
 
-      // Upgrade picker open: Escape closes and declines offer server-side
+      // Upgrade picker open:
+      // - Escape closes and declines offer server-side
+      // - In KB-only mode, WASD navigates tiles, Space selects
       if (el.upgradeOverlay.classList.contains("show")) {
         if (e.key === "Escape") {
           e.preventDefault();
           closeUpgradeOffer();
+          return;
         }
+
+        if (localInputMode === "kb") {
+          const k = e.key.toLowerCase();
+
+          // W/A/S/D nav
+          if (k === "w" || e.key === "ArrowUp") { e.preventDefault(); moveUpgradeSel(-upgradePicker.cols); return; }
+          if (k === "s" || e.key === "ArrowDown") { e.preventDefault(); moveUpgradeSel(+upgradePicker.cols); return; }
+          if (k === "a" || e.key === "ArrowLeft") { e.preventDefault(); moveUpgradeSel(-1); return; }
+          if (k === "d" || e.key === "ArrowRight") { e.preventDefault(); moveUpgradeSel(+1); return; }
+
+          // Space selects
+          if (e.code === "Space" || e.key === " ") {
+            e.preventDefault();
+            clickUpgradeSel();
+            return;
+          }
+        }
+
         return;
       }
 
@@ -1496,11 +1517,23 @@
       // Block gameplay hotkeys while any UI is up (extra safety)
       if (isUiBlockingInput()) return;
 
-      // Use upgrade slots 8/9/0 (consumables only)
+      // Use upgrade slots 8/9/0 (legacy keyboard hotkeys)
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
         socket.emit("useUpgradeSlot", { slotIndex });
+        return;
+      }
+
+      // ✅ KBM convenience: 1/2/3 selects slot, RMB uses it
+      if (localInputMode === "kbm") {
+        if (e.key === "1" || e.key === "2" || e.key === "3") {
+          e.preventDefault();
+          activeConsumableSlotIndex = (e.key === "1") ? 0 : (e.key === "2") ? 1 : 2;
+          renderUpgradeBar();
+          showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 650);
+          return;
+        }
       }
     });
 
@@ -1585,6 +1618,38 @@
     });
 
     // ---------- Upgrade UI ----------
+    function setUpgradeSel(i){
+      const btns = upgradePicker.buttons || [];
+      if (!btns.length) return;
+
+      const idx = Math.max(0, Math.min(btns.length - 1, i));
+      upgradePicker.index = idx;
+
+      for (let k = 0; k < btns.length; k++) {
+        btns[k].classList.toggle("sel", k === idx);
+      }
+
+      // keep in view (nice on smaller screens)
+      try {
+        btns[idx].scrollIntoView({ block: "nearest", inline: "nearest" });
+      } catch(_) {}
+    }
+    function moveUpgradeSel(delta){
+      const btns = upgradePicker.buttons || [];
+      if (!btns.length) return;
+
+      let next = upgradePicker.index + delta;
+      if (next < 0) next = 0;
+      if (next >= btns.length) next = btns.length - 1;
+      setUpgradeSel(next);
+    }
+    function clickUpgradeSel(){
+      const btns = upgradePicker.buttons || [];
+      if (!btns.length) return;
+      const b = btns[upgradePicker.index];
+      if (b && typeof b.click === "function") b.click();
+    }
+
     function openUpgradeOffer({ offerId, options }) {
       activeOfferId = offerId;
       el.upgradeMsg.textContent = "";
@@ -1596,6 +1661,12 @@
       const use4 = opts.length >= 10;
       const grid = document.createElement("div");
       grid.className = "upgGrid" + (use4 ? " grid4" : "");
+
+      // reset picker state
+      upgradePicker.open = true;
+      upgradePicker.buttons = [];
+      upgradePicker.cols = use4 ? 4 : 3;
+      upgradePicker.index = 0;
 
       for (const opt of opts) {
         const tile = document.createElement("button");
@@ -1640,10 +1711,14 @@
         });
 
         grid.appendChild(tile);
+        upgradePicker.buttons.push(tile);
       }
 
       el.upgradeList.appendChild(grid);
       el.upgradeOverlay.classList.add("show");
+
+      // highlight first tile for kb navigation
+      setUpgradeSel(0);
     }
 
     function closeUpgradeOffer() {
@@ -1655,6 +1730,9 @@
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
       el.upgradeMsg.className = "msg";
+
+      upgradePicker.open = false;
+      upgradePicker.buttons = [];
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
@@ -1668,6 +1746,9 @@
         el.upgradeList.innerHTML = "";
         el.upgradeMsg.textContent = "";
         el.upgradeMsg.className = "msg";
+
+        upgradePicker.open = false;
+        upgradePicker.buttons = [];
       }
     });
 
@@ -1917,6 +1998,7 @@
 
         const slot = document.createElement("div");
         slot.className = "uSlot";
+        if (localInputMode === "kbm" && i === activeConsumableSlotIndex) slot.classList.add("active");
         slot.title = s?.info?.desc ? s.info.desc : "";
 
         const left = document.createElement("div");
@@ -2217,7 +2299,6 @@
     // ---------------------------
     function getJackBoxesFromSnapshot(snap){
       if (!snap) return null;
-      // try common names
       return (
         (Array.isArray(snap.jackBoxes) ? snap.jackBoxes : null) ||
         (Array.isArray(snap.jackboxes) ? snap.jackboxes : null) ||
@@ -2244,11 +2325,19 @@
         bx: s.bx - camX, by: s.by - camY
       }));
 
-      const dx = (typeof meObj.dirX === "number") ? meObj.dirX : 0;
-      const dy = (typeof meObj.dirY === "number") ? meObj.dirY : 0;
-
-      const hasDir = (dx*dx + dy*dy) > 0.0001;
-      if (hasDir) lastFacingAng = Math.atan2(dy, dx);
+      // ✅ Facing angle:
+      // - If KBM and we have mouse aim, use it for VISUAL cone direction.
+      // - Otherwise fall back to snapshot dir.
+      if (localInputMode === "kbm" && mouseAim.has) {
+        const ax = camX + mouseAim.x;
+        const ay = camY + mouseAim.y;
+        lastFacingAng = Math.atan2(ay - meObj.y, ax - meObj.x);
+      } else {
+        const dx = (typeof meObj.dirX === "number") ? meObj.dirX : 0;
+        const dy = (typeof meObj.dirY === "number") ? meObj.dirY : 0;
+        const hasDir = (dx*dx + dy*dy) > 0.0001;
+        if (hasDir) lastFacingAng = Math.atan2(dy, dx);
+      }
 
       const ang = lastFacingAng;
 
@@ -2739,10 +2828,6 @@
       const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
       const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
 
-      // ✅ store for aim conversion
-      lastCamX = camX;
-      lastCamY = camY;
-
       ctx.clearRect(0,0,VIEW_W,VIEW_H);
 
       ctx.strokeStyle = "rgba(255,255,255,.12)";
@@ -2805,9 +2890,6 @@
 
     // initial render
     renderUpgradeBar();
-
-    // ✅ start screen by default
-    showStartScreen();
   </script>
 </body>
 </html>
