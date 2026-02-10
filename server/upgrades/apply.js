@@ -4,7 +4,7 @@
 // IMPORTANT MODEL (unchanged):
 // - player.upgrades.permSlots: max 3 entries, each { id, count }.
 //   Stacking = increment count for existing id.
-// - player.upgrades.consSlots: max 3 entries, each { id }.
+// - player.upgrades.consSlots: max 3 entries, each { id, usesLeft? }.
 //   No duplicates by id.
 //
 // Money checks (unchanged):
@@ -52,7 +52,7 @@ function ensureUpgradeState(player) {
   if (!player.upgrades) {
     player.upgrades = {
       permSlots: [], // [{id, count}]
-      consSlots: [], // [{id}]
+      consSlots: [], // [{id, usesLeft?}]
     };
   }
   if (!Array.isArray(player.upgrades.permSlots)) player.upgrades.permSlots = [];
@@ -69,7 +69,6 @@ function ensureEffectState(player) {
       // shield points: blocks a death (server decides how)
       shield: 0,
 
-      // ✅ balloon phase (server enforces walls + stun windows)
       // balloon: {
       //   stage: "pre" | "phase" | "post",
       //   untilMs: number,
@@ -81,8 +80,6 @@ function ensureEffectState(player) {
     };
   }
   if (typeof player.effects.shield !== "number") player.effects.shield = 0;
-  // dash can be null or an object; leave as-is
-  // balloon can be null or an object; leave as-is
 }
 
 function getUpgradeByIdSafe(id) {
@@ -117,6 +114,7 @@ function buildOfferOptions(pool) {
     desc: u.desc || "",
     useCost: Number.isFinite(u.useCost) ? u.useCost : 0,
     acquireCost: Number.isFinite(u.acquireCost) ? u.acquireCost : 0,
+    maxUses: Number.isFinite(u.maxUses) ? u.maxUses : undefined,
   }));
 }
 
@@ -130,6 +128,7 @@ function getUpgradeInfo(id) {
     desc: u.desc || "",
     useCost: Number.isFinite(u.useCost) ? u.useCost : 0,
     acquireCost: Number.isFinite(u.acquireCost) ? u.acquireCost : 0,
+    maxUses: Number.isFinite(u.maxUses) ? u.maxUses : undefined,
   };
 }
 
@@ -154,6 +153,39 @@ function getPermCount(player, upgradeId) {
   return Math.max(0, Math.floor(c));
 }
 
+// If upgrade defines maxUses, initialize usesLeft from it.
+function initialUsesLeftForConsumable(up) {
+  const mu = Number.isFinite(up?.maxUses) ? Math.floor(up.maxUses) : NaN;
+  if (!Number.isFinite(mu) || mu <= 0) return undefined;
+  return mu;
+}
+
+// Consume one use (if usesLeft is tracked). Removes slot when it reaches 0.
+// Returns { ok:true, usesLeft:number|undefined, removed:boolean } or {ok:false, reason}
+function consumeConsumableUse(player, upgradeId) {
+  ensureUpgradeState(player);
+  const key = String(upgradeId || "");
+
+  const idx = player.upgrades.consSlots.findIndex((s) => String(s?.id || "") === key);
+  if (idx < 0) return { ok: false, reason: "consumable_not_owned" };
+
+  const slot = player.upgrades.consSlots[idx];
+  const before = slot && Number.isFinite(slot.usesLeft) ? Math.floor(slot.usesLeft) : undefined;
+
+  // If usesLeft is not tracked, treat as infinite (keep slot)
+  if (!Number.isFinite(before)) return { ok: true, usesLeft: undefined, removed: false };
+
+  const after = before - 1;
+
+  if (after <= 0) {
+    player.upgrades.consSlots.splice(idx, 1);
+    return { ok: true, usesLeft: 0, removed: true };
+  }
+
+  slot.usesLeft = after;
+  return { ok: true, usesLeft: after, removed: false };
+}
+
 function canTakeUpgrade(player, upgrade) {
   ensureUpgradeState(player);
 
@@ -162,7 +194,6 @@ function canTakeUpgrade(player, upgrade) {
     if (String(upgrade.id) === "big_nose") {
       const has = findPermanentSlot(player, "big_nose") >= 0;
       if (has) return { ok: false, reason: "already_have" };
-      // must have a free permanent slot
       const maxPerm = Number.isFinite(C.MAX_PERM_SLOTS) ? C.MAX_PERM_SLOTS : 3;
       if (player.upgrades.permSlots.length >= maxPerm) {
         return { ok: false, reason: "perm_slots_full" };
@@ -174,7 +205,6 @@ function canTakeUpgrade(player, upgrade) {
     const idx = findPermanentSlot(player, upgrade.id);
     if (idx >= 0) return { ok: true, mode: "perm_stack" };
 
-    // otherwise must have a free permanent slot
     const maxPerm = Number.isFinite(C.MAX_PERM_SLOTS) ? C.MAX_PERM_SLOTS : 3;
     if (player.upgrades.permSlots.length >= maxPerm) {
       return { ok: false, reason: "perm_slots_full" };
@@ -183,21 +213,15 @@ function canTakeUpgrade(player, upgrade) {
   }
 
   // consumable: no duplicates
-  if (hasConsumable(player, upgrade.id)) {
-    return { ok: false, reason: "already_have" };
-  }
+  if (hasConsumable(player, upgrade.id)) return { ok: false, reason: "already_have" };
 
   const maxCons = Number.isFinite(C.MAX_CONS_SLOTS) ? C.MAX_CONS_SLOTS : 3;
-  if (player.upgrades.consSlots.length >= maxCons) {
-    return { ok: false, reason: "slots_full" };
-  }
+  if (player.upgrades.consSlots.length >= maxCons) return { ok: false, reason: "slots_full" };
 
   return { ok: true, mode: "cons_add" };
 }
 
 // Apply selection (storage only).
-// Permanent stacking increments count.
-// Consumable adds into consSlots (no duplicates).
 function applyUpgradeSelection(player, upgradeId) {
   ensureUpgradeState(player);
 
@@ -220,12 +244,18 @@ function applyUpgradeSelection(player, upgradeId) {
       cur.count = Number.isFinite(cur.count) ? cur.count + 1 : 2;
       return { ok: true, applied: { kind: "permanent_stack", id: up.id, count: cur.count } };
     }
+
     player.upgrades.permSlots.push({ id: up.id, count: 1 });
     return { ok: true, applied: { kind: "permanent_new", id: up.id, count: 1 } };
   }
 
-  player.upgrades.consSlots.push({ id: up.id });
-  return { ok: true, applied: { kind: "consumable_add", id: up.id } };
+  // consumable
+  const usesLeft = initialUsesLeftForConsumable(up);
+  const slot = { id: up.id };
+  if (Number.isFinite(usesLeft)) slot.usesLeft = usesLeft;
+
+  player.upgrades.consSlots.push(slot);
+  return { ok: true, applied: { kind: "consumable_add", id: up.id, usesLeft } };
 }
 
 // Replace a consumable slot item with a new consumable.
@@ -243,21 +273,23 @@ function applyConsumableReplace(player, upgradeId, dropId) {
 
   if (String(up.id) === dropKey) return { ok: false, reason: "already_have" };
 
-  // enforce no duplicates in other slots
   const alreadyElsewhere = player.upgrades.consSlots.some(
     (s, i) => i !== idx && String(s?.id || "") === String(up.id)
   );
   if (alreadyElsewhere) return { ok: false, reason: "already_have" };
 
-  player.upgrades.consSlots[idx] = { id: up.id };
-  return { ok: true, applied: { kind: "consumable_replace", id: up.id, dropped: dropKey } };
+  const usesLeft = initialUsesLeftForConsumable(up);
+  const slot = { id: up.id };
+  if (Number.isFinite(usesLeft)) slot.usesLeft = usesLeft;
+
+  player.upgrades.consSlots[idx] = slot;
+  return { ok: true, applied: { kind: "consumable_replace", id: up.id, dropped: dropKey, usesLeft } };
 }
 
 /* ------------------------------------------------------------------
  * EFFECTS PHASE HELPERS
  * ------------------------------------------------------------------ */
 
-// Compute deterministic modifiers from permanents + temp effects.
 // 🔒 Protocol wants ONLY: { speedMult, visionLenAdd, fovAddDeg }
 function computePlayerMods(player, nowMs) {
   ensureUpgradeState(player);
@@ -283,7 +315,6 @@ function computePlayerMods(player, nowMs) {
     const eff = up?.effect;
     if (!eff || up?.kind !== "permanent") continue;
 
-    // speed multiplier stacks multiplicatively
     if (eff.type === "speed_mult") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
@@ -291,7 +322,6 @@ function computePlayerMods(player, nowMs) {
       speedMult *= Math.pow(per, c);
     }
 
-    // fov add stacks additively
     if (eff.type === "fov_add") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
@@ -299,7 +329,6 @@ function computePlayerMods(player, nowMs) {
       fovAddDeg += addDegPerStack * c;
     }
 
-    // vision length add stacks additively (pixels)
     if (eff.type === "vision_len_add") {
       const maxStacks = Number.isFinite(eff.maxStacks) ? eff.maxStacks : 999;
       const c = Math.min(count, maxStacks);
@@ -314,10 +343,8 @@ function computePlayerMods(player, nowMs) {
     if (Number.isFinite(dash.speedMult)) speedMult *= dash.speedMult;
   }
 
-  // ✅ Balloon does NOT change mods in the locked contract.
-  // (Wall phasing / stun is enforced in server/index.js via effect state + collision rules.)
+  // Balloon does NOT change mods (collision logic is enforced in server/index.js)
 
-  // clamps (keep sane, and keep within client max logic too)
   speedMult = Math.max(0.65, Math.min(speedMult, 3.5));
   fovAddDeg = Math.max(0.0, Math.min(fovAddDeg, 70));
   visionLenAdd = Math.max(0, Math.min(visionLenAdd, 2400));
@@ -327,7 +354,7 @@ function computePlayerMods(player, nowMs) {
 
 // Apply a consumable effect.
 // This does NOT charge money (server/index.js does that).
-// Returns { ok, actions, changed } so server/index.js can apply actions to world/state.
+// ✅ Now consumes usesLeft (if tracked).
 function applyConsumableUse(player, upgradeId, ctx) {
   ensureUpgradeState(player);
   ensureEffectState(player);
@@ -336,10 +363,16 @@ function applyConsumableUse(player, upgradeId, ctx) {
   if (!up) return { ok: false, reason: "invalid_upgrade" };
   if (up.kind !== "consumable") return { ok: false, reason: "not_consumable" };
 
+  // Must actually own it
+  if (!hasConsumable(player, up.id)) return { ok: false, reason: "consumable_not_owned" };
+
   const eff = up.effect || {};
   const now = ctx && Number.isFinite(ctx.nowMs) ? ctx.nowMs : Date.now();
 
   const actions = [];
+
+  // 1) Apply effect
+  let result = null;
 
   switch (eff.type) {
     case "shield_add": {
@@ -347,7 +380,8 @@ function applyConsumableUse(player, upgradeId, ctx) {
       const cap = Number.isFinite(eff.maxShield) ? eff.maxShield : 99;
       const before = player.effects.shield | 0;
       player.effects.shield = Math.min(cap, before + add);
-      return { ok: true, actions, changed: { shield: player.effects.shield } };
+      result = { ok: true, actions, changed: { shield: player.effects.shield } };
+      break;
     }
 
     case "dash": {
@@ -364,7 +398,6 @@ function applyConsumableUse(player, upgradeId, ctx) {
       const untilMs = now + Math.floor(durSec * 1000);
       const cooldownUntilMs = now + Math.floor((durSec + cdSec) * 1000);
 
-      // lock direction at start (supports standing still)
       const dx = Number.isFinite(player.dirX) ? player.dirX : 1;
       const dy = Number.isFinite(player.dirY) ? player.dirY : 0;
       const dlen = Math.hypot(dx, dy) || 1;
@@ -378,11 +411,10 @@ function applyConsumableUse(player, upgradeId, ctx) {
         dirY: dy / dlen,
       };
 
-      if (invulnDuring) {
-        actions.push({ type: "set_invuln_until", untilMs });
-      }
+      if (invulnDuring) actions.push({ type: "set_invuln_until", untilMs });
 
-      return { ok: true, actions, changed: { dashUntil: untilMs } };
+      result = { ok: true, actions, changed: { dashUntil: untilMs } };
+      break;
     }
 
     case "spawn_mine": {
@@ -398,7 +430,8 @@ function applyConsumableUse(player, upgradeId, ctx) {
           armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
         },
       });
-      return { ok: true, actions };
+      result = { ok: true, actions };
+      break;
     }
 
     case "banana_shot": {
@@ -412,11 +445,10 @@ function applyConsumableUse(player, upgradeId, ctx) {
           hitRadiusPlayer: Number.isFinite(eff.hitRadiusPlayer) ? eff.hitRadiusPlayer : 12,
         },
       });
-      return { ok: true, actions };
+      result = { ok: true, actions };
+      break;
     }
 
-    // ✅ NEW: Jack in the Box (fog revealer)
-    // Server will create a persistent world object (jack box) that reveals fog.
     case "jack_box_reveal": {
       actions.push({
         type: "spawn_jack_box_at_player",
@@ -427,15 +459,10 @@ function applyConsumableUse(player, upgradeId, ctx) {
           maxActivePerPlayer: Number.isFinite(eff.maxActivePerPlayer) ? eff.maxActivePerPlayer : 1,
         },
       });
-      return { ok: true, actions };
+      result = { ok: true, actions };
+      break;
     }
 
-    // ✅ NEW: Balloon (wall phase with stun windows)
-    // This sets server-owned timers in player.effects.balloon.
-    // Server/index.js must:
-    // - during PRE/POST: block movement input (stun)
-    // - during PHASE: ignore wall collisions
-    // - at PHASE end: if overlapping a wall => kill player
     case "balloon_phase": {
       const preSec = Number.isFinite(eff.preStunSec) ? eff.preStunSec : 0.5;
       const phaseSec = Number.isFinite(eff.phaseSec) ? eff.phaseSec : 2.0;
@@ -456,23 +483,30 @@ function applyConsumableUse(player, upgradeId, ctx) {
       actions.push({
         type: "start_balloon_phase",
         upgradeId: up.id,
-        params: {
-          preUntilMs,
-          phaseUntilMs,
-          postUntilMs,
-        },
+        params: { preUntilMs, phaseUntilMs, postUntilMs },
       });
 
-      return { ok: true, actions, changed: { balloonUntil: postUntilMs } };
+      result = { ok: true, actions, changed: { balloonUntil: postUntilMs } };
+      break;
     }
 
     default:
       return { ok: false, reason: "no_effect_defined" };
   }
+
+  // 2) Consume a use (if tracked)
+  const useRes = consumeConsumableUse(player, up.id);
+  if (!useRes.ok) return { ok: false, reason: useRes.reason };
+
+  // Attach usesLeft change info (handy for client UI)
+  result.changed = result.changed || {};
+  result.changed.usesLeft = useRes.usesLeft;
+  result.changed.removed = !!useRes.removed;
+
+  return result;
 }
 
-// Optional helper: consume/remove a consumable from a slot by id (if you want "one use then removed").
-// If you want consumables to remain after use, DON'T call this.
+// Optional helper: remove a consumable from a slot by id (manual)
 function removeConsumableById(player, upgradeId) {
   ensureUpgradeState(player);
   const key = String(upgradeId || "");
@@ -492,12 +526,10 @@ module.exports = {
 
   getUpgradeInfo,
 
-  // effects helpers
   computePlayerMods,
   applyConsumableUse,
   removeConsumableById,
 
-  // optional helpers if you ever want them elsewhere
   canTakeUpgrade,
   hasConsumable,
   findPermanentSlot,
