@@ -275,6 +275,26 @@ function pushVictimAwayFromShooter(game, victim, shooter, dist) {
   victim.dirY = dy;
 }
 
+// ✅ NEW: authoritative aim direction helper for shooting.
+// Prefer input.aimX/aimY if non-zero; otherwise fall back to facing dirX/dirY; otherwise default right.
+function getShotDir(player) {
+  const ax = Number(player?.input?.aimX);
+  const ay = Number(player?.input?.aimY);
+  if (Number.isFinite(ax) && Number.isFinite(ay)) {
+    const alen = Math.hypot(ax, ay);
+    if (alen > 1e-6) return { x: ax / alen, y: ay / alen };
+  }
+
+  const dx = Number(player?.dirX);
+  const dy = Number(player?.dirY);
+  if (Number.isFinite(dx) && Number.isFinite(dy)) {
+    const dlen = Math.hypot(dx, dy);
+    if (dlen > 1e-6) return { x: dx / dlen, y: dy / dlen };
+  }
+
+  return { x: 1, y: 0 };
+}
+
 function snapshotForGame(game) {
   const world = getWorldForGame(game);
   const nowMs = Date.now();
@@ -1023,12 +1043,11 @@ setInterval(() => {
           continue;
         }
 
-        const dx = typeof p.dirX === "number" ? p.dirX : 1;
-        const dy = typeof p.dirY === "number" ? p.dirY : 0;
-        const dlen = Math.hypot(dx, dy) || 1;
-
-        const ndx = dx / dlen;
-        const ndy = dy / dlen;
+        // ✅ FIX: shoot direction prefers mouse aim (input.aimX/aimY) when provided,
+        // not only p.dirX/p.dirY (which can remain default (1,0) when standing still).
+        const shot = getShotDir(p);
+        const ndx = shot.x;
+        const ndy = shot.y;
 
         let spawnX = p.x + ndx * (PLAYER_HALF + 6);
         let spawnY = p.y + ndy * (PLAYER_HALF + 6);
@@ -2142,11 +2161,10 @@ io.on("connection", (socket) => {
           const bounces = Number.isFinite(params.bounces) ? Math.floor(params.bounces) : BANANA_DEFAULT_BOUNCES;
           const hitRadiusPlayer = Number.isFinite(params.hitRadiusPlayer) ? params.hitRadiusPlayer : CAKE_HIT_R_PLAYER;
 
-          const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
-          const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
-          const dlen = Math.hypot(dx, dy) || 1;
-          const ndx = dx / dlen;
-          const ndy = dy / dlen;
+          // ✅ FIX: banana also prefers aim direction when present.
+          const shot = getShotDir(p);
+          const ndx = shot.x;
+          const ndy = shot.y;
 
           let spawnX = p.x + ndx * (PLAYER_HALF + 8);
           let spawnY = p.y + ndy * (PLAYER_HALF + 8);
