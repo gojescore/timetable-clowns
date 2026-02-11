@@ -1,4 +1,5 @@
 // server/index.js
+console.log("SERVER BUILD:", "2026-02-11 A");
 const path = require("path");
 const express = require("express");
 const http = require("http");
