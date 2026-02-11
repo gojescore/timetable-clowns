@@ -1,21 +1,17 @@
-# Timetable Clowns — State of the Game (Restart Kit)
+# Timetable Clowns — STATE_OF_THE_GAME.md (Restart Kit)
 
 When starting a NEW chat thread, paste ALL THREE:
-1) STATE_OF_THE_GAME.md
+1) this file (STATE_OF_THE_GAME.md)
 2) PROTOCOL.md
 3) the file currently being edited
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 ---------------------------------------------------------------------
 
-🔒 NON-NEGOTIABLE RULE
+🔒 One-liner that prevents future confusion
 
-Client may display upgrades,
-but must never compute gameplay modifiers from them.
-
-All gameplay modifiers come only from `player.mods`
-computed by the server and sent in `STATE_SNAPSHOT`.
+Client may display upgrades, but must never compute gameplay modifiers from them; modifiers come only from player.mods (server-computed) inside STATE_SNAPSHOT.
 
 ---------------------------------------------------------------------
 
@@ -41,279 +37,132 @@ timetable-clowns/
 
 ---------------------------------------------------------------------
 
-## What is implemented and working
+## What works right now (implemented)
 
 ### Lobby / multiplayer
-- Host / guest flow
-- Join via game code
-- Teams mode:
-  - host can assign teams
-  - start validation requires teams assigned
-- Start validation:
-  - minimum 2 players
-  - teams assigned when mode is `"teams"`
-- Host settings supported:
-  - mode: `"ffa"` / `"teams"`
-  - teamCount: `1–4` (Teams only)
-  - friendlyFire: `true/false` (Teams only)
-  - tableBase: `1–10`
-  - mapChoice: `"map01"` / `"random"`
-  - inputMode: `"kb"` / `"kbm"` / `"kbm_gamepad"` (keyboard authoritative)
-  - sessionMode: `"standard"` / `"timed"`
-  - sessionMinutes: `1–60` (Timed only)
-  - winMode: `"standard"` / `"money"`
+- Host creates game → join code
+- Guests join by code
+- Lobby shows players and settings
+- Teams mode: host can assign teamId (0..teamCount-1)
+- Start game validation:
+  - >= 2 players
+  - Teams mode: all players have teamId
+
+### Map
+- `map01` “Training Hall (10 rooms)”
+- World size: 2400 × 1600
+- 10 rooms each with a machine (1..10)
+- `maps/index.js` builds derived data:
+  - walls generated from room perimeters + openings
+  - machines flattened into `map.machines`
+
+### Movement + collision (server-authoritative)
+- Server tick: 20 Hz
+- Players move with speed = PLAYER_SPEED × me.mods.speedMult
+- Collisions:
+  - walls (AABBs)
+  - machines (solid AABBs)
+- Balloon “phase” can bypass collision (server-controlled)
+
+### Machine progression
+- Interact radius: 60
+- Must clear machines in order (per-player)
+- `tryInteract` → server emits `MATH_PROMPT`
+- `submitAnswer`:
+  - correct: advances, refills cakes, awards money, upgrade offer
+  - wrong: penalty
+
+### Shooting / bullets
+- Cakes:
+  - speed 780
+  - ttl 2.0s
+  - collision: walls/machines destroy bullet
+  - player hit uses sweep segment-circle and respects invuln + friendlyFire
+- Banana shot (consumable projectile):
+  - bounces off walls with limited bounces
+  - dies on machines
+  - uses sweep vs expanded AABBs for robust collision
+
+### Mines
+- Cake Surprise mine:
+  - placed by consumable action
+  - does NOT expire (persists until triggered or game end)
+  - triggers when enemy steps within trigger radius
+  - blast kills within blast radius
+
+### Jack in the Box
+- Spawns a world object that reveals fog in radius
+- TTL is long by default (can be capped)
+- Per-player max active enforced (default 1)
+
+### Dash (Rubber Chicken)
+- Dash is stored server-side in player.effects.dash
+- During dash:
+  - movement direction is forced to dash direction
+  - dash hit checks sweep from previous to current pos
+  - respects friendlyFire and invulnerability
+  - shield can block a dash hit (if implemented in effects)
+
+### Big Nose (bullet-only save)
+- If player has permanent BIG_NOSE and takes a lethal bullet:
+  - consume one stack
+  - grant brief invulnerability
+  - push victim away from shooter safely
+
+### Respawn system
+- On death:
+  - dead player receives `RESPAWN_OPTIONS`
+  - options include:
+    - 4 corners always
+    - any machines that player has cleared
+- `chooseRespawn` spawns at a valid position with invulnerability
+
+### Timed sessions + win modes
+- sessionMode:
+  - standard: end when a player clears machine #10
+  - timed: end when now >= endAt
+- winMode (for leaderboard sorting):
+  - standard: correct > kills > money > fewer deaths
+  - money: money > correct > kills > fewer deaths
+
+### End screen + back to lobby
+- Server emits `GAME_ENDED` and snapshot
+- Only intended next action is “Back to lobby”
+- Host uses `backToLobby`:
+  - server resets match runtime state
+  - emits `RETURNED_TO_LOBBY` and `LOBBY_UPDATE`
 
 ---------------------------------------------------------------------
 
-### Map: map01
-- Name: Training Hall
-- World size: `{ w: 2400, h: 1600 }`
-- 10 rooms
-- Each room has ≥ 2 openings
-- 1 machine per room (1–10)
-- Walls generated server-side
-- Machines are solid (collidable)
-- Map sent to client on `GAME_STARTED` as `{ id, name, world, walls, machines }`
+## “Server sends mods” migration status (CURRENT)
+
+LOCKED and implemented in `server/index.js` snapshot:
+
+- Server computes `mods` using upgrades.computePlayerMods(player, nowMs)
+- Snapshot includes `players[].mods`
+- Client must read mods and must not compute speed/fog from upgrades
+
+mods fields:
+- speedMult (default 1.0)
+- visionLenAdd (default 0)
+- fovAddDeg (default 0)
 
 ---------------------------------------------------------------------
 
-### Movement & collisions
-- Server authoritative
-- Tick rate: `20 Hz`
-- `PLAYER_SPEED = 220 px/s`
-- Player body: `28×28` (PLAYER_HALF = 14)
-- Slide collision resolution: attempt X then Y
-- Collides with:
-  - walls
-  - machines
+## Known fragile areas / common regressions
 
-Client:
-- sends input state (`up/down/left/right/fire`) to server
-- renders from `STATE_SNAPSHOT`
+1) Client accidentally recomputes fog/speed from upgrades instead of mods.
+2) Client event handlers duplicated (nested keydown / multiple socket.on) causing stuck UI or double-actions.
+3) Upgrade decline mismatch (server expects `declineUpgrade { offerId }` and client not clearing overlay on `UPGRADE_DECLINED` / `UPGRADE_RESULT`).
+4) “Hard refresh” (Shift+Ctrl+R) triggers favicon.ico request; harmless 404 unless you want to add favicon.
 
 ---------------------------------------------------------------------
 
-### Machine progression (1 → 10)
-- Each player has `nextMachineNum` starting at `1`
-- Machines must be completed strictly in order
-- Interact key: `E` (client sends `tryInteract`)
+## How to continue in a new thread (workflow)
 
-Server denies invalid interaction:
-- `INTERACT_DENIED { reason:"wrong_order", nextMachineNum, tried }`
-- `INTERACT_DENIED { reason:"already_cleared", nextMachineNum, tried }`
+When you open a new chat:
+1) Paste PROTOCOL.md (full)
+2) Paste STATE_OF_THE_GAME.md (full)
+3) Paste the single file you want to work on next (e.g., client/index.html)
 
-Math prompt:
-- server emits `MATH_PROMPT { promptId, base, machineNum }`
-- client shows overlay (blocks gameplay input)
-- client submits `submitAnswer { promptId, answer }`
-- server emits `ANSWER_RESULT { ok, correct? }`
-
----------------------------------------------------------------------
-
-### Shooting (cakes)
-- Server authoritative
-- `BULLET_SPEED = 780 px/s`
-- `BULLET_TTL = 2.0s`
-- `FIRE_COOLDOWN = 0.5s`
-
-Removed on:
-- TTL expiry
-- world exit
-- wall hit
-- machine hit
-- player hit
-
-Client:
-- renders bullets from `STATE_SNAPSHOT.bullets[]`
-- supports bullet kinds (visuals):
-  - default: cake (`🍰`)
-  - banana shot: banana render when `bullet.kind === "banana"`
-  - cake surprise visuals use `kind === "cake_surprise"` (if present)
-
----------------------------------------------------------------------
-
-### Ammo
-- `MAX_CAKES = 7`
-- Shooting consumes 1 cake
-- Refills on correct machine answer (server rule)
-
----------------------------------------------------------------------
-
-### Economy (money)
-- Starting money: `$100`
-- Money pickups:
-  - `type: "money"`
-  - default amount: `100`
-- Fully server-side:
-  - spawn
-  - collection
-  - rewards
-- Client renders money pickups from `STATE_SNAPSHOT.pickups[]`
-
----------------------------------------------------------------------
-
-## Upgrades (IMPLEMENTED and working)
-
-### Server-side upgrade model
-- Upgrades are offered only by the server (after correct answers)
-- Client UI displays offers and sends selections
-- Client never applies gameplay modifiers from upgrades
-- Gameplay modifiers come only from `player.mods` in snapshots
-
-### Permanent upgrades (stacking unless stated)
-- XL Shoes (stacking) → affects `mods.speedMult`
-- Big Eyes (stacking) → affects `mods.fovAddDeg`
-- Giraffoscope (stacking) → affects `mods.visionLenAdd`
-- Big Nose (special permanent: disposable, non-stacking, max 1 at a time) → combat rule, NOT `mods`
-
-### Consumable upgrades (3 hotkey slots)
-Slots:
-- slot 0: key `8`
-- slot 1: key `9`
-- slot 2: key `0`
-
-Rules:
-- no duplicate consumable ids
-- paid on use (`useCost`)
-- if slots are full, server returns `UPGRADE_RESULT { ok:false, reason:"slots_full", requested, slots }`
-- client must run replace flow and send `chooseUpgradeReplace { offerId, upgradeId, dropId }`
-
-Consumables implemented:
-- Cake Surprise (mine/trap style)
-- Rubber Chicken (dash)
-- Banana Shot (bouncing projectile)
-- Glasses (implemented; behavior server-side)
-
----------------------------------------------------------------------
-
-### Big Nose (current behavior)
-- Stored as a permanent upgrade type
-- Max 1 Big Nose at a time
-- Blocks ONE lethal cake projectile hit
-- Consumed immediately after trigger
-- Removed from player upgrades after trigger
-- Must be rebought via future upgrade offers
-- Not part of `player.mods` (special server combat rule)
-
----------------------------------------------------------------------
-
-### Mods (server-computed) — LOCKED
-Each player includes:
-
-mods: {
-  speedMult,     // default 1.0
-  visionLenAdd,  // default 0 (pixels)
-  fovAddDeg      // default 0 (degrees)
-}
-
-Client fog-of-war uses ONLY these values (plus its base constants).
-Client must never compute mods from `player.upgrades`.
-
----------------------------------------------------------------------
-
-### Death, invulnerability, and respawn
-- Server authoritative
-- Death sets `alive = false`
-- Server emits:
-  - `PLAYER_DIED { playerId }`
-  - `RESPAWN_OPTIONS { killedBy?, options:[{id,label,kind}] }` (private to dead player)
-
-Respawn:
-- options include:
-  - corners
-  - cleared machines (when available)
-- mandatory selection (no cancel)
-- server applies brief invulnerability:
-  - `invulnUntil` timestamp on player
-- client shows HUD indicator and blink (UI only)
-
-Client sends:
-- `chooseRespawn { spawnId }`
-
-Server replies:
-- `RESPAWN_RESULT { ok, reason? }`
-
----------------------------------------------------------------------
-
-### Timed sessions
-- `endAt` tracked server-side
-- included in:
-  - `GAME_STARTED` (when timed)
-  - `STATE_SNAPSHOT` (during running phase)
-- client shows HUD timer (counts down to `endAt`)
-- ends on timeout with `GAME_ENDED { reason:"time" }`
-
----------------------------------------------------------------------
-
-### Game end
-Reasons:
-- `machine10`
-- `time`
-
-Server emits:
-GAME_ENDED {
-  reason,
-  endedAt,
-  winnerId,
-  winnerName,
-  winnerTeamId,
-  leaderboard,
-  winMode
-}
-
-Client:
-- shows large end modal
-- big winner banner (Teams mode shows “TEAM N”)
-- highlights winner rows
-- only action: “Back to lobby” (reload)
-
----------------------------------------------------------------------
-
-## Authoritative snapshot shape (CURRENT)
-
-`STATE_SNAPSHOT` includes:
-
-{
-  time,
-  world,
-  phase,
-  endAt?,          // present for timed sessions
-  pickups,         // money pickups
-  mines?,          // if server sends mines/traps list
-  bullets,
-  players: [{
-    id,
-    name,
-    teamId,
-    x, y,
-    dirX, dirY,
-    money,
-    cakes,
-    alive,
-    invulnUntil,
-    nextMachineNum,
-    upgrades: {
-      permanent,    // [{id,count,info}]
-      slots         // [{id,info}] length up to 3
-    },
-    mods: {
-      speedMult,
-      visionLenAdd,
-      fovAddDeg
-    },
-    stats: {
-      kills,
-      deaths,
-      correct
-    }
-  }]
-}
-
-Notes:
-- `players[].mods` is the ONLY source of gameplay modifiers for the client.
-- Mines/traps/bombs may appear under `mines` (or other server field name); client renderer can be defensive.
-
----------------------------------------------------------------------
-
-This file represents **what is real right now**.
-If code and docs disagree, **code wins until this file is updated**.
+Then say what is broken and what you expect to happen.
