@@ -97,10 +97,17 @@
       /* ✅ maximize viewport height (less wasted top space) */
       height: calc(100vh - 60px);
       max-height: 980px;
+
+      /* ✅ smoother pointer feel + no selection */
+      user-select:none;
+      -webkit-user-select:none;
+      touch-action:none;
     }
 
-    /* ✅ Hide cursor in-game (KBM aim still works) */
-    body.inGame .canvasWrap{ cursor:default; }
+    /* ✅ Cursor rules:
+       - hide arrow ONLY while in-game
+       - we draw our own dot crosshair in canvas */
+    body.inGame .canvasWrap{ cursor:none; }
 
     /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
@@ -861,6 +868,16 @@
     // ✅ KBM aiming: mouse position inside canvas (CSS pixels)
     const mouseAim = { x: 0, y: 0, has: false };
 
+    // ✅ upgrade bar perf: only rebuild DOM when upgrade contents change
+    let lastUpgSig = "";
+    function computeUpgSig(u){
+      const perm = Array.isArray(u?.permanent) ? u.permanent : [];
+      const cons = Array.isArray(u?.slots) ? u.slots : [];
+      const p = perm.map(x => `${x?.id||""}:${Number.isFinite(x?.count)?x.count:1}`).join("|");
+      const c = cons.map(x => `${x?.id||""}`).join("|");
+      return p + "||" + c;
+    }
+
     // ✅ timed session UI/runtime
     let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
     function formatMMSS(msLeft){
@@ -869,20 +886,20 @@
       const ss = s % 60;
       return String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
     }
-    function updateTimerHudFromSnapshot(snap){
+    function updateTimerHudFromSnapshot(snap, nowMs){
       const endAt = Number.isFinite(snap?.endAt) ? snap.endAt : (Number.isFinite(gameEndAt) ? gameEndAt : null);
       if (!endAt) {
         el.hudTimer.classList.add("hidden");
         return;
       }
       gameEndAt = endAt;
-      const msLeft = endAt - Date.now();
+      const msLeft = endAt - nowMs;
       el.hudTimer.classList.remove("hidden");
       el.hudTimerText.textContent = msLeft > 0 ? formatMMSS(msLeft) : "00:00";
     }
-    function updateTimerHudFrame(){
+    function updateTimerHudFrame(nowMs){
       if (!Number.isFinite(gameEndAt)) return;
-      const msLeft = gameEndAt - Date.now();
+      const msLeft = gameEndAt - nowMs;
       el.hudTimer.classList.remove("hidden");
       el.hudTimerText.textContent = formatMMSS(msLeft);
     }
@@ -894,14 +911,13 @@
     }
 
     // ✅ invuln HUD update (driven by latest snapshot each frame)
-    function updateInvulnHudFromMe(me) {
+    function updateInvulnHudFromMe(me, nowMs) {
       if (!me || me.alive === false) {
         el.hudInvuln.classList.add("hidden");
         return;
       }
       const until = Number.isFinite(me.invulnUntil) ? me.invulnUntil : 0;
-      const now = Date.now();
-      const msLeft = until - now;
+      const msLeft = until - nowMs;
 
       if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
         el.hudInvuln.classList.remove("hidden");
@@ -927,13 +943,13 @@
 
       return 0;
     }
-    function updateBalloonHudFromMe(me){
+    function updateBalloonHudFromMe(me, nowMs){
       if (!me || me.alive === false) {
         el.hudBalloon.classList.add("hidden");
         return;
       }
       const until = getBalloonUntilFromMe(me);
-      const msLeft = (Number.isFinite(until) ? until : 0) - Date.now();
+      const msLeft = (Number.isFinite(until) ? until : 0) - nowMs;
       if (msLeft > 80) {
         el.hudBalloon.classList.remove("hidden");
         el.hudBalloonText.textContent = "BAL " + (msLeft / 1000).toFixed(1) + "s";
@@ -1048,6 +1064,34 @@
 
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
+    // -----------------------------
+    // ✅ Fog perf caches (visual-only)
+    // -----------------------------
+    let wallSegsWorld = [];   // {ax,ay,bx,by} in WORLD coords
+    let wallCornersWorld = []; // {x,y} in WORLD coords
+
+    function rebuildWallCachesFromMap(m){
+      wallSegsWorld = [];
+      wallCornersWorld = [];
+
+      const walls = m?.walls;
+      if (!Array.isArray(walls)) return;
+
+      for (const w of walls) {
+        const x = w.x, y = w.y, ww = w.w, hh = w.h;
+
+        wallSegsWorld.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
+        wallSegsWorld.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
+        wallSegsWorld.push({ ax:x+ww,  ay:y+hh,  bx:x,     by:y+hh  });
+        wallSegsWorld.push({ ax:x,     ay:y+hh,  bx:x,     by:y     });
+
+        wallCornersWorld.push({ x: x,      y: y      });
+        wallCornersWorld.push({ x: x + ww, y: y      });
+        wallCornersWorld.push({ x: x + ww, y: y + hh });
+        wallCornersWorld.push({ x: x,      y: y + hh });
+      }
+    }
+
     socket.on("GAME_STARTED", (payload = {}) => {
       document.body.classList.add("inGame");
 
@@ -1077,8 +1121,9 @@
       }
 
       myServerUpgrades = { permanent: [], slots: [] };
+      lastUpgSig = "";
       activeConsumableSlotIndex = 0;
-      renderUpgradeBar();
+      renderUpgradeBar(true);
 
       // reset kb picker
       upgradePicker = { buttons: [], cols: 3, index: 0, open: false };
@@ -1087,13 +1132,17 @@
 
       // ✅ reset mouse aim state each round (prevents stale values)
       mouseAim.has = false;
+
+      // ✅ rebuild fog caches for this map (visual-only)
+      rebuildWallCachesFromMap(mapData);
     });
 
     socket.on("STATE_SNAPSHOT", (snap) => {
       lastSnapshot = snap;
       if (snap.world) world = snap.world;
 
-      updateTimerHudFromSnapshot(snap);
+      const nowMs = Date.now();
+      updateTimerHudFromSnapshot(snap, nowMs);
 
       const me = snap.players?.find(p => p.id === myId);
       if (me) {
@@ -1101,11 +1150,11 @@
         el.hudLife.textContent = me.alive === false ? "0" : "1";
         el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
-        updateInvulnHudFromMe(me);
-        updateBalloonHudFromMe(me);
+        updateInvulnHudFromMe(me, nowMs);
+        updateBalloonHudFromMe(me, nowMs);
 
         myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
-        renderUpgradeBar();
+        renderUpgradeBar(false);
       }
     });
 
@@ -1358,10 +1407,11 @@
     window.addEventListener("keyup", (e) => setKey(e, false));
 
     // ---- KBM mouse handling (aim + fire + consumables) ----
-    function updateMouseAimFromEvent(e){
+    // ✅ pointer-based aim feels snappier across browsers than mousemove
+    function updateMouseAimFromClientXY(clientX, clientY){
       const rect = el.canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
 
       // ✅ clamp using rect size (NOT VIEW_W/VIEW_H, which can be stale early)
       const clampX = Math.max(0, Math.min(rect.width, x));
@@ -1372,11 +1422,22 @@
       mouseAim.has = true;
     }
 
-    el.canvasWrap.addEventListener("mousemove", (e) => {
+    el.canvasWrap.addEventListener("pointermove", (e) => {
       if (!isGameRunning()) return;
       if (localInputMode !== "kbm") return;
-      updateMouseAimFromEvent(e);
-      // We do NOT spam sendInput() every mousemove.
+      updateMouseAimFromClientXY(e.clientX, e.clientY);
+      // We do NOT spam sendInput() every pointermove.
+    }, { passive:true });
+
+    el.canvasWrap.addEventListener("pointerenter", (e) => {
+      if (!isGameRunning()) return;
+      if (localInputMode !== "kbm") return;
+      updateMouseAimFromClientXY(e.clientX, e.clientY);
+    }, { passive:true });
+
+    el.canvasWrap.addEventListener("pointerleave", () => {
+      // ✅ hide crosshair when pointer is outside arena
+      mouseAim.has = false;
     });
 
     el.canvasWrap.addEventListener("mousedown", (e) => {
@@ -1386,7 +1447,7 @@
       // block if UI overlays are open
       if (isUiBlockingInput() || el.upgradeOverlay.classList.contains("show") || el.overlay.classList.contains("show")) return;
 
-      updateMouseAimFromEvent(e);
+      updateMouseAimFromClientXY(e.clientX, e.clientY);
 
       // Left click: fire
       if (e.button === 0) {
@@ -1435,7 +1496,7 @@
       if (dir > 0) activeConsumableSlotIndex = (activeConsumableSlotIndex + 1) % 3;
       else activeConsumableSlotIndex = (activeConsumableSlotIndex + 2) % 3;
 
-      renderUpgradeBar();
+      renderUpgradeBar(true); // force to reflect "active" highlight
       showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 700);
     }, { passive:false });
 
@@ -1557,7 +1618,7 @@
         if (e.key === "1" || e.key === "2" || e.key === "3") {
           e.preventDefault();
           activeConsumableSlotIndex = (e.key === "1") ? 0 : (e.key === "2") ? 1 : 2;
-          renderUpgradeBar();
+          renderUpgradeBar(true);
           showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 650);
           return;
         }
@@ -2011,7 +2072,13 @@
     });
 
     // ===== Upgrade bar render (two sections) =====
-    function renderUpgradeBar() {
+    function renderUpgradeBar(force){
+      const sig = computeUpgSig(myServerUpgrades);
+
+      // If not forced, only rerender when upgrade contents changed.
+      if (!force && sig === lastUpgSig) return;
+      lastUpgSig = sig;
+
       el.upgradeSlotsCons.innerHTML = "";
       el.upgradeSlotsPerm.innerHTML = "";
 
@@ -2125,6 +2192,10 @@
     let VIEW_W = 900;
     let VIEW_H = 520;
 
+    // ✅ fog canvas sizing only when needed
+    let lastFogW = -1;
+    let lastFogH = -1;
+
     function resizeCanvasToDisplaySize() {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -2176,6 +2247,9 @@
       visCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       edgeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      lastFogW = VIEW_W;
+      lastFogH = VIEW_H;
     }
 
     const FOG_ENABLED = true;
@@ -2225,19 +2299,6 @@
       return dx*dx + dy*dy;
     }
 
-    function segsFromWalls(walls){
-      const segs = [];
-      if (!Array.isArray(walls)) return segs;
-      for (const w of walls) {
-        const x = w.x, y = w.y, ww = w.w, hh = w.h;
-        segs.push({ ax:x,     ay:y,     bx:x+ww,  by:y     });
-        segs.push({ ax:x+ww,  ay:y,     bx:x+ww,  by:y+hh  });
-        segs.push({ ax:x+ww,  ay:y+hh,  bx:x,     by:y+hh  });
-        segs.push({ ax:x,     ay:y+hh,  bx:x,     by:y     });
-      }
-      return segs;
-    }
-
     function raySegIntersection(px, py, rx, ry, ax, ay, bx, by){
       const sx = bx - ax, sy = by - ay;
       const rxs = rx*sy - ry*sx;
@@ -2253,12 +2314,13 @@
       return null;
     }
 
-    function castRayToWalls(px, py, ang, maxLen, segs){
+    // ✅ Ray cast in WORLD coords (no per-frame segment transforms)
+    function castRayToWallsWorld(px, py, ang, maxLen, segsWorld){
       const rx = Math.cos(ang);
       const ry = Math.sin(ang);
       let bestT = maxLen;
 
-      for (const s of segs) {
+      for (const s of segsWorld) {
         const hit = raySegIntersection(px, py, rx, ry, s.ax, s.ay, s.bx, s.by);
         if (hit && hit.t < bestT) bestT = hit.t;
       }
@@ -2266,22 +2328,12 @@
       return { x: px + rx * bestT, y: py + ry * bestT };
     }
 
-    function getWallCornerAngles(px, py) {
+    function getWallCornerAnglesWorld(px, py) {
       const out = [];
-      const walls = mapData?.walls;
-      if (!Array.isArray(walls)) return out;
-
-      for (const w of walls) {
-        const corners = [
-          { x: w.x, y: w.y },
-          { x: w.x + w.w, y: w.y },
-          { x: w.x + w.w, y: w.y + w.h },
-          { x: w.x, y: w.y + w.h },
-        ];
-        for (const c of corners) {
-          const ang = Math.atan2(c.y - py, c.x - px);
-          out.push(ang - 0.0008, ang, ang + 0.0008);
-        }
+      // corners are cached per map
+      for (const c of wallCornersWorld) {
+        const ang = Math.atan2(c.y - py, c.x - px);
+        out.push(ang - 0.0008, ang, ang + 0.0008);
       }
       return out;
     }
@@ -2294,7 +2346,8 @@
         if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
       }
 
-      const samples = 220;
+      // ✅ fewer samples (visual-only perf)
+      const samples = 160;
       for (let i = 1; i < samples; i++) {
         const t = i / samples;
         angles.push((baseAng - halfAng) + (2*halfAng)*t);
@@ -2304,17 +2357,18 @@
       return angles;
     }
 
-    function fillConeFromPlayerApex(ctx2, px, py, baseAng, halfAng, maxLen, segs, extraAngles) {
+    // ✅ Fill cone by casting in WORLD, drawing in SCREEN (cam-subtracted)
+    function fillConeFromPlayerApexWorld(ctx2, pxW, pyW, camX, camY, baseAng, halfAng, maxLen, segsWorld, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
       const outer = [];
       for (const a of angles) {
-        const hit = castRayToWalls(px, py, a, maxLen, segs);
-        outer.push({ x: hit.x, y: hit.y });
+        const hit = castRayToWallsWorld(pxW, pyW, a, maxLen, segsWorld);
+        outer.push({ x: hit.x - camX, y: hit.y - camY });
       }
       if (outer.length < 2) return false;
 
       ctx2.beginPath();
-      ctx2.moveTo(px, py);
+      ctx2.moveTo(pxW - camX, pyW - camY);
       for (const p of outer) ctx2.lineTo(p.x, p.y);
       ctx2.closePath();
       ctx2.fill();
@@ -2337,20 +2391,12 @@
     // ---------------------------
     // ✅ Fog mask + JackBox reveal sources (UI only)
     // ---------------------------
-    function renderFogMask(meObj, camX, camY) {
+    function renderFogMask(meObj, camX, camY, nowMs) {
       if (!FOG_ENABLED) return;
       if (!meObj) return;
 
-      resizeFogCanvases();
-
-      const meX = meObj.x - camX;
-      const meY = meObj.y - camY;
-
-      const segsWorld = segsFromWalls(mapData?.walls || []);
-      const segs = segsWorld.map(s => ({
-        ax: s.ax - camX, ay: s.ay - camY,
-        bx: s.bx - camX, by: s.by - camY
-      }));
+      // ✅ only resize fog buffers if view changed
+      if (VIEW_W !== lastFogW || VIEW_H !== lastFogH) resizeFogCanvases();
 
       // ✅ Facing angle:
       // - If KBM and we have mouse aim, use it for VISUAL cone direction.
@@ -2371,7 +2417,7 @@
       const coneDeg = getConeAngleDegForMe(meObj);
       const half = (coneDeg * Math.PI / 180) / 2;
 
-      const cornerAngles = getWallCornerAngles(meObj.x, meObj.y);
+      const cornerAngles = getWallCornerAnglesWorld(meObj.x, meObj.y);
       const visionLen = getVisionLenForMe(meObj);
 
       visCtx.save();
@@ -2381,25 +2427,24 @@
 
       // base: player cone
       visCtx.fillStyle = "rgba(255,255,255,1)";
-      const okCone = fillConeFromPlayerApex(
-        visCtx, meX, meY, ang, half, visionLen, segs, cornerAngles
+      const okCone = fillConeFromPlayerApexWorld(
+        visCtx, meObj.x, meObj.y, camX, camY, ang, half, visionLen, wallSegsWorld, cornerAngles
       );
 
       // tiny dot at player
       visCtx.beginPath();
-      visCtx.arc(meX, meY, 2, 0, Math.PI*2);
+      visCtx.arc(meObj.x - camX, meObj.y - camY, 2, 0, Math.PI*2);
       visCtx.fill();
 
       if (!okCone) {
         visCtx.beginPath();
-        visCtx.arc(meX, meY, 80, 0, Math.PI*2);
+        visCtx.arc(meObj.x - camX, meObj.y - camY, 80, 0, Math.PI*2);
         visCtx.fill();
       }
 
       // ✅ extra visibility from Jack-in-the-Box (if server sends them)
       const jacks = getJackBoxesFromSnapshot(lastSnapshot);
       if (Array.isArray(jacks) && jacks.length) {
-        const now = Date.now();
         const myTeam = (Number.isFinite(meObj.teamId) ? meObj.teamId : null);
 
         for (const jb of jacks) {
@@ -2415,7 +2460,7 @@
                       : Number.isFinite(jb.untilMs) ? jb.untilMs
                       : Number.isFinite(jb.expiresAt) ? jb.expiresAt
                       : 0;
-          if (until && (until - now) <= 0) continue;
+          if (until && (until - nowMs) <= 0) continue;
 
           const r = Number.isFinite(jb.radius) ? jb.radius
                   : Number.isFinite(jb.revealRadius) ? jb.revealRadius
@@ -2761,16 +2806,16 @@
       }
     }
 
-    function drawPlayerBody(p, camX, camY, isMe){
+    function drawPlayerBody(p, camX, camY, isMe, nowMs){
       if (p.alive === false) return;
 
       const px = p.x - camX;
       const py = p.y - camY;
 
       const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-      const invuln = (until - Date.now()) > INVULN_SHOW_THRESHOLD_MS;
+      const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
 
-      const blinkOff = invuln && ((Date.now() % 240) < 110);
+      const blinkOff = invuln && ((nowMs % 240) < 110);
       if (blinkOff) return;
 
       ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
@@ -2795,9 +2840,9 @@
       // intentionally empty (names hidden)
     }
 
-    function drawSpeechBubble(meWorldX, meWorldY, camX, camY) {
+    function drawSpeechBubble(meWorldX, meWorldY, camX, camY, nowMs) {
       if (!bubble) return;
-      if (Date.now() > bubble.untilMs) { bubble = null; return; }
+      if (nowMs > bubble.untilMs) { bubble = null; return; }
 
       const text = bubble.text;
       const x = meWorldX - camX;
@@ -2838,16 +2883,39 @@
       ctx.lineWidth = 1;
     }
 
+    function drawCrosshair(){
+      // ✅ dot-only crosshair (arrow hidden via CSS cursor:none)
+      if (!mouseAim.has) return;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.beginPath();
+      ctx.arc(mouseAim.x, mouseAim.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "white";
+      ctx.fill();
+
+      // subtle outline for visibility
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(0,0,0,.55)";
+      ctx.stroke();
+
+      ctx.restore();
+      ctx.lineWidth = 1;
+    }
+
     function draw(){
       if (!lastSnapshot) return;
 
+      const nowMs = Date.now();
+
       resizeCanvasToDisplaySize();
+      if (VIEW_W !== lastFogW || VIEW_H !== lastFogH) resizeFogCanvases();
 
       const me = lastSnapshot.players.find(p => p.id === myId);
 
-      updateInvulnHudFromMe(me);
-      updateBalloonHudFromMe(me);
-      updateTimerHudFrame();
+      updateInvulnHudFromMe(me, nowMs);
+      updateBalloonHudFromMe(me, nowMs);
+      updateTimerHudFrame(nowMs);
 
       const camXraw = me ? (me.x - VIEW_W / 2) : 0;
       const camYraw = me ? (me.y - VIEW_H / 2) : 0;
@@ -2869,11 +2937,11 @@
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
-        drawPlayerBody(p, camX, camY, p.id === myId);
+        drawPlayerBody(p, camX, camY, p.id === myId, nowMs);
       }
 
       if (me) {
-        renderFogMask(me, camX, camY);
+        renderFogMask(me, camX, camY, nowMs);
 
         if (DEBUG_SHOW_VIS) {
           ctx.save();
@@ -2906,18 +2974,10 @@
         drawPlayerLabel(p, camX, camY);
       }
 
-      if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY);
-      // === Crosshair ===
+      if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY, nowMs);
 
-      if (mouseAim && mouseAim.has) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(mouseAim.x, mouseAim.y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = "white";
-        ctx.fill();
-        ctx.restore();
-        }
-
+      // ✅ draw crosshair LAST so it never hides under fog/walls
+      drawCrosshair();
     }
 
     function loop(){
@@ -2927,7 +2987,7 @@
     requestAnimationFrame(loop);
 
     // initial render
-    renderUpgradeBar();
+    renderUpgradeBar(true);
   </script>
 </body>
 </html>
