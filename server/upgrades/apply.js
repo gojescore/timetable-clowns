@@ -426,7 +426,7 @@ function applyConsumableUse(player, upgradeId, ctx) {
           triggerRadius: Number.isFinite(eff.triggerRadius) ? eff.triggerRadius : 32,
           blastRadius: Number.isFinite(eff.blastRadius) ? eff.blastRadius : 90,
           damage: Number.isFinite(eff.damage) ? eff.damage : 1,
-          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : 25,
+          ttlSec: Number.isFinite(eff.ttlSec) ? eff.ttlSec : null,
           armDelaySec: Number.isFinite(eff.armDelaySec) ? eff.armDelaySec : 0.6,
         },
       });
