@@ -299,7 +299,7 @@ function snapshotForGame(game) {
           triggerR: Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R,
           blastR: Number.isFinite(m.blastR) ? m.blastR : MINE_BLAST_R,
           r: Number.isFinite(m.r) ? m.r : 26,
-          kind: m.kind || MINE_KIND_CAKE_SURPRISE, // ✅ optional for client/debug
+          kind: m.kind || MINE_KIND_CAKE_SURPRISE,
         }))
       : [],
     jackBoxes: Array.isArray(game.jackBoxes)
@@ -711,7 +711,6 @@ function resetGameToLobby(game) {
     p.stats = { kills: 0, deaths: 0, correct: 0 };
 
     // clear input (includes aim)
-    // NOTE: aimWorldX/Y are world coords; aimDirX/Y are normalized direction
     p.input = {
       up: false,
       down: false,
@@ -859,7 +858,6 @@ setInterval(() => {
       const prevPY = p.y;
 
       // ✅ Aim presence (KBM): compute a normalized direction from stored aim info.
-      // We store BOTH: aimWorldX/Y (cursor in world coords) and/or aimDirX/Y (already normalized).
       let aimDX = 0;
       let aimDY = 0;
 
@@ -897,7 +895,6 @@ setInterval(() => {
         vx = 0;
         vy = 0;
 
-        // optional: allow facing to update from aim even while standing (your previous behavior)
         if (hasAim) {
           p.dirX = aimDX;
           p.dirY = aimDY;
@@ -910,7 +907,6 @@ setInterval(() => {
         vx = dx / dlen;
         vy = dy / dlen;
 
-        // Ensure facing matches dash direction
         p.dirX = vx;
         p.dirY = vy;
       } else {
@@ -1070,7 +1066,6 @@ setInterval(() => {
       // ---- shooting ----
       p.fireCd = Math.max(0, (p.fireCd || 0) - dt);
 
-      // ✅ balloon pre/post OR UI-block = no shooting
       const wantsFire = !stunnedByBalloon && !uiBlocksGameplay && !!p.input?.fire;
 
       if (wantsFire && p.fireCd <= 0) {
@@ -1280,16 +1275,7 @@ setInterval(() => {
             break;
           }
 
-          const refl = reflectVelocityOnAABBHit(
-            hitX,
-            hitY,
-            bestHit.rx,
-            bestHit.ry,
-            bestHit.rw,
-            bestHit.rh,
-            b.vx,
-            b.vy
-          );
+          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1319,9 +1305,7 @@ setInterval(() => {
                 const shooter = game.players.get(b.ownerId);
                 shooterTeam = shooter ? shooter.teamId : shooterTeam;
               }
-              if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) {
-                continue;
-              }
+              if (shooterTeam !== undefined && shooterTeam !== null && p.teamId === shooterTeam) continue;
             }
           }
 
@@ -1428,7 +1412,7 @@ setInterval(() => {
         continue;
       }
 
-      // ✅ FIX: Cake Surprise should NOT expire. Only expire mines that are NOT cake_surprise.
+      // ✅ Cake Surprise does NOT expire. Only expire mines that are NOT cake_surprise.
       const kind = m.kind || MINE_KIND_CAKE_SURPRISE;
       if (kind !== MINE_KIND_CAKE_SURPRISE && Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
         game.mines.splice(i, 1);
@@ -1880,10 +1864,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // ✅ IMPORTANT FIX:
-    // Treat payload.aimX / payload.aimY as *WORLD COORDINATES* (cursor in world),
-    // and store them as aimWorldX/Y.
-    // Also accept a fallback where aimX/aimY are already a direction (small values near -1..1).
+    // Treat payload.aimX/aimY as WORLD coords (or as dir if looks like -1..1 vector)
     const rx = Number(payload.aimX);
     const ry = Number(payload.aimY);
 
@@ -1893,8 +1874,6 @@ io.on("connection", (socket) => {
     let aimDirY = 0;
 
     if (Number.isFinite(rx) && Number.isFinite(ry)) {
-      // Heuristic: if values look like a unit-ish vector, treat as direction
-      // (world coords are typically 0..2400 and 0..1600, so this is safe).
       const looksLikeDir = Math.abs(rx) <= 2 && Math.abs(ry) <= 2 && Math.hypot(rx, ry) <= 2;
 
       if (looksLikeDir) {
@@ -1937,20 +1916,12 @@ io.on("connection", (socket) => {
     if (!machine) return;
 
     if (p.clearedMachines.has(machine.id)) {
-      socket.emit("INTERACT_DENIED", {
-        reason: "already_cleared",
-        nextMachineNum: p.nextMachineNum,
-        tried: machine.num,
-      });
+      socket.emit("INTERACT_DENIED", { reason: "already_cleared", nextMachineNum: p.nextMachineNum, tried: machine.num });
       return;
     }
 
     if (machine.num !== p.nextMachineNum) {
-      socket.emit("INTERACT_DENIED", {
-        reason: "wrong_order",
-        nextMachineNum: p.nextMachineNum,
-        tried: machine.num,
-      });
+      socket.emit("INTERACT_DENIED", { reason: "wrong_order", nextMachineNum: p.nextMachineNum, tried: machine.num });
       return;
     }
 
@@ -1958,13 +1929,7 @@ io.on("connection", (socket) => {
     const correct = base * machine.num;
     const promptId = makePromptId();
 
-    p.pendingPrompt = {
-      id: promptId,
-      machineId: machine.id,
-      machineNum: machine.num,
-      base,
-      correct,
-    };
+    p.pendingPrompt = { id: promptId, machineId: machine.id, machineNum: machine.num, base, correct };
 
     socket.emit("MATH_PROMPT", { promptId, base, machineNum: machine.num });
   });
@@ -2025,6 +1990,7 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ✅ IMPORTANT: declineUpgrade is handled once (no duplicates), and always clears pendingUpgradeOffer.
   socket.on("declineUpgrade", (payload = {}) => {
     const code = session.gameCode;
     if (!code) return;
@@ -2233,16 +2199,12 @@ io.on("connection", (socket) => {
           const params = a.params || {};
           const armDelaySec = Number.isFinite(params.armDelaySec) ? params.armDelaySec : 0.6;
 
-          // ✅ FIX: Cake Surprise must persist until triggered/endgame.
-          // Default mine kind is cake_surprise. Only set expiresAt if:
-          // - kind is NOT cake_surprise, AND
-          // - params.ttlSec is finite.
           const kind = String(params.kind || MINE_KIND_CAKE_SURPRISE);
           const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : null;
 
           const mine = {
             id: makeMineId(),
-            kind, // ✅ store kind for expiry logic
+            kind,
             ownerId: p.id,
             ownerTeamId: p.teamId,
             x: p.x,
@@ -2263,7 +2225,7 @@ io.on("connection", (socket) => {
           game.mines.push(mine);
         }
 
-        // ✅ Banana shot spawn (server-authoritative)
+        // ✅ Banana shot spawn
         if (a.type === "spawn_banana_shot") {
           if (!Array.isArray(game.bullets)) game.bullets = [];
 
@@ -2337,7 +2299,7 @@ io.on("connection", (socket) => {
           });
         }
 
-        // ✅ Jack in the Box spawn (server-authoritative world object)
+        // ✅ Jack in the Box spawn
         if (a.type === "spawn_jack_box_at_player") {
           if (!Array.isArray(game.jackBoxes)) game.jackBoxes = [];
 
@@ -2453,7 +2415,7 @@ io.on("connection", (socket) => {
     socket.emit("RESPAWN_RESULT", { ok: true });
   });
 
-  // ✅ NEW: ONLY option after game ends → host can send everyone back to lobby
+  // ✅ ONLY option after game ends → host can send everyone back to lobby
   socket.on("backToLobby", () => {
     const code = session.gameCode;
     if (!code) return;
@@ -2461,10 +2423,7 @@ io.on("connection", (socket) => {
     const game = games[code];
     if (!game) return;
 
-    // host only
     if (session.playerId !== game.hostPlayerId) return;
-
-    // only when ended
     if (game.phase !== "ended") return;
 
     resetGameToLobby(game);
