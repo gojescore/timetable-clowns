@@ -1757,7 +1757,11 @@
       if (b && typeof b.click === "function") b.click();
     }
 
-    function openUpgradeOffer({ offerId, options }) {
+    // ✅ robust offerId parsing + capture offerId for click handlers
+    function openUpgradeOffer(payload = {}) {
+      const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
+      const options = payload.options;
+
       activeOfferId = offerId;
       el.upgradeMsg.textContent = "";
       el.upgradeMsg.className = "msg";
@@ -1814,7 +1818,8 @@
         tile.appendChild(foot);
 
         tile.addEventListener("click", () => {
-          socket.emit("chooseUpgrade", { offerId: activeOfferId, upgradeId: opt.id });
+          // ✅ use captured offerId (prevents races / stale globals)
+          socket.emit("chooseUpgrade", { offerId, upgradeId: opt.id });
         });
 
         grid.appendChild(tile);
@@ -1844,24 +1849,34 @@
       // ✅ IMPORTANT: always tell server to close offer (prevents offer_open lock)
       if (activeOfferId) {
         socket.emit("declineUpgrade", { offerId: activeOfferId });
+      } else {
+        // ✅ tolerate servers that close “any pending offer for this player”
+        socket.emit("declineUpgrade", {});
       }
       forceCloseUpgradeUI();
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
-    socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
+    socket.on("UPGRADE_OFFER", (p) => { openUpgradeOffer(p); });
 
     // ✅ IMPORTANT FIX: handle server decline consistently (and ignore stale declines)
-    socket.on("UPGRADE_DECLINED", (p) => {
-      if (!p) return;
+    function onUpgradeDeclined(p) {
+      if (!p) { forceCloseUpgradeUI(); return; }
+
+      const serverOfferId = p.offerId ?? p.offerID ?? p.offer_id ?? null;
 
       // If server includes offerId, ignore stale declines for older offers.
-      const serverOfferId = p.offerId ?? p.offerID ?? null;
       if (serverOfferId && activeOfferId && serverOfferId !== activeOfferId) return;
 
       // Whether ok or not, we close UI locally to avoid getting stuck.
       forceCloseUpgradeUI();
-    });
+    }
+
+    // Primary
+    socket.on("UPGRADE_DECLINED", onUpgradeDeclined);
+    // Tolerate alternate server event names (harmless if never emitted)
+    socket.on("DECLINE_UPGRADE", onUpgradeDeclined);
+    socket.on("UPGRADE_DECLINED_ACK", onUpgradeDeclined);
 
     function openReplaceAsk(payload) {
       pendingReplace = {
