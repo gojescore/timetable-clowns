@@ -1388,9 +1388,30 @@
 
         // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
  // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
+// ----- Keyboard-only aiming (remembers last direction) -----
+if (localInputMode === "kb" && me) {
+  const md = getMoveDirFromKeys();
+
+  // update stored direction only when moving
+  if (md) {
+    lastKbDirX = md.x;
+    lastKbDirY = md.y;
+  }
+
+  const AIM_DIST = 1000;
+
+  payload.aimX = me.x + lastKbDirX * AIM_DIST;
+  payload.aimY = me.y + lastKbDirY * AIM_DIST;
+
+  payload.dirX = lastKbDirX;
+  payload.dirY = lastKbDirY;
+
+  return payload;
+}
+
+// ----- KBM fallback when no mouse aim -----
 const md = getMoveDirFromKeys();
 if (md && me) {
-  // Send a world target in front of the player
   const AIM_DIST = 1000;
 
   payload.aimX = me.x + md.x * AIM_DIST;
@@ -1399,6 +1420,7 @@ if (md && me) {
   payload.dirX = md.x;
   payload.dirY = md.y;
 }
+
 
       }
 
