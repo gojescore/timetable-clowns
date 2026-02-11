@@ -1341,18 +1341,28 @@
       return { x: dx / m, y: dy / m };
     }
 
+    // ✅ NEW: keyboard/movement aim helper (used for KB-only + KBM fallback)
+    function getMoveDirFromKeys(){
+      const dx = (inputState.right ? 1 : 0) - (inputState.left ? 1 : 0);
+      const dy = (inputState.down ? 1 : 0) - (inputState.up ? 1 : 0);
+      const m2 = dx*dx + dy*dy;
+      if (m2 < 1e-9) return null;
+      return norm(dx, dy);
+    }
+
     function buildInputPayload(){
       // Backward compatible: server can ignore aimX/aimY if not used yet.
       const payload = { ...inputState };
 
       // ✅ IMPORTANT FIX:
-      // Many server versions still aim using dirX/dirY from input, NOT aimX/aimY.
-      // So for KBM we send BOTH:
-      // - aimX/aimY (world target)
-      // - dirX/dirY (normalized direction)
-      if (localInputMode === "kbm" && mouseAim.has && lastSnapshot) {
+      // - KBM: when mouseAim.has, send BOTH aimX/aimY (world target) AND dirX/dirY (aim direction)
+      // - KB-only: send dirX/dirY based on movement keys so facing updates and shooting direction follows
+      // - KBM fallback: if mouseAim.has is false (cursor outside), still allow facing via movement keys
+      if (lastSnapshot) {
         const me = lastSnapshot.players?.find(p => p.id === myId);
-        if (me) {
+
+        // ----- KBM mouse aim (primary when available) -----
+        if (localInputMode === "kbm" && mouseAim.has && me) {
           // Convert mouse (screen/canvas CSS px) -> world coords using current cam
           const camXraw = (me.x - VIEW_W / 2);
           const camYraw = (me.y - VIEW_H / 2);
@@ -1368,6 +1378,15 @@
           const d = norm(aimWorldX - me.x, aimWorldY - me.y);
           payload.dirX = d.x;
           payload.dirY = d.y;
+
+          return payload; // ✅ do not override with move-dir when mouse aim is active
+        }
+
+        // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
+        const md = getMoveDirFromKeys();
+        if (md) {
+          payload.dirX = md.x;
+          payload.dirY = md.y;
         }
       }
 
