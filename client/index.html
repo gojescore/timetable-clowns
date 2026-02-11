@@ -853,6 +853,10 @@
 
     // ✅ input mode is server setting; we keep local copy for UI routing
     let localInputMode = "kbm";
+    // ✅ remember last keyboard-only facing direction
+    let lastKbDirX = 1;
+    let lastKbDirY = 0;
+
 
     // ✅ KBM: consumable slot selection 0..2 (used by mouse wheel / RMB)
     let activeConsumableSlotIndex = 0;
