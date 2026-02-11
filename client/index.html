@@ -1828,35 +1828,39 @@
       setUpgradeSel(0);
     }
 
-    function closeUpgradeOffer() {
-      if (activeOfferId) {
-        socket.emit("declineUpgrade", { offerId: activeOfferId });
-      }
+    // ✅ single “force close” helper (used by local close + server ACK)
+    function forceCloseUpgradeUI(){
       activeOfferId = null;
+      closeDropPicker();
       el.upgradeOverlay.classList.remove("show");
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
       el.upgradeMsg.className = "msg";
-
       upgradePicker.open = false;
       upgradePicker.buttons = [];
+    }
+
+    function closeUpgradeOffer() {
+      // ✅ IMPORTANT: always tell server to close offer (prevents offer_open lock)
+      if (activeOfferId) {
+        socket.emit("declineUpgrade", { offerId: activeOfferId });
+      }
+      forceCloseUpgradeUI();
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
     socket.on("UPGRADE_OFFER", (p) => { if (p) openUpgradeOffer(p); });
 
+    // ✅ IMPORTANT FIX: handle server decline consistently (and ignore stale declines)
     socket.on("UPGRADE_DECLINED", (p) => {
       if (!p) return;
-      if (p.ok) {
-        activeOfferId = null;
-        el.upgradeOverlay.classList.remove("show");
-        el.upgradeList.innerHTML = "";
-        el.upgradeMsg.textContent = "";
-        el.upgradeMsg.className = "msg";
 
-        upgradePicker.open = false;
-        upgradePicker.buttons = [];
-      }
+      // If server includes offerId, ignore stale declines for older offers.
+      const serverOfferId = p.offerId ?? p.offerID ?? null;
+      if (serverOfferId && activeOfferId && serverOfferId !== activeOfferId) return;
+
+      // Whether ok or not, we close UI locally to avoid getting stuck.
+      forceCloseUpgradeUI();
     });
 
     function openReplaceAsk(payload) {
