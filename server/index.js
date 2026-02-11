@@ -92,6 +92,9 @@ const JACK_BOX_DEFAULT_TTL_SEC = 999999;
 const JACK_BOX_DEFAULT_REVEAL_R = 260;
 const JACK_BOX_DEFAULT_MAX_ACTIVE = 1;
 
+// ✅ Mine kinds
+const MINE_KIND_CAKE_SURPRISE = "cake_surprise";
+
 // In-memory game store
 const games = Object.create(null);
 
@@ -296,6 +299,7 @@ function snapshotForGame(game) {
           triggerR: Number.isFinite(m.triggerR) ? m.triggerR : MINE_STEP_ON_TRIGGER_R,
           blastR: Number.isFinite(m.blastR) ? m.blastR : MINE_BLAST_R,
           r: Number.isFinite(m.r) ? m.r : 26,
+          kind: m.kind || MINE_KIND_CAKE_SURPRISE, // ✅ optional for client/debug
         }))
       : [],
     jackBoxes: Array.isArray(game.jackBoxes)
@@ -1276,7 +1280,16 @@ setInterval(() => {
             break;
           }
 
-          const refl = reflectVelocityOnAABBHit(hitX, hitY, bestHit.rx, bestHit.ry, bestHit.rw, bestHit.rh, b.vx, b.vy);
+          const refl = reflectVelocityOnAABBHit(
+            hitX,
+            hitY,
+            bestHit.rx,
+            bestHit.ry,
+            bestHit.rw,
+            bestHit.rh,
+            b.vx,
+            b.vy
+          );
           b.vx = refl.vx;
           b.vy = refl.vy;
 
@@ -1415,7 +1428,9 @@ setInterval(() => {
         continue;
       }
 
-      if (Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
+      // ✅ FIX: Cake Surprise should NOT expire. Only expire mines that are NOT cake_surprise.
+      const kind = m.kind || MINE_KIND_CAKE_SURPRISE;
+      if (kind !== MINE_KIND_CAKE_SURPRISE && Number.isFinite(m.expiresAt) && now >= m.expiresAt) {
         game.mines.splice(i, 1);
         continue;
       }
@@ -2217,10 +2232,17 @@ io.on("connection", (socket) => {
 
           const params = a.params || {};
           const armDelaySec = Number.isFinite(params.armDelaySec) ? params.armDelaySec : 0.6;
-          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : 25;
+
+          // ✅ FIX: Cake Surprise must persist until triggered/endgame.
+          // Default mine kind is cake_surprise. Only set expiresAt if:
+          // - kind is NOT cake_surprise, AND
+          // - params.ttlSec is finite.
+          const kind = String(params.kind || MINE_KIND_CAKE_SURPRISE);
+          const ttlSec = Number.isFinite(params.ttlSec) ? params.ttlSec : null;
 
           const mine = {
             id: makeMineId(),
+            kind, // ✅ store kind for expiry logic
             ownerId: p.id,
             ownerTeamId: p.teamId,
             x: p.x,
@@ -2232,8 +2254,11 @@ io.on("connection", (socket) => {
             blastR: Number.isFinite(params.blastRadius) ? params.blastRadius : MINE_BLAST_R,
 
             armedAt: nowMs + Math.floor(armDelaySec * 1000),
-            expiresAt: nowMs + Math.floor(ttlSec * 1000),
           };
+
+          if (kind !== MINE_KIND_CAKE_SURPRISE && ttlSec !== null) {
+            mine.expiresAt = nowMs + Math.floor(ttlSec * 1000);
+          }
 
           game.mines.push(mine);
         }
