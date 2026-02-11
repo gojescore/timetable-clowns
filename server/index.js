@@ -734,8 +734,26 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 const CLIENT_PATH = path.resolve(__dirname, "..", "client");
-app.use(express.static(CLIENT_PATH));
+
+// Debug: prove where we are serving from
+console.log("CLIENT_PATH =", CLIENT_PATH);
+
+// Debug: log every request + status (so we can see WHAT is 404)
+app.use((req, res, next) => {
+  res.on("finish", () => console.log(req.method, req.url, res.statusCode));
+  next();
+});
+
+// Serve static files (index.html, css, client js, etc.)
+app.use(express.static(CLIENT_PATH, { index: "index.html" }));
+
+// Force "/" to always serve the client (removes any ambiguity)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(CLIENT_PATH, "index.html"));
+});
+
 app.get("/health", (req, res) => res.json({ ok: true }));
+
 
 // --------------------
 // Server tick loop
