@@ -1383,11 +1383,19 @@
         }
 
         // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
-        const md = getMoveDirFromKeys();
-        if (md) {
-          payload.dirX = md.x;
-          payload.dirY = md.y;
-        }
+ // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
+const md = getMoveDirFromKeys();
+if (md && me) {
+  // Send a world target in front of the player
+  const AIM_DIST = 1000;
+
+  payload.aimX = me.x + md.x * AIM_DIST;
+  payload.aimY = me.y + md.y * AIM_DIST;
+
+  payload.dirX = md.x;
+  payload.dirY = md.y;
+}
+
       }
 
       return payload;
