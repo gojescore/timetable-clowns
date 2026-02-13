@@ -2234,27 +2234,30 @@
     const edgeCanvas = document.createElement("canvas");
     const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
 
-    function resizeFogCanvases() {
-      const dpr = window.devicePixelRatio || 1;
-      const needW = Math.round(VIEW_W * dpr);
-      const needH = Math.round(VIEW_H * dpr);
+   function resizeFogCanvases() {
+  // ✅ Keep fog buffers in CSS pixel space (1:1 with VIEW_W / VIEW_H)
+  // This avoids double-scaling problems when compositing.
+  const needW = Math.round(VIEW_W);
+  const needH = Math.round(VIEW_H);
 
-      const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
-      for (const c of canvases) {
-        if (c.width !== needW || c.height !== needH) {
-          c.width = needW;
-          c.height = needH;
-        }
-      }
-
-      fogCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      visCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      edgeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      lastFogW = VIEW_W;
-      lastFogH = VIEW_H;
+  const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
+  for (const c of canvases) {
+    if (c.width !== needW || c.height !== needH) {
+      c.width = needW;
+      c.height = needH;
     }
+  }
+
+  // ✅ No DPR transform on the offscreen buffers
+  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
+  visCtx.setTransform(1, 0, 0, 1, 0, 0);
+  blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+  edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+  lastFogW = VIEW_W;
+  lastFogH = VIEW_H;
+}
+
 
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
