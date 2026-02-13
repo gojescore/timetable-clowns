@@ -2946,44 +2946,6 @@ const TEAM_COLORS = [
   { r: 255, g: 200, b: 60  }, // team 3
 ];
 
-const tintedSheetCache = new Map();
-
-// You MUST have your base sprite sheet image somewhere, e.g.:
-// const clownBaseSheet = new Image(); clownBaseSheet.src = "clown_sheet.png";
-// and clownBaseReady indicates it's loaded.
-function getTintedSheetForTeam(teamId) {
-  // Fallback-safe team index
-  const tid = Number.isFinite(teamId) ? (teamId | 0) : 0;
-  const idx = ((tid % TEAM_COLORS.length) + TEAM_COLORS.length) % TEAM_COLORS.length;
-
-  // Cache key
-  const key = "team:" + idx;
-  if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
-
-  if (!clownBaseReady || !clownBaseSheet) return null;
-
-  // Create offscreen canvas same size as the base sheet
-  const c = document.createElement("canvas");
-  c.width = clownBaseSheet.width;
-  c.height = clownBaseSheet.height;
-  const g = c.getContext("2d", { willReadFrequently: true });
-
-  // Draw original sheet
-  g.drawImage(clownBaseSheet, 0, 0);
-
-  // Read pixels
-  const img = g.getImageData(0, 0, c.width, c.height);
-  const data = img.data;
-
-  // Target wig pixels:
-  // This assumes wig is "strong red/pink-ish" in the source art.
-  // If your wig is another base color, adjust these thresholds.
-  function isWigPixel(r, g, b, a) {
-    if (a < 10) return false;
-    // "red-ish and saturated": high R, low G/B, and some contrast
-    return (r > 150 && g < 110 && b < 120 && (r - Math.max(g, b)) > 40);
-  }
-
   const col = TEAM_COLORS[idx];
 
   // Recolor only wig pixels, keep shading by preserving brightness
