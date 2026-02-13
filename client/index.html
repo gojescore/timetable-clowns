@@ -2234,30 +2234,29 @@
     const edgeCanvas = document.createElement("canvas");
     const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
 
-   function resizeFogCanvases() {
-  // ✅ Keep fog buffers in CSS pixel space (1:1 with VIEW_W / VIEW_H)
-  // This avoids double-scaling problems when compositing.
-  const needW = Math.round(VIEW_W);
-  const needH = Math.round(VIEW_H);
+    function resizeFogCanvases() {
+      // ✅ Keep fog buffers in CSS pixel space (1:1 with VIEW_W / VIEW_H)
+      // This avoids double-scaling problems when compositing.
+      const needW = Math.round(VIEW_W);
+      const needH = Math.round(VIEW_H);
 
-  const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
-  for (const c of canvases) {
-    if (c.width !== needW || c.height !== needH) {
-      c.width = needW;
-      c.height = needH;
+      const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
+      for (const c of canvases) {
+        if (c.width !== needW || c.height !== needH) {
+          c.width = needW;
+          c.height = needH;
+        }
+      }
+
+      // ✅ No DPR transform on the offscreen buffers
+      fogCtx.setTransform(1, 0, 0, 1, 0, 0);
+      visCtx.setTransform(1, 0, 0, 1, 0, 0);
+      blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+      edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+      lastFogW = VIEW_W;
+      lastFogH = VIEW_H;
     }
-  }
-
-  // ✅ No DPR transform on the offscreen buffers
-  fogCtx.setTransform(1, 0, 0, 1, 0, 0);
-  visCtx.setTransform(1, 0, 0, 1, 0, 0);
-  blurCtx.setTransform(1, 0, 0, 1, 0, 0);
-  edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
-
-  lastFogW = VIEW_W;
-  lastFogH = VIEW_H;
-}
-
 
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
@@ -2791,9 +2790,13 @@
     }
 
     // ---------------------------
-    // ✅ CLOWN RENDERER (vector, top-down)
-    // - Only hair + one foot tip (walk) + small hand nub
-    // - Team color = hair color
+    // ✅ CLOWN RENDERER (HYBRID)
+    // - pixel sprite for hair+nose (tinted per team)
+    // - vector shoes behind
+    //
+    // IMPORTANT:
+    // Put a PNG at: client/assets/clown_hair64.png
+    // (white/gray hair so tinting works; nose can be red in the sprite)
     // ---------------------------
     const TEAM_HAIR = [
       "#ff3b3b", // team 1 red
@@ -2804,173 +2807,158 @@
       "#06b6d4", // cyan
     ];
 
-    function clamp01(t){ return Math.max(0, Math.min(1, t)); }
-
     function getHairColor(teamId){
       if (!Number.isFinite(teamId)) return "rgba(200,200,200,.95)";
       const idx = Math.abs(teamId|0) % TEAM_HAIR.length;
       return TEAM_HAIR[idx];
     }
 
-    function drawCircle(c, x, y, r){
-      c.beginPath();
-      c.arc(x, y, r, 0, Math.PI*2);
-      c.closePath();
+    // --- sprite load + tint cache ---
+    const hairSprite = new Image();
+    hairSprite.src = "/assets/clown_hair64.png";
+    let hairReady = false;
+    hairSprite.onload = () => { hairReady = true; };
+    hairSprite.onerror = () => { hairReady = false; };
+
+    function setPixelArt(ctx2){
+      ctx2.imageSmoothingEnabled = false;
     }
 
-function drawClownTopDown(p, camX, camY, isMe, nowMs){
-  if (p.alive === false) return;
+    const tintedHairCache = new Map(); // key(teamId)->canvas
 
-  const px = p.x - camX;
-  const py = p.y - camY;
+    function getTintedHairCanvas(teamId){
+      const key = Number.isFinite(teamId) ? (teamId|0) : -1;
+      if (tintedHairCache.has(key)) return tintedHairCache.get(key);
+      if (!hairReady) return null;
 
-  // invuln blink (keep)
-  const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-  const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
-  const blinkOff = invuln && ((nowMs % 240) < 110);
-  if (blinkOff) return;
+      const c = document.createElement("canvas");
+      c.width = hairSprite.naturalWidth || 64;
+      c.height = hairSprite.naturalHeight || 64;
+      const cctx = c.getContext("2d");
 
-  const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
-  const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
-  const dir = norm(dx, dy);
-  const perp = { x: -dir.y, y: dir.x };
+      // draw base
+      cctx.clearRect(0,0,c.width,c.height);
+      cctx.drawImage(hairSprite, 0, 0);
 
-  const moving = (Math.abs(dx) + Math.abs(dy)) > 0.01;
-  const step = moving ? Math.sin(nowMs * 0.020) : 0; // -1..+1
-  const stepIsLeft = step >= 0;
+      // tint (source-atop keeps alpha)
+      cctx.globalCompositeOperation = "source-atop";
+      cctx.fillStyle = getHairColor(teamId);
+      cctx.fillRect(0,0,c.width,c.height);
+      cctx.globalCompositeOperation = "source-over";
 
-  const hairCol = getHairColor(p.teamId);
+      tintedHairCache.set(key, c);
+      return c;
+    }
 
-  // Scale: your player is ~28x28 => radius ~14.
-  // Make wig big but not huge.
-  const R = 16;
+    function drawClownTopDown(p, camX, camY, isMe, nowMs){
+      if (p.alive === false) return;
 
-  // --- Shadow (under everything) ---
-  ctx.save();
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = "black";
-  ctx.beginPath();
-  ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+      const px = p.x - camX;
+      const py = p.y - camY;
 
-  // --- Shoes FIRST (behind wig). Only visible when moving. ---
-  if (moving) {
-    const footSide = stepIsLeft ? -1 : +1;
+      // invuln blink (keep)
+      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
+      const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+      const blinkOff = invuln && ((nowMs % 240) < 110);
+      if (blinkOff) return;
 
-    // Put shoes "under" the wig (downwards on screen), not at center.
-    // Also slightly trailing opposite facing direction.
-    const baseX = px - dir.x * 2;
-    const baseY = py + 12 - dir.y * 2;
+      const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+      const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+      const dir = norm(dx, dy);
+      const perp = { x: -dir.y, y: dir.x };
 
-    const shoeX = baseX + perp.x * (7.5 * footSide) + dir.x * 2.5;
-    const shoeY = baseY + perp.y * (7.5 * footSide) + dir.y * 2.5;
+      const moving = (Math.abs(dx) + Math.abs(dy)) > 0.01;
+      const step = moving ? Math.sin(nowMs * 0.020) : 0;
+      const stepIsLeft = step >= 0;
 
-    ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,.92)";
-    ctx.beginPath();
-    ctx.ellipse(
-      shoeX,
-      shoeY,
-      5.2, 3.6,
-      Math.atan2(dir.y, dir.x),
-      0, Math.PI * 2
-    );
-    ctx.fill();
-    ctx.restore();
-  }
+      // --- shadow ---
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = "black";
+      ctx.beginPath();
+      ctx.ellipse(px + 1.5, py + 11, 14, 10.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
 
-  // --- WIG (hair mass) ---
-  // Add subtle shading so it doesn't read like a flat circle.
-  const swayX = moving ? (step * 0.9) : 0;
+      // --- shoes behind ---
+      if (moving) {
+        const footSide = stepIsLeft ? -1 : +1;
 
-  // base
-  ctx.save();
-  ctx.fillStyle = hairCol;
-  ctx.beginPath();
-  ctx.arc(px + swayX, py, R, 0, Math.PI * 2);
-  ctx.fill();
+        // tuned so feet sit BELOW the sprite (not on top of it)
+        const baseX = px - dir.x * 2;
+        const baseY = py + 15 - dir.y * 2;
 
-  // soft darker underside
-  ctx.globalAlpha = 0.16;
-  ctx.fillStyle = "black";
-  ctx.beginPath();
-  ctx.ellipse(px + swayX + 1, py + 4, R * 0.9, R * 0.65, 0, 0, Math.PI * 2);
-  ctx.fill();
+        const shoeX = baseX + perp.x * (7.8 * footSide) + dir.x * 2.3;
+        const shoeY = baseY + perp.y * (7.8 * footSide) + dir.y * 2.3;
 
-  // soft highlight top-left
-  ctx.globalAlpha = 0.10;
-  ctx.fillStyle = "white";
-  ctx.beginPath();
-  ctx.ellipse(px + swayX - 4, py - 5, R * 0.75, R * 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
+        ctx.save();
+        ctx.fillStyle = "rgba(0,0,0,.92)";
+        ctx.beginPath();
+        ctx.ellipse(
+          shoeX, shoeY,
+          5.4, 3.7,
+          Math.atan2(dir.y, dir.x),
+          0, Math.PI * 2
+        );
+        ctx.fill();
+        ctx.restore();
+      }
 
-  // fluffy bumps (small + subtle)
-  ctx.globalAlpha = 0.95;
-  ctx.fillStyle = hairCol;
-  const bumps = [
-    { a: 0.4, r: 4.2, d: 12.5 },
-    { a: 1.3, r: 3.9, d: 12.0 },
-    { a: 2.2, r: 4.4, d: 12.7 },
-    { a: 3.2, r: 3.8, d: 12.1 },
-    { a: 4.1, r: 4.3, d: 12.5 },
-    { a: 5.0, r: 4.0, d: 12.0 },
-  ];
-  for (const b of bumps) {
-    const x = px + swayX + Math.cos(b.a) * b.d;
-    const y = py + Math.sin(b.a) * b.d;
-    ctx.beginPath();
-    ctx.arc(x, y, b.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
+      // --- sprite hair+nose on top ---
+      const spr = getTintedHairCanvas(p.teamId);
+      const ang = Math.atan2(dir.y, dir.x);
 
-  // thin outline (not bold)
-  ctx.globalAlpha = 0.25;
-  ctx.strokeStyle = "black";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(px + swayX, py, R + 0.4, 0, Math.PI * 2);
-  ctx.stroke();
+      if (spr) {
+        // size in world pixels (player is ~28x28)
+        const drawSize = 34;
 
-  ctx.restore();
+        ctx.save();
+        setPixelArt(ctx);
+        ctx.translate(px, py);
+        ctx.rotate(ang);
+        ctx.drawImage(spr, -drawSize/2, -drawSize/2, drawSize, drawSize);
+        ctx.restore();
+      } else {
+        // fallback (while sprite is loading / missing)
+        const R = 16;
+        ctx.save();
+        ctx.fillStyle = getHairColor(p.teamId);
+        ctx.beginPath();
+        ctx.arc(px, py, R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
 
-  // --- Nose LAST (on top, sticking out under hair) ---
-  ctx.save();
-  ctx.fillStyle = "rgba(225,45,45,1)";
-  ctx.beginPath();
-  ctx.arc(
-    px + dir.x * (R + 2),
-    py + dir.y * (R + 2) + 2,   // "under" hair read
-    3.6,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-  ctx.restore();
+        // simple nose fallback
+        ctx.save();
+        ctx.fillStyle = "rgba(225,45,45,1)";
+        ctx.beginPath();
+        ctx.arc(px + dir.x * (R + 2), py + dir.y * (R + 2) + 2, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
 
-  // --- Me ring (subtle) ---
-  if (isMe) {
-    ctx.save();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,.30)";
-    ctx.beginPath();
-    ctx.arc(px, py, R + 3.2, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
+      // --- Me ring ---
+      if (isMe) {
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,.30)";
+        ctx.beginPath();
+        ctx.arc(px, py, 19, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
 
-  // --- Invuln ring ---
-  if (invuln) {
-    ctx.save();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(34,197,94,.92)";
-    ctx.beginPath();
-    ctx.arc(px, py, R + 6, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
+      // --- Invuln ring ---
+      if (invuln) {
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(34,197,94,.92)";
+        ctx.beginPath();
+        ctx.arc(px, py, 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     function drawPlayerLabel(p, camX, camY){
       // intentionally empty (names hidden)
