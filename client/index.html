@@ -2791,12 +2791,6 @@
 
     // ---------------------------
     // ✅ CLOWN RENDERER (HYBRID)
-    // - pixel sprite for hair+nose (tinted per team)
-    // - vector shoes behind
-    //
-    // IMPORTANT:
-    // Put a PNG at: client/assets/clown_hair64.png
-    // (white/gray hair so tinting works; nose can be red in the sprite)
     // ---------------------------
     const TEAM_HAIR = [
       "#ff3b3b", // team 1 red
@@ -2851,192 +2845,170 @@
     }
 
     // ---------------------------
-// ✅ SPRITE SYSTEM (PNG sheet)
-// ---------------------------
+    // ✅ SPRITE SYSTEM (PNG sheet)
+    // ---------------------------
+    const SPR_W = 32;
+    const SPR_H = 32;
+    const SPR_COLS = 4; // frames
+    const SPR_ROWS = 8; // directions
 
-// sprite sheet settings
-const SPR_W = 32;
-const SPR_H = 32;
-const SPR_COLS = 4; // frames
-const SPR_ROWS = 8; // directions
+    const clownBaseImg = new Image();
+    clownBaseImg.src = "/assets/clown_base.png";
+    let clownBaseReady = false;
 
-const clownBaseImg = new Image();
-clownBaseImg.src = "/assets/clown_base.png";
-let clownBaseReady = false;
+    clownBaseImg.onload = () => { clownBaseReady = true; };
+    clownBaseImg.onerror = () => {
+      console.warn("Failed to load /assets/clown_base.png");
+    };
 
-clownBaseImg.onload = () => { clownBaseReady = true; };
-clownBaseImg.onerror = () => {
-  console.warn("Failed to load /assets/clown_base.png");
-};
+    // cache tinted sheets per teamId (offscreen canvas)
+    const tintedSheetCache = new Map();
 
-// cache tinted sheets per teamId (offscreen canvas)
-const tintedSheetCache = new Map();
+    function getTintedSheetForTeam(teamId){
+      // ✅ HARDEN: do not build/cache blank sheets before image is ready
+      if (!clownBaseReady) return null;
 
-function getTintedSheetForTeam(teamId){
-  const key = Number.isFinite(teamId) ? (teamId|0) : -1;
-  if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
+      const key = Number.isFinite(teamId) ? (teamId|0) : -1;
+      if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
 
-  // create offscreen canvas same size as source sheet
-  const c = document.createElement("canvas");
-  c.width = SPR_W * SPR_COLS;
-  c.height = SPR_H * SPR_ROWS;
-  const cc = c.getContext("2d");
+      // create offscreen canvas same size as source sheet
+      const c = document.createElement("canvas");
+      c.width = SPR_W * SPR_COLS;
+      c.height = SPR_H * SPR_ROWS;
+      const cc = c.getContext("2d");
 
-  // draw base first
-  cc.clearRect(0,0,c.width,c.height);
-  cc.drawImage(clownBaseImg, 0,0);
+      // draw base first
+      cc.clearRect(0,0,c.width,c.height);
+      cc.drawImage(clownBaseImg, 0,0);
 
-  // tint overlay (multiply works well on grayscale)
-  const col = getHairColor(teamId);
+      // tint overlay (multiply works well on grayscale)
+      const col = getHairColor(teamId);
 
-  cc.globalCompositeOperation = "multiply";
-  cc.fillStyle = col;
-  cc.fillRect(0,0,c.width,c.height);
+      cc.globalCompositeOperation = "multiply";
+      cc.fillStyle = col;
+      cc.fillRect(0,0,c.width,c.height);
 
-  // restore alpha/details
-  cc.globalCompositeOperation = "destination-in";
-  cc.drawImage(clownBaseImg, 0,0);
+      // restore alpha/details
+      cc.globalCompositeOperation = "destination-in";
+      cc.drawImage(clownBaseImg, 0,0);
 
-  cc.globalCompositeOperation = "source-over";
+      cc.globalCompositeOperation = "source-over";
 
-  tintedSheetCache.set(key, c);
-  return c;
-}
+      tintedSheetCache.set(key, c);
+      return c;
+    }
 
-// direction mapping to 8 rows (0..7)
-function dirToRow(dx, dy){
-  // Top-down: y+ is down, so atan2(dy, dx) is correct.
-  const ang = Math.atan2(dy, dx);
+    // direction mapping to 8 rows (0..7)
+    function dirToRow(dx, dy){
+      const ang = Math.atan2(dy, dx);
+      const step = (Math.PI * 2) / 8;
+      let idx = Math.round(ang / step);
+      if (idx < 0) idx += 8;
+      idx = idx % 8;
+      return idx;
+    }
 
-  // 8 slices (each 45°)
-  // We'll map: E=0, SE=1, S=2, SW=3, W=4, NW=5, N=6, NE=7
-  const step = (Math.PI * 2) / 8;
-  let idx = Math.round(ang / step);
-  if (idx < 0) idx += 8;
-  idx = idx % 8;
-
-  // Convert to the row order you used when drawing your sheet.
-  // If your sheet row 0 is N, change this mapping.
-  // Current mapping assumes row0=E, row1=SE, row2=S, row3=SW, row4=W, row5=NW, row6=N, row7=NE
-  return idx;
-}
-
-// walk frame (0..3)
-function walkFrame(nowMs, moving){
-  if (!moving) return 0; // idle uses frame 0
-  // 4 frames, ~8 fps
-  return Math.floor((nowMs / 125) % SPR_COLS);
-}
+    // walk frame (0..3)
+    function walkFrame(nowMs, moving){
+      if (!moving) return 0; // idle uses frame 0
+      // 4 frames, ~8 fps
+      return Math.floor((nowMs / 125) % SPR_COLS);
+    }
 
     // --- Wig sprite (64x64) ---
-const wigImg = new Image();
-wigImg.src = "client/assets/wig_master_64.png"; // ✅ served by Express static
-// If your client is served from /client already, use: "assets/wig_master_64.png"
+    const wigImg = new Image();
+    // ✅ FIX: correct URL (do NOT include "client/" in browser path)
+    wigImg.src = "/assets/wig_master_64.png";
 
-function drawWigSprite(px, py, ang, sway, hairR = 16){
-  // wait until loaded
-  if (!wigImg.complete || !wigImg.naturalWidth) return;
+    function drawWigSprite(px, py, ang, sway, hairR = 16){
+      if (!wigImg.complete || !wigImg.naturalWidth) return;
 
-  // We want wig roughly ~32px diameter on screen (hairR*2)
-  const size = hairR * 2.2;          // tweak: 2.0–2.4
-  const half = size / 2;
+      const size = hairR * 2.2;
+      const half = size / 2;
 
-  ctx.save();
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(ang);
+      ctx.translate(sway * 1.2, 0);
+      ctx.rotate(sway * 0.03);
 
-  // move to player center
-  ctx.translate(px, py);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(wigImg, -half, -half, size, size);
 
-  // rotate wig to face direction
-  ctx.rotate(ang);
-
-  // subtle sway: tiny sideways + tiny rotation
-  ctx.translate(sway * 1.2, 0);
-  ctx.rotate(sway * 0.03);
-
-  // draw centered (bird perspective)
-  ctx.imageSmoothingEnabled = false; // crisp pixels
-  ctx.drawImage(wigImg, -half, -half, size, size);
-
-  ctx.restore();
-}
-
+      ctx.restore();
+    }
 
     function drawClownTopDown(p, camX, camY, isMe, nowMs){
-  if (p.alive === false) return;
+      if (p.alive === false) return;
 
-  const px = p.x - camX;
-  const py = p.y - camY;
+      const px = p.x - camX;
+      const py = p.y - camY;
 
-  // invuln blink (keep)
-  const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-  const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
-  const blinkOff = invuln && ((nowMs % 240) < 110);
-  if (blinkOff) return;
+      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
+      const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+      const blinkOff = invuln && ((nowMs % 240) < 110);
+      if (blinkOff) return;
 
-  // direction
-  const dx0 = Number.isFinite(p.dirX) ? p.dirX : 1;
-  const dy0 = Number.isFinite(p.dirY) ? p.dirY : 0;
-  const d = norm(dx0, dy0);
+      const dx0 = Number.isFinite(p.dirX) ? p.dirX : 1;
+      const dy0 = Number.isFinite(p.dirY) ? p.dirY : 0;
+      const d = norm(dx0, dy0);
 
-  const moving = (Math.abs(dx0) + Math.abs(dy0)) > 0.01;
+      const moving = (Math.abs(dx0) + Math.abs(dy0)) > 0.01;
 
-  // If sprite not ready, fallback to a simple dot so you never render “nothing”
-  if (!clownBaseReady) {
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,.85)";
-    ctx.beginPath();
-    ctx.arc(px, py, 6, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-    return;
-  }
+      if (!clownBaseReady) {
+        ctx.save();
+        ctx.fillStyle = "rgba(255,255,255,.85)";
+        ctx.beginPath();
+        ctx.arc(px, py, 6, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
 
-  // choose sheet + frame
-  const sheet = getTintedSheetForTeam(p.teamId);
-  const row = dirToRow(d.x, d.y);
-  const col = walkFrame(nowMs, moving);
+      const sheet = getTintedSheetForTeam(p.teamId);
+      // ✅ HARDEN: if null (shouldn’t happen now, but safe), skip drawing
+      if (!sheet) return;
 
-  const sx = col * SPR_W;
-  const sy = row * SPR_H;
+      const row = dirToRow(d.x, d.y);
+      const col = walkFrame(nowMs, moving);
 
-  // draw shadow behind sprite (optional but makes it sit on ground)
-  ctx.save();
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = "black";
-  ctx.beginPath();
-  ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI*2);
-  ctx.fill();
-  ctx.restore();
+      const sx = col * SPR_W;
+      const sy = row * SPR_H;
 
-  // draw sprite centered
-  const scale = 1.0; // tweak if needed (e.g. 0.95 or 1.1)
-  const dw = SPR_W * scale;
-  const dh = SPR_H * scale;
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = "black";
+      ctx.beginPath();
+      ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
 
-  ctx.drawImage(sheet, sx, sy, SPR_W, SPR_H, px - dw/2, py - dh/2, dw, dh);
+      const scale = 1.0;
+      const dw = SPR_W * scale;
+      const dh = SPR_H * scale;
 
-  // Me ring (subtle)
-  if (isMe) {
-    ctx.save();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,.30)";
-    ctx.beginPath();
-    ctx.arc(px, py, 18, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
+      ctx.drawImage(sheet, sx, sy, SPR_W, SPR_H, px - dw/2, py - dh/2, dw, dh);
 
-  // Invuln ring
-  if (invuln) {
-    ctx.save();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(34,197,94,.92)";
-    ctx.beginPath();
-    ctx.arc(px, py, 22, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
+      if (isMe) {
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,.30)";
+        ctx.beginPath();
+        ctx.arc(px, py, 18, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (invuln) {
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(34,197,94,.92)";
+        ctx.beginPath();
+        ctx.arc(px, py, 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     function drawPlayerLabel(p, camX, camY){
       // intentionally empty (names hidden)
