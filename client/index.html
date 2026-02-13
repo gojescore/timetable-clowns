@@ -2862,41 +2862,24 @@
     };
 
     // cache tinted sheets per teamId (offscreen canvas)
-    const tintedSheetCache = new Map();
+   const tintedSheetCache = new Map();
 
-    function getTintedSheetForTeam(teamId){
-      // ✅ HARDEN: do not build/cache blank sheets before image is ready
-      if (!clownBaseReady) return null;
+function getTintedSheetForTeam(teamId){
+  if (!clownBaseReady) return null;
 
-      const key = Number.isFinite(teamId) ? (teamId|0) : -1;
-      if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
+  const key = Number.isFinite(teamId) ? (teamId|0) : -1;
+  if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
 
-      // create offscreen canvas same size as source sheet
-      const c = document.createElement("canvas");
-      c.width = SPR_W * SPR_COLS;
-      c.height = SPR_H * SPR_ROWS;
-      const cc = c.getContext("2d");
+  const c = document.createElement("canvas");
+  c.width = clownBaseImg.width;
+  c.height = clownBaseImg.height;
 
-      // draw base first
-      cc.clearRect(0,0,c.width,c.height);
-      cc.drawImage(clownBaseImg, 0,0);
+  const cc = c.getContext("2d");
+  cc.drawImage(clownBaseImg, 0, 0);
 
-      // tint overlay (multiply works well on grayscale)
-      const col = getHairColor(teamId);
-
-      cc.globalCompositeOperation = "multiply";
-      cc.fillStyle = col;
-      cc.fillRect(0,0,c.width,c.height);
-
-      // restore alpha/details
-      cc.globalCompositeOperation = "destination-in";
-      cc.drawImage(clownBaseImg, 0,0);
-
-      cc.globalCompositeOperation = "source-over";
-
-      tintedSheetCache.set(key, c);
-      return c;
-    }
+  tintedSheetCache.set(key, c);
+  return c;
+}
 
     // direction mapping to 8 rows (0..7)
     function dirToRow(dx, dy){
