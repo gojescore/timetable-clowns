@@ -2838,7 +2838,6 @@
       const stepPhase = moving ? Math.sin(nowMs * 0.020) : 0;
       const stepIsLeft = stepPhase >= 0;
 
-      const hairCol = getHairColor(p.teamId);
 
       // simple "shadow"
       ctx.save();
@@ -2846,6 +2845,31 @@
       ctx.fillStyle = "rgba(0,0,0,1)";
       drawCircle(ctx, px + 2, py + 8, 14);
       ctx.fill();
+      ctx.restore();
+
+      // hair: always BEHIND head (draw first), only on back hemisphere
+      const hairCol = getHairColor(p.teamId);
+      const hairBackX = px - dir.x * 7;
+      const hairBackY = py - dir.y * 7;
+
+      ctx.save();
+      ctx.fillStyle = hairCol;
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.lineWidth = 1.1;
+
+      // 6 tufts, strictly behind (centered opposite facing direction)
+      const tuftR = 3.4;
+      const base = Math.atan2(-dir.y, -dir.x); // "behind" angle
+      for (let i = 0; i < 6; i++) {
+        const t = (i / 5) - 0.5;               // -0.5 .. +0.5
+        const a = base + t * 1.25;             // ~72° spread, behind only
+        const ox = Math.cos(a) * 9.0;
+        const oy = Math.sin(a) * 9.0;
+
+        drawCircle(ctx, hairBackX + ox, hairBackY + oy, tuftR);
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.restore();
 
       // head (skin)
@@ -2865,30 +2889,6 @@
       ctx.fill();
       ctx.restore();
 
-      // hair: only visible "top" (behind head in facing direction = opposite dir)
-      const hairBackX = px - dir.x * 5;
-      const hairBackY = py - dir.y * 5;
-
-      ctx.save();
-      ctx.fillStyle = hairCol;
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.lineWidth = 1.2;
-
-      // draw 6-7 tufts
-      const tuftR = 3.6;
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 1.15 + Math.PI * 0.40; // mostly back arc
-        const ox = Math.cos(a) * 9.2;
-        const oy = Math.sin(a) * 9.2;
-
-        const x = hairBackX + ox;
-        const y = hairBackY + oy;
-
-        drawCircle(ctx, x, y, tuftR);
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.restore();
 
       // one foot tip (alternating left/right)
       const footSide = stepIsLeft ? -1 : +1;
@@ -2905,18 +2905,6 @@
       ctx.stroke();
       ctx.restore();
 
-      // tiny hand nub (optional, side)
-      const handX = px + perp.x * (9 * -footSide) + dir.x * 0.5;
-      const handY = py + perp.y * (9 * -footSide) + dir.y * 1.5;
-
-      ctx.save();
-      ctx.fillStyle = "rgba(255,255,255,.95)";
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.lineWidth = 1.0;
-      drawCircle(ctx, handX, handY, 2.2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
 
       // me outline (subtle)
       if (isMe) {
