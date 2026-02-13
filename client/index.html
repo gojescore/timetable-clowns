@@ -98,18 +98,14 @@
       height: calc(100vh - 60px);
       max-height: 980px;
 
-      /* ✅ smoother pointer feel + no selection */
       user-select:none;
       -webkit-user-select:none;
       touch-action:none;
     }
 
-    /* ✅ Cursor rules:
-       - hide arrow ONLY while in-game
-       - we draw our own dot crosshair in canvas */
+    /* ✅ Cursor rules: hide arrow ONLY while in-game */
     body.inGame .canvasWrap{ cursor:none; }
 
-    /* ✅ No distortion: we render in CSS pixels + DPR inside JS */
     canvas{
       width:100%;
       height:100%;
@@ -117,7 +113,7 @@
       background:transparent;
     }
 
-    /* HUD overlay (z-axis in front of arena) */
+    /* HUD overlay */
     .hudOverlay{
       position:absolute;
       top:10px;
@@ -150,7 +146,6 @@
       display:inline-block;
     }
 
-    /* ✅ Invulnerability pill (added) */
     .hudPill.invuln{
       border-color: rgba(34,197,94,.55);
       background: rgba(34,197,94,.14);
@@ -158,14 +153,12 @@
     }
     .hudPill.invuln.hidden{ display:none; }
 
-    /* ✅ Timer pill */
     .hudPill.timer{
       border-color: rgba(255,255,255,.18);
       background: rgba(0,0,0,.22);
     }
     .hudPill.timer.hidden{ display:none; }
 
-    /* ✅ Balloon status pill (NEW) */
     .hudPill.balloon{
       border-color: rgba(246,196,81,.55);
       background: rgba(246,196,81,.14);
@@ -173,7 +166,7 @@
     }
     .hudPill.balloon.hidden{ display:none; }
 
-    /* Sidebar (upgrades + leave button) */
+    /* Sidebar */
     .sidePanel{
       display:flex;
       flex-direction:column;
@@ -258,7 +251,7 @@
       text-align:center;
     }
 
-    /* Prompt overlays */
+    /* Overlays */
     .overlay{
       position:fixed; inset:0;
       background:rgba(0,0,0,.55);
@@ -341,7 +334,7 @@
     .dropBtn:hover{ border-color: rgba(255,255,255,.22); }
     .dropMeta{ font-size:12px; color:var(--muted); margin-top:4px; }
 
-    /* ✅ Leaderboard */
+    /* Leaderboard */
     .boardGrid{
       display:grid;
       grid-template-columns: 40px 1fr 90px 80px 80px 90px;
@@ -386,7 +379,7 @@
       white-space:nowrap;
     }
 
-    /* ✅ Big end modal */
+    /* Big end modal */
     .modal.modalEnd{
       width:min(920px, 100%);
       padding:20px;
@@ -426,7 +419,7 @@
       font-weight:900;
     }
     .winnerBanner .who{
-      font-size:36px; /* ✅ bigger */
+      font-size:36px;
       font-weight:1000;
       margin-top:4px;
       line-height:1.05;
@@ -453,7 +446,6 @@
       color: rgba(255,255,255,.98);
     }
 
-    /* ✅ Only one end option: back to lobby (reload) */
     .endActionsSolo{
       display:flex;
       justify-content:flex-end;
@@ -686,7 +678,7 @@
     </div>
   </div>
 
-  <!-- ✅ Game ended / Leaderboard overlay -->
+  <!-- Game ended / Leaderboard overlay -->
   <div class="overlay" id="endOverlay">
     <div class="modal modalEnd">
       <div class="endTop">
@@ -843,16 +835,16 @@
     const MAX_CAKES = 7;
     const INVULN_SHOW_THRESHOLD_MS = 80;
 
-    // ✅ input mode is server setting; we keep local copy for UI routing
+    // input mode is server setting; we keep local copy for UI routing
     let localInputMode = "kbm";
-    // ✅ remember last keyboard-only facing direction
+    // remember last keyboard-only facing direction
     let lastKbDirX = 1;
     let lastKbDirY = 0;
 
-    // ✅ KBM: consumable slot selection 0..2 (used by mouse wheel / RMB)
+    // KBM: consumable slot selection 0..2 (used by mouse wheel / RMB)
     let activeConsumableSlotIndex = 0;
 
-    // ✅ KB-only upgrade picker navigation state
+    // KB-only upgrade picker navigation state
     let upgradePicker = {
       buttons: [],
       cols: 3,
@@ -860,10 +852,10 @@
       open: false,
     };
 
-    // ✅ KBM aiming: mouse position inside canvas (CSS pixels)
+    // KBM aiming: mouse position inside canvas (CSS pixels)
     const mouseAim = { x: 0, y: 0, has: false };
 
-    // ✅ upgrade bar perf: only rebuild DOM when upgrade contents change
+    // upgrade bar perf: only rebuild DOM when upgrade contents change
     let lastUpgSig = "";
     function computeUpgSig(u){
       const perm = Array.isArray(u?.permanent) ? u.permanent : [];
@@ -873,7 +865,7 @@
       return p + "||" + c;
     }
 
-    // ✅ timed session UI/runtime
+    // timed session UI/runtime
     let gameEndAt = null; // ms timestamp from server (GAME_STARTED/STATE_SNAPSHOT)
     function formatMMSS(msLeft){
       const s = Math.max(0, Math.ceil(msLeft / 1000));
@@ -905,7 +897,7 @@
       bubble = { text: String(text), untilMs: Date.now() + ms };
     }
 
-    // ✅ invuln HUD update (driven by latest snapshot each frame)
+    // invuln HUD update (driven by latest snapshot each frame)
     function updateInvulnHudFromMe(me, nowMs) {
       if (!me || me.alive === false) {
         el.hudInvuln.classList.add("hidden");
@@ -922,7 +914,7 @@
       }
     }
 
-    // ✅ balloon status HUD (UI only; server decides effects)
+    // balloon status HUD (UI only; server decides effects)
     function getBalloonUntilFromMe(me){
       const direct = Number.isFinite(me?.balloonUntil) ? me.balloonUntil : null;
       if (direct) return direct;
@@ -1060,7 +1052,7 @@
     el.startGame.addEventListener("click", () => socket.emit("startGame"));
 
     // -----------------------------
-    // ✅ Fog perf caches (visual-only)
+    // Fog perf caches (visual-only)
     // -----------------------------
     let wallSegsWorld = [];   // {ax,ay,bx,by} in WORLD coords
     let wallCornersWorld = []; // {x,y} in WORLD coords
@@ -1125,10 +1117,10 @@
 
       el.endOverlay.classList.remove("show");
 
-      // ✅ reset mouse aim state each round (prevents stale values)
+      // reset mouse aim state each round (prevents stale values)
       mouseAim.has = false;
 
-      // ✅ rebuild fog caches for this map (visual-only)
+      // rebuild fog caches for this map (visual-only)
       rebuildWallCachesFromMap(mapData);
     });
 
@@ -1153,7 +1145,7 @@
       }
     });
 
-    // ✅ GAME_ENDED + bigger leaderboard + TEAM winner highlight
+    // GAME_ENDED + bigger leaderboard + TEAM winner highlight
     socket.on("GAME_ENDED", (p = {}) => {
       inputState.up = false; inputState.down = false; inputState.left = false; inputState.right = false; inputState.fire = false;
       sendInput();
@@ -1165,7 +1157,6 @@
       el.upgradeList.innerHTML = "";
       el.upgradeMsg.textContent = "";
 
-      // close picker state
       upgradePicker.open = false;
       upgradePicker.buttons = [];
 
@@ -1329,14 +1320,14 @@
       return (tag === "input" || tag === "textarea" || tag === "select");
     }
 
-    // ✅ helper: normalize vector safely
+    // helper: normalize vector safely
     function norm(dx, dy){
       const m = Math.hypot(dx, dy);
       if (m < 1e-9) return { x: 1, y: 0 };
       return { x: dx / m, y: dy / m };
     }
 
-    // ✅ NEW: keyboard/movement aim helper (used for KB-only + KBM fallback)
+    // keyboard/movement aim helper
     function getMoveDirFromKeys(){
       const dx = (inputState.right ? 1 : 0) - (inputState.left ? 1 : 0);
       const dy = (inputState.down ? 1 : 0) - (inputState.up ? 1 : 0);
@@ -1346,14 +1337,13 @@
     }
 
     function buildInputPayload(){
-      // Backward compatible: server can ignore aimX/aimY if not used yet.
       const payload = { ...inputState };
 
       if (!lastSnapshot) return payload;
       const me = lastSnapshot.players?.find(p => p.id === myId);
       if (!me) return payload;
 
-      // ----- KBM mouse aim (primary when available) -----
+      // KBM mouse aim (primary when available)
       if (localInputMode === "kbm" && mouseAim.has) {
         const camXraw = (me.x - VIEW_W / 2);
         const camYraw = (me.y - VIEW_H / 2);
@@ -1373,7 +1363,7 @@
         return payload;
       }
 
-      // ----- Keyboard-only aiming (remembers last direction) -----
+      // Keyboard-only aiming (remembers last direction)
       if (localInputMode === "kb") {
         const md = getMoveDirFromKeys();
         if (md) {
@@ -1390,7 +1380,7 @@
         return payload;
       }
 
-      // ----- KBM fallback when no mouse aim -----
+      // KBM fallback when no mouse aim
       const md = getMoveDirFromKeys();
       if (md) {
         const AIM_DIST = 1000;
@@ -1406,34 +1396,6 @@
     function sendInput(){
       socket.emit("input", buildInputPayload());
     }
-
-    function setKey(e, isDown){
-      if (!isGameRunning()) return;
-
-      // If upgrade picker is open AND kb-only mode, WASD should navigate UI, not move.
-      if (el.upgradeOverlay.classList.contains("show") && localInputMode === "kb") {
-        return;
-      }
-
-      if (isUiBlockingInput()) return;
-      if (isTypingInForm(e)) return;
-
-      const k = e.key.toLowerCase();
-      let used = true;
-
-      if (k === "w" || e.key === "ArrowUp") inputState.up = isDown;
-      else if (k === "s" || e.key === "ArrowDown") inputState.down = isDown;
-      else if (k === "a" || e.key === "ArrowLeft") inputState.left = isDown;
-      else if (k === "d" || e.key === "ArrowRight") inputState.right = isDown;
-      else if (e.key === " " || e.code === "Space") inputState.fire = isDown;
-      else used = false;
-
-      if (used) { e.preventDefault(); sendInput(); }
-    }
-
-    // Movement ONLY
-    window.addEventListener("keydown", (e) => setKey(e, true));
-    window.addEventListener("keyup", (e) => setKey(e, false));
 
     // ---- KBM mouse handling (aim + fire + consumables) ----
     function updateMouseAimFromClientXY(clientX, clientY){
@@ -1522,10 +1484,11 @@
       showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 700);
     }, { passive:false });
 
-    // Non-movement hotkeys in ONE place (prevents nested/duplicate handlers)
-    window.addEventListener("keydown", (e) => {
+    // ✅ ONE keyboard handler (no nested / duplicate keydown listeners)
+    function handleKeyDown(e){
       if (!isGameRunning()) return;
 
+      // End overlay: only back
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
@@ -1534,6 +1497,7 @@
         return;
       }
 
+      // Drop overlay controls
       if (el.dropOverlay.classList.contains("show")) {
         const k = e.key.toLowerCase();
 
@@ -1553,10 +1517,10 @@
           if (k === "escape" || k === "n") { e.preventDefault(); declineReplace(); return; }
           return;
         }
-
         return;
       }
 
+      // Upgrade overlay controls
       if (el.upgradeOverlay.classList.contains("show")) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1578,38 +1542,28 @@
             return;
           }
         }
-
         return;
       }
 
+      // Respawn overlay: ignore keys
       if (el.respawnOverlay.classList.contains("show")) {
         if (e.key === "Escape") e.preventDefault();
         return;
       }
 
+      // Prompt overlay: ignore movement hotkeys (handled by input box)
       if (el.overlay.classList.contains("show")) return;
+
+      // Avoid typing in form
       if (isTypingInForm(e)) return;
 
       const k = e.key.toLowerCase();
 
-      if (k === "e") {
-        e.preventDefault();
-        socket.emit("tryInteract");
-        return;
-      }
+      // Non-movement hotkeys
+      if (k === "e") { e.preventDefault(); socket.emit("tryInteract"); return; }
 
-      if (k === "v") {
-        DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
-        e.preventDefault();
-        showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900);
-        return;
-      }
-      if (k === "b") {
-        DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE;
-        e.preventDefault();
-        showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900);
-        return;
-      }
+      if (k === "v") { DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS; e.preventDefault(); showBubble(`Debug V: ${DEBUG_SHOW_VIS ? "ON" : "OFF"}`, 900); return; }
+      if (k === "b") { DEBUG_SHOW_EDGE = !DEBUG_SHOW_EDGE; e.preventDefault(); showBubble(`Debug B: ${DEBUG_SHOW_EDGE ? "ON" : "OFF"}`, 900); return; }
 
       if (isUiBlockingInput()) return;
 
@@ -1629,7 +1583,45 @@
           return;
         }
       }
-    });
+
+      // Movement keys
+      if (isUiBlockingInput()) return;
+
+      // If upgrade picker is open AND kb-only mode, WASD should navigate UI, not move.
+      if (el.upgradeOverlay.classList.contains("show") && localInputMode === "kb") return;
+
+      let used = true;
+
+      if (k === "w" || e.key === "ArrowUp") inputState.up = true;
+      else if (k === "s" || e.key === "ArrowDown") inputState.down = true;
+      else if (k === "a" || e.key === "ArrowLeft") inputState.left = true;
+      else if (k === "d" || e.key === "ArrowRight") inputState.right = true;
+      else if (e.key === " " || e.code === "Space") inputState.fire = true;
+      else used = false;
+
+      if (used) { e.preventDefault(); sendInput(); }
+    }
+
+    function handleKeyUp(e){
+      if (!isGameRunning()) return;
+      if (isUiBlockingInput()) return;
+      if (isTypingInForm(e)) return;
+
+      const k = e.key.toLowerCase();
+      let used = true;
+
+      if (k === "w" || e.key === "ArrowUp") inputState.up = false;
+      else if (k === "s" || e.key === "ArrowDown") inputState.down = false;
+      else if (k === "a" || e.key === "ArrowLeft") inputState.left = false;
+      else if (k === "d" || e.key === "ArrowRight") inputState.right = false;
+      else if (e.key === " " || e.code === "Space") inputState.fire = false;
+      else used = false;
+
+      if (used) { e.preventDefault(); sendInput(); }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
 
     socket.on("UPGRADE_USED", (p) => {
       if (!p) return;
@@ -1826,6 +1818,7 @@
     }
 
     function closeUpgradeOffer() {
+      // ✅ keep declineUpgrade consistent + offerId if we have it
       if (activeOfferId) socket.emit("declineUpgrade", { offerId: activeOfferId });
       else socket.emit("declineUpgrade", {});
       forceCloseUpgradeUI();
@@ -1843,6 +1836,7 @@
       forceCloseUpgradeUI();
     }
 
+    // ✅ accept multiple server event names
     socket.on("UPGRADE_DECLINED", onUpgradeDeclined);
     socket.on("DECLINE_UPGRADE", onUpgradeDeclined);
     socket.on("UPGRADE_DECLINED_ACK", onUpgradeDeclined);
@@ -2235,8 +2229,6 @@
     const edgeCtx = edgeCanvas.getContext("2d", { alpha: true });
 
     function resizeFogCanvases() {
-      // ✅ Keep fog buffers in CSS pixel space (1:1 with VIEW_W / VIEW_H)
-      // This avoids double-scaling problems when compositing.
       const needW = Math.round(VIEW_W);
       const needH = Math.round(VIEW_H);
 
@@ -2248,7 +2240,6 @@
         }
       }
 
-      // ✅ No DPR transform on the offscreen buffers
       fogCtx.setTransform(1, 0, 0, 1, 0, 0);
       visCtx.setTransform(1, 0, 0, 1, 0, 0);
       blurCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2261,13 +2252,13 @@
     const FOG_ENABLED = true;
     const FOG_ALPHA = 0.96;
 
-    // ✅ BASE values (client)
+    // BASE values (client)
     const BASE_VISION_LEN = 420;
     const CONE_ANGLE_BASE_DEG = 92;
     const CONE_ANGLE_MAX_DEG = 160;
     const VISION_LEN_MAX = 2400;
 
-    // ✅ prefer server-computed mods (snapshot.players[].mods)
+    // prefer server-computed mods (snapshot.players[].mods)
     function getModsForMe(me){
       const m = me?.mods;
       if (!m) return { fovAddDeg: 0, visionLenAdd: 0, speedMult: 1 };
@@ -2297,6 +2288,7 @@
     let DEBUG_SHOW_VIS = false;
     let DEBUG_SHOW_EDGE = false;
 
+    // ✅ single source of truth for facing: lastFacingAng (used by fog AND sprite)
     let lastFacingAng = 0;
 
     function dist2(ax, ay, bx, by) {
@@ -2393,6 +2385,7 @@
 
       if (VIEW_W !== lastFogW || VIEW_H !== lastFogH) resizeFogCanvases();
 
+      // ✅ face direction of view cone (mouse aim OR dirX/dirY)
       if (localInputMode === "kbm" && mouseAim.has) {
         const ax = camX + mouseAim.x;
         const ay = camY + mouseAim.y;
@@ -2542,6 +2535,7 @@
         ctx.strokeRect(x, y, w.w, w.h);
       }
       ctx.restore();
+      ctx.lineWidth = 1;
     }
 
     function drawMachines(camX, camY){
@@ -2663,7 +2657,7 @@
     }
 
     // ---------------------------
-    // ✅ Banana bullets
+    // Banana bullets
     // ---------------------------
     const bulletPrev = new Map(); // id -> {x,y,ang}
 
@@ -2790,134 +2784,153 @@
     }
 
     // ---------------------------
-    // ✅ CLOWN RENDERER (HYBRID)
+    // ✅ CHARACTER RENDER (HYBRID, CLEAN)
+    // Pixel HEAD: wig_master_64.png (tinted per team)
+    // Vector FEET: simple paths
+    // Facing: lastFacingAng (same as view cone)
     // ---------------------------
-    const TEAM_HAIR = [
-      "#ff3b3b", // team 1 red
-      "#2b66ff", // team 2 blue
-      "#22c55e", // team 3 green
-      "#f6c451", // team 4 yellow/gold
-      "#a855f7", // fallback purple
-      "#06b6d4", // cyan
+
+    // Team colors for tinting (match your old ones)
+    const TEAM_COLORS = [
+      { r: 255, g: 60,  b: 60  }, // team 0
+      { r: 60,  g: 140, b: 255 }, // team 1
+      { r: 60,  g: 220, b: 120 }, // team 2
+      { r: 255, g: 200, b: 60  }, // team 3
+      { r: 168, g: 85,  b: 247 }, // fallback purple
+      { r: 6,   g: 182, b: 212 }, // fallback cyan
     ];
 
-    function getHairColor(teamId){
-      if (!Number.isFinite(teamId)) return "rgba(200,200,200,.95)";
-      const idx = Math.abs(teamId|0) % TEAM_HAIR.length;
-      return TEAM_HAIR[idx];
+    function teamColor(teamId){
+      const tid = Number.isFinite(teamId) ? (teamId|0) : 0;
+      const idx = ((tid % TEAM_COLORS.length) + TEAM_COLORS.length) % TEAM_COLORS.length;
+      return TEAM_COLORS[idx];
     }
 
-    // --- sprite load + tint cache ---
-    const hairSprite = new Image();
-    hairSprite.src = "/assets/clown_hair64.png";
-    let hairReady = false;
-    hairSprite.onload = () => { hairReady = true; };
-    hairSprite.onerror = () => { hairReady = false; };
+    // ✅ This is your only asset now (no /assets/clown_base.png, no /assets/clown_hair64.png)
+    const wigImg = new Image();
+    wigImg.src = "/assets/wig_master_64.png";
+    let wigReady = false;
+    wigImg.onload = () => { wigReady = true; };
+    wigImg.onerror = () => {
+      wigReady = false;
+      console.warn("Failed to load /assets/wig_master_64.png");
+    };
 
-    function setPixelArt(ctx2){
-      ctx2.imageSmoothingEnabled = false;
+    // cache tinted wig per team
+    const tintedWigCache = new Map();
+
+    function isWigPixel(r, g, b, a){
+      if (a < 10) return false;
+      // "wig-ish" pixels: red/pink-ish base (adjust later if needed)
+      return (r > 140 && g < 120 && b < 140 && (r - Math.max(g, b)) > 30);
     }
 
-    const tintedHairCache = new Map(); // key(teamId)->canvas
+    function getTintedWigForTeam(teamId){
+      if (!wigReady || !wigImg.naturalWidth) return null;
 
-    function getTintedHairCanvas(teamId){
       const key = Number.isFinite(teamId) ? (teamId|0) : -1;
-      if (tintedHairCache.has(key)) return tintedHairCache.get(key);
-      if (!hairReady) return null;
+      if (tintedWigCache.has(key)) return tintedWigCache.get(key);
+
+      const w = wigImg.naturalWidth;
+      const h = wigImg.naturalHeight;
 
       const c = document.createElement("canvas");
-      c.width = hairSprite.naturalWidth || 64;
-      c.height = hairSprite.naturalHeight || 64;
-      const cctx = c.getContext("2d");
+      c.width = w;
+      c.height = h;
+      const g = c.getContext("2d", { willReadFrequently: true });
 
-      // draw base
-      cctx.clearRect(0,0,c.width,c.height);
-      cctx.drawImage(hairSprite, 0, 0);
+      g.clearRect(0,0,w,h);
+      g.drawImage(wigImg, 0, 0);
 
-      // tint (source-atop keeps alpha)
-      cctx.globalCompositeOperation = "source-atop";
-      cctx.fillStyle = getHairColor(teamId);
-      cctx.fillRect(0,0,c.width,c.height);
-      cctx.globalCompositeOperation = "source-over";
+      const img = g.getImageData(0, 0, w, h);
+      const data = img.data;
 
-      tintedHairCache.set(key, c);
+      const col = teamColor(teamId);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i + 0];
+        const gg = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+
+        if (!isWigPixel(r, gg, b, a)) continue;
+
+        // preserve luminance/shading from source
+        const lum = (0.2126 * r + 0.7152 * gg + 0.0722 * b) / 255;
+
+        data[i + 0] = Math.round(col.r * lum);
+        data[i + 1] = Math.round(col.g * lum);
+        data[i + 2] = Math.round(col.b * lum);
+      }
+
+      g.putImageData(img, 0, 0);
+      tintedWigCache.set(key, c);
       return c;
     }
 
-    // ---------------------------
-    // ✅ SPRITE SYSTEM (PNG sheet)
-    // ---------------------------
-    const SPR_W = 32;
-    const SPR_H = 32;
-    const SPR_COLS = 4; // frames
-    const SPR_ROWS = 8; // directions
+    function drawVectorFeet(px, py, ang, nowMs, moving){
+      // Feet behind the head along facing direction
+      const backX = -Math.cos(ang);
+      const backY = -Math.sin(ang);
 
-    const clownBaseImg = new Image();
-    clownBaseImg.src = "/assets/clown_base.png";
-    let clownBaseReady = false;
+      // Perp (for left/right foot)
+      const pxp = -backY;
+      const pyp = backX;
 
-    clownBaseImg.onload = () => { clownBaseReady = true; };
-    clownBaseImg.onerror = () => {
-      console.warn("Failed to load /assets/clown_base.png");
-    };
+      const step = moving ? Math.sin(nowMs / 110) : 0;
+      const spread = 6;
+      const back = 10;
 
-    // cache tinted sheets per teamId (offscreen canvas)
-   const tintedSheetCache = new Map();
+      const fx = px + backX * back;
+      const fy = py + backY * back;
 
-function getTintedSheetForTeam(teamId){
-  if (!clownBaseReady) return null;
+      const lfX = fx + pxp * spread;
+      const lfY = fy + pyp * spread + step * 2;
 
-  const key = Number.isFinite(teamId) ? (teamId|0) : -1;
-  if (tintedSheetCache.has(key)) return tintedSheetCache.get(key);
+      const rfX = fx - pxp * spread;
+      const rfY = fy - pyp * spread - step * 2;
 
-  const c = document.createElement("canvas");
-  c.width = clownBaseImg.width;
-  c.height = clownBaseImg.height;
+      ctx.save();
+      ctx.globalAlpha = 0.95;
 
-  const cc = c.getContext("2d");
-  cc.drawImage(clownBaseImg, 0, 0);
+      // little shadow under feet
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = "black";
+      ctx.beginPath();
+      ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI*2);
+      ctx.fill();
 
-  tintedSheetCache.set(key, c);
-  return c;
-}
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = "rgba(230,237,247,.92)";
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.lineWidth = 1.5;
 
-    // direction mapping to 8 rows (0..7)
-    function dirToRow(dx, dy){
-      const ang = Math.atan2(dy, dx);
-      const step = (Math.PI * 2) / 8;
-      let idx = Math.round(ang / step);
-      if (idx < 0) idx += 8;
-      idx = idx % 8;
-      return idx;
+      function foot(x,y){
+        ctx.beginPath();
+        ctx.ellipse(x, y, 6, 4, ang, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      foot(lfX, lfY);
+      foot(rfX, rfY);
+
+      ctx.restore();
+      ctx.lineWidth = 1;
     }
 
-    // walk frame (0..3)
-    function walkFrame(nowMs, moving){
-      if (!moving) return 0; // idle uses frame 0
-      // 4 frames, ~8 fps
-      return Math.floor((nowMs / 125) % SPR_COLS);
-    }
+    function drawPixelHead(px, py, ang, teamId){
+      const tinted = getTintedWigForTeam(teamId) || (wigReady ? wigImg : null);
+      if (!tinted) return;
 
-    // --- Wig sprite (64x64) ---
-    const wigImg = new Image();
-    // ✅ FIX: correct URL (do NOT include "client/" in browser path)
-    wigImg.src = "/assets/wig_master_64.png";
-
-    function drawWigSprite(px, py, ang, sway, hairR = 16){
-      if (!wigImg.complete || !wigImg.naturalWidth) return;
-
-      const size = hairR * 2.2;
+      // size in world pixels
+      const size = 34; // tweak later
       const half = size / 2;
 
       ctx.save();
       ctx.translate(px, py);
       ctx.rotate(ang);
-      ctx.translate(sway * 1.2, 0);
-      ctx.rotate(sway * 0.03);
-
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(wigImg, -half, -half, size, size);
-
+      ctx.drawImage(tinted, -half, -half, size, size);
       ctx.restore();
     }
 
@@ -2932,46 +2945,27 @@ function getTintedSheetForTeam(teamId){
       const blinkOff = invuln && ((nowMs % 240) < 110);
       if (blinkOff) return;
 
-      const dx0 = Number.isFinite(p.dirX) ? p.dirX : 1;
+      // Movement vector for walking animation only
+      const dx0 = Number.isFinite(p.dirX) ? p.dirX : 0;
       const dy0 = Number.isFinite(p.dirY) ? p.dirY : 0;
-      const d = norm(dx0, dy0);
-
       const moving = (Math.abs(dx0) + Math.abs(dy0)) > 0.01;
 
-      if (!clownBaseReady) {
-        ctx.save();
-        ctx.fillStyle = "rgba(255,255,255,.85)";
-        ctx.beginPath();
-        ctx.arc(px, py, 6, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
-        return;
+      // ✅ facing: me uses view cone direction; others use their dirX/dirY
+      let ang = 0;
+      if (isMe) {
+        ang = lastFacingAng;
+      } else {
+        const d = norm((dx0 || 1), (dy0 || 0));
+        ang = Math.atan2(d.y, d.x);
       }
 
-      const sheet = getTintedSheetForTeam(p.teamId);
-      // ✅ HARDEN: if null (shouldn’t happen now, but safe), skip drawing
-      if (!sheet) return;
+      // Feet (vector)
+      drawVectorFeet(px, py, ang, nowMs, moving);
 
-      const row = dirToRow(d.x, d.y);
-      const col = walkFrame(nowMs, moving);
+      // Head/hair/nose (pixel)
+      drawPixelHead(px, py, ang, p.teamId);
 
-      const sx = col * SPR_W;
-      const sy = row * SPR_H;
-
-      ctx.save();
-      ctx.globalAlpha = 0.18;
-      ctx.fillStyle = "black";
-      ctx.beginPath();
-      ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI*2);
-      ctx.fill();
-      ctx.restore();
-
-      const scale = 1.0;
-      const dw = SPR_W * scale;
-      const dh = SPR_H * scale;
-
-      ctx.drawImage(sheet, sx, sy, SPR_W, SPR_H, px - dw/2, py - dh/2, dw, dh);
-
+      // Rings
       if (isMe) {
         ctx.save();
         ctx.lineWidth = 2;
@@ -3091,13 +3085,14 @@ function getTintedSheetForTeam(teamId){
 
       drawBullets(camX, camY);
 
+      // ✅ Render fog first to compute lastFacingAng this frame (for me sprite)
+      if (me) renderFogMask(me, camX, camY, nowMs);
+
       for (const p of lastSnapshot.players) {
         drawClownTopDown(p, camX, camY, p.id === myId, nowMs);
       }
 
       if (me) {
-        renderFogMask(me, camX, camY, nowMs);
-
         if (DEBUG_SHOW_VIS) {
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
