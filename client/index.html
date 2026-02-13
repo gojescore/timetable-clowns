@@ -2938,41 +2938,6 @@
       ctx.restore();
     }
 
-    // --- TEAM COLORS (edit as you like) ---
-const TEAM_COLORS = [
-  { r: 255, g: 60,  b: 60  }, // team 0
-  { r: 60,  g: 140, b: 255 }, // team 1
-  { r: 60,  g: 220, b: 120 }, // team 2
-  { r: 255, g: 200, b: 60  }, // team 3
-];
-
-  const col = TEAM_COLORS[idx];
-
-  // Recolor only wig pixels, keep shading by preserving brightness
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i + 0];
-    const gg = data[i + 1];
-    const b = data[i + 2];
-    const a = data[i + 3];
-
-    if (!isWigPixel(r, gg, b, a)) continue;
-
-    // Preserve luminance/shading from source
-    const lum = (0.2126 * r + 0.7152 * gg + 0.0722 * b) / 255; // 0..1
-
-    data[i + 0] = Math.round(col.r * lum);
-    data[i + 1] = Math.round(col.g * lum);
-    data[i + 2] = Math.round(col.b * lum);
-    // alpha stays
-  }
-
-  g.putImageData(img, 0, 0);
-
-  tintedSheetCache.set(key, c);
-  return c;
-}
-
-
     function drawClownTopDown(p, camX, camY, isMe, nowMs){
       if (p.alive === false) return;
 
