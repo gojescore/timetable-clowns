@@ -2824,7 +2824,7 @@ function drawClownTopDown(p, camX, camY, isMe, nowMs){
   const px = p.x - camX;
   const py = p.y - camY;
 
-  // invuln blink (keep your existing rule)
+  // invuln blink (keep)
   const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
   const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
   const blinkOff = invuln && ((nowMs % 240) < 110);
@@ -2841,81 +2841,30 @@ function drawClownTopDown(p, camX, camY, isMe, nowMs){
 
   const hairCol = getHairColor(p.teamId);
 
-  // --- Shadow (soft, under hair) ---
+  // Scale: your player is ~28x28 => radius ~14.
+  // Make wig big but not huge.
+  const R = 16;
+
+  // --- Shadow (under everything) ---
   ctx.save();
   ctx.globalAlpha = 0.18;
   ctx.fillStyle = "black";
   ctx.beginPath();
-  ctx.ellipse(px + 2, py + 12, 18, 14, 0, 0, Math.PI * 2);
+  ctx.ellipse(px + 1.5, py + 10.5, 14, 10.5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // --- WIG (all hair, dominant) ---
-  // Make it a big fluffy mass with a few subtle bumps (still vector, not “tufts”)
-  const R = 22;
-
-  ctx.save();
-  ctx.fillStyle = hairCol;
-
-  // base mass
-  ctx.beginPath();
-  ctx.arc(px, py, R, 0, Math.PI * 2);
-  ctx.fill();
-
-  // fluffy bumps (very subtle, no outlines)
-  ctx.globalAlpha = 0.92;
-  const bumps = [
-    { a: 0.3,  r: 6.2, d: 18.5 },
-    { a: 1.2,  r: 5.8, d: 18.0 },
-    { a: 2.1,  r: 6.4, d: 18.6 },
-    { a: 3.1,  r: 5.6, d: 18.2 },
-    { a: 4.0,  r: 6.1, d: 18.4 },
-    { a: 5.1,  r: 5.9, d: 18.1 },
-  ];
-  for (const b of bumps) {
-    const x = px + Math.cos(b.a) * b.d;
-    const y = py + Math.sin(b.a) * b.d;
-    ctx.beginPath();
-    ctx.arc(x, y, b.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // tiny walk sway (hair shifts a pixel sideways)
-  if (moving) {
-    ctx.globalAlpha = 0.12;
-    ctx.fillStyle = "black";
-    ctx.beginPath();
-    ctx.arc(px + step * 1.2, py, R, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.restore();
-
-  // --- Nose (sticks out from under wig) ---
-  // Slightly lower than center so it reads “under hair”
-  ctx.save();
-  ctx.fillStyle = "rgba(225,45,45,1)";
-  ctx.beginPath();
-  ctx.arc(
-    px + dir.x * 18,
-    py + dir.y * 18 + 3,   // under hair
-    4.2,
-    0,
-    Math.PI * 2
-  );
-  ctx.fill();
-  ctx.restore();
-
-  // --- Shoes (ONLY when moving; alternate left/right) ---
+  // --- Shoes FIRST (behind wig). Only visible when moving. ---
   if (moving) {
     const footSide = stepIsLeft ? -1 : +1;
 
-    // place shoe “behind” the nose direction a bit so it feels grounded
-    const shoeBaseX = px - dir.x * 2;
-    const shoeBaseY = py + dir.y * 10;
+    // Put shoes "under" the wig (downwards on screen), not at center.
+    // Also slightly trailing opposite facing direction.
+    const baseX = px - dir.x * 2;
+    const baseY = py + 12 - dir.y * 2;
 
-    const shoeX = shoeBaseX + perp.x * (11 * footSide) + dir.x * 6;
-    const shoeY = shoeBaseY + perp.y * (11 * footSide) + dir.y * 2;
+    const shoeX = baseX + perp.x * (7.5 * footSide) + dir.x * 2.5;
+    const shoeY = baseY + perp.y * (7.5 * footSide) + dir.y * 2.5;
 
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,.92)";
@@ -2923,7 +2872,7 @@ function drawClownTopDown(p, camX, camY, isMe, nowMs){
     ctx.ellipse(
       shoeX,
       shoeY,
-      6.5, 4.3,
+      5.2, 3.6,
       Math.atan2(dir.y, dir.x),
       0, Math.PI * 2
     );
@@ -2931,24 +2880,92 @@ function drawClownTopDown(p, camX, camY, isMe, nowMs){
     ctx.restore();
   }
 
-  // --- Me ring (optional, subtle) ---
+  // --- WIG (hair mass) ---
+  // Add subtle shading so it doesn't read like a flat circle.
+  const swayX = moving ? (step * 0.9) : 0;
+
+  // base
+  ctx.save();
+  ctx.fillStyle = hairCol;
+  ctx.beginPath();
+  ctx.arc(px + swayX, py, R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // soft darker underside
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "black";
+  ctx.beginPath();
+  ctx.ellipse(px + swayX + 1, py + 4, R * 0.9, R * 0.65, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // soft highlight top-left
+  ctx.globalAlpha = 0.10;
+  ctx.fillStyle = "white";
+  ctx.beginPath();
+  ctx.ellipse(px + swayX - 4, py - 5, R * 0.75, R * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // fluffy bumps (small + subtle)
+  ctx.globalAlpha = 0.95;
+  ctx.fillStyle = hairCol;
+  const bumps = [
+    { a: 0.4, r: 4.2, d: 12.5 },
+    { a: 1.3, r: 3.9, d: 12.0 },
+    { a: 2.2, r: 4.4, d: 12.7 },
+    { a: 3.2, r: 3.8, d: 12.1 },
+    { a: 4.1, r: 4.3, d: 12.5 },
+    { a: 5.0, r: 4.0, d: 12.0 },
+  ];
+  for (const b of bumps) {
+    const x = px + swayX + Math.cos(b.a) * b.d;
+    const y = py + Math.sin(b.a) * b.d;
+    ctx.beginPath();
+    ctx.arc(x, y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // thin outline (not bold)
+  ctx.globalAlpha = 0.25;
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(px + swayX, py, R + 0.4, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // --- Nose LAST (on top, sticking out under hair) ---
+  ctx.save();
+  ctx.fillStyle = "rgba(225,45,45,1)";
+  ctx.beginPath();
+  ctx.arc(
+    px + dir.x * (R + 2),
+    py + dir.y * (R + 2) + 2,   // "under" hair read
+    3.6,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+  ctx.restore();
+
+  // --- Me ring (subtle) ---
   if (isMe) {
     ctx.save();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,.35)";
+    ctx.strokeStyle = "rgba(255,255,255,.30)";
     ctx.beginPath();
-    ctx.arc(px, py, R + 2.5, 0, Math.PI * 2);
+    ctx.arc(px, py, R + 3.2, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
 
-  // --- Invuln ring (keep) ---
+  // --- Invuln ring ---
   if (invuln) {
     ctx.save();
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(34,197,94,.92)";
     ctx.beginPath();
-    ctx.arc(px, py, R + 5, 0, Math.PI * 2);
+    ctx.arc(px, py, R + 6, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
