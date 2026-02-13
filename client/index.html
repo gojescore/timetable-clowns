@@ -527,19 +527,16 @@
           <option value="kbm_gamepad">Keyboard + Mouse + Controller</option>
         </select>
 
-        <!-- ✅ NEW: win mode -->
         <select id="winMode" title="Win mode">
           <option value="standard" selected>Win: Standard</option>
           <option value="money">Win: Money (most money wins)</option>
         </select>
 
-        <!-- ✅ NEW: session mode -->
         <select id="sessionMode" title="Session">
           <option value="standard" selected>Session: Standard</option>
           <option value="timed">Session: Timed</option>
         </select>
 
-        <!-- ✅ NEW: minutes -->
         <input id="sessionMinutes" type="number" min="1" max="60" value="5" title="Timed minutes" />
       </div>
 
@@ -594,17 +591,14 @@
               🍰 <span id="hudCakes">7</span>
             </div>
 
-            <!-- ✅ Added: invulnerability indicator (server invulnUntil) -->
             <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
               🛡️ <span id="hudInvulnText">INV 0.0s</span>
             </div>
 
-            <!-- ✅ Added: timer indicator (timed sessions) -->
             <div class="hudPill timer hidden" id="hudTimer" title="Time left">
               ⏱️ <span id="hudTimerText">--:--</span>
             </div>
 
-            <!-- ✅ NEW: balloon status (UI only; server decides everything) -->
             <div class="hudPill balloon hidden" id="hudBalloon" title="Balloon active">
               🎈 <span id="hudBalloonText">BAL 0.0s</span>
             </div>
@@ -724,7 +718,6 @@
 
       <div id="endBoard"></div>
 
-      <!-- ✅ ONLY OPTION: back to lobby -->
       <div class="endActionsSolo">
         <button class="primary" id="endBackBtn" title="Back to lobby (reload)">Back to lobby</button>
       </div>
@@ -780,7 +773,6 @@
       hudTimer: document.getElementById("hudTimer"),
       hudTimerText: document.getElementById("hudTimerText"),
 
-      // ✅ balloon status HUD
       hudBalloon: document.getElementById("hudBalloon"),
       hudBalloonText: document.getElementById("hudBalloonText"),
 
@@ -856,7 +848,6 @@
     // ✅ remember last keyboard-only facing direction
     let lastKbDirX = 1;
     let lastKbDirY = 0;
-
 
     // ✅ KBM: consumable slot selection 0..2 (used by mouse wheel / RMB)
     let activeConsumableSlotIndex = 0;
@@ -1358,70 +1349,55 @@
       // Backward compatible: server can ignore aimX/aimY if not used yet.
       const payload = { ...inputState };
 
-      // ✅ IMPORTANT FIX:
-      // - KBM: when mouseAim.has, send BOTH aimX/aimY (world target) AND dirX/dirY (aim direction)
-      // - KB-only: send dirX/dirY based on movement keys so facing updates and shooting direction follows
-      // - KBM fallback: if mouseAim.has is false (cursor outside), still allow facing via movement keys
-      if (lastSnapshot) {
-        const me = lastSnapshot.players?.find(p => p.id === myId);
+      if (!lastSnapshot) return payload;
+      const me = lastSnapshot.players?.find(p => p.id === myId);
+      if (!me) return payload;
 
-        // ----- KBM mouse aim (primary when available) -----
-        if (localInputMode === "kbm" && mouseAim.has && me) {
-          // Convert mouse (screen/canvas CSS px) -> world coords using current cam
-          const camXraw = (me.x - VIEW_W / 2);
-          const camYraw = (me.y - VIEW_H / 2);
-          const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
-          const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
+      // ----- KBM mouse aim (primary when available) -----
+      if (localInputMode === "kbm" && mouseAim.has) {
+        const camXraw = (me.x - VIEW_W / 2);
+        const camYraw = (me.y - VIEW_H / 2);
+        const camX = Math.round(Math.max(0, Math.min(world.w - VIEW_W, camXraw)));
+        const camY = Math.round(Math.max(0, Math.min(world.h - VIEW_H, camYraw)));
 
-          const aimWorldX = camX + mouseAim.x;
-          const aimWorldY = camY + mouseAim.y;
+        const aimWorldX = camX + mouseAim.x;
+        const aimWorldY = camY + mouseAim.y;
 
-          payload.aimX = aimWorldX;
-          payload.aimY = aimWorldY;
+        payload.aimX = aimWorldX;
+        payload.aimY = aimWorldY;
 
-          const d = norm(aimWorldX - me.x, aimWorldY - me.y);
-          payload.dirX = d.x;
-          payload.dirY = d.y;
+        const d = norm(aimWorldX - me.x, aimWorldY - me.y);
+        payload.dirX = d.x;
+        payload.dirY = d.y;
 
-          return payload; // ✅ do not override with move-dir when mouse aim is active
+        return payload;
+      }
+
+      // ----- Keyboard-only aiming (remembers last direction) -----
+      if (localInputMode === "kb") {
+        const md = getMoveDirFromKeys();
+        if (md) {
+          lastKbDirX = md.x;
+          lastKbDirY = md.y;
         }
 
-        // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
- // ----- Keyboard/move-direction aim (KB-only + KBM fallback) -----
-// ----- Keyboard-only aiming (remembers last direction) -----
-if (localInputMode === "kb" && me) {
-  const md = getMoveDirFromKeys();
+        const AIM_DIST = 1000;
+        payload.aimX = me.x + lastKbDirX * AIM_DIST;
+        payload.aimY = me.y + lastKbDirY * AIM_DIST;
+        payload.dirX = lastKbDirX;
+        payload.dirY = lastKbDirY;
 
-  // update stored direction only when moving
-  if (md) {
-    lastKbDirX = md.x;
-    lastKbDirY = md.y;
-  }
+        return payload;
+      }
 
-  const AIM_DIST = 1000;
-
-  payload.aimX = me.x + lastKbDirX * AIM_DIST;
-  payload.aimY = me.y + lastKbDirY * AIM_DIST;
-
-  payload.dirX = lastKbDirX;
-  payload.dirY = lastKbDirY;
-
-  return payload;
-}
-
-// ----- KBM fallback when no mouse aim -----
-const md = getMoveDirFromKeys();
-if (md && me) {
-  const AIM_DIST = 1000;
-
-  payload.aimX = me.x + md.x * AIM_DIST;
-  payload.aimY = me.y + md.y * AIM_DIST;
-
-  payload.dirX = md.x;
-  payload.dirY = md.y;
-}
-
-
+      // ----- KBM fallback when no mouse aim -----
+      const md = getMoveDirFromKeys();
+      if (md) {
+        const AIM_DIST = 1000;
+        payload.aimX = me.x + md.x * AIM_DIST;
+        payload.aimY = me.y + md.y * AIM_DIST;
+        payload.dirX = md.x;
+        payload.dirY = md.y;
       }
 
       return payload;
@@ -1460,13 +1436,11 @@ if (md && me) {
     window.addEventListener("keyup", (e) => setKey(e, false));
 
     // ---- KBM mouse handling (aim + fire + consumables) ----
-    // ✅ pointer-based aim feels snappier across browsers than mousemove
     function updateMouseAimFromClientXY(clientX, clientY){
       const rect = el.canvas.getBoundingClientRect();
       const x = clientX - rect.left;
       const y = clientY - rect.top;
 
-      // ✅ clamp using rect size (NOT VIEW_W/VIEW_H, which can be stale early)
       const clampX = Math.max(0, Math.min(rect.width, x));
       const clampY = Math.max(0, Math.min(rect.height, y));
 
@@ -1479,7 +1453,6 @@ if (md && me) {
       if (!isGameRunning()) return;
       if (localInputMode !== "kbm") return;
       updateMouseAimFromClientXY(e.clientX, e.clientY);
-      // We do NOT spam sendInput() every pointermove.
     }, { passive:true });
 
     el.canvasWrap.addEventListener("pointerenter", (e) => {
@@ -1489,7 +1462,6 @@ if (md && me) {
     }, { passive:true });
 
     el.canvasWrap.addEventListener("pointerleave", () => {
-      // ✅ hide crosshair when pointer is outside arena
       mouseAim.has = false;
     });
 
@@ -1497,7 +1469,6 @@ if (md && me) {
       if (!isGameRunning()) return;
       if (localInputMode !== "kbm") return;
 
-      // block if UI overlays are open
       if (isUiBlockingInput() || el.upgradeOverlay.classList.contains("show") || el.overlay.classList.contains("show")) return;
 
       updateMouseAimFromClientXY(e.clientX, e.clientY);
@@ -1506,11 +1477,11 @@ if (md && me) {
       if (e.button === 0) {
         e.preventDefault();
         inputState.fire = true;
-        sendInput(); // ✅ will include dirX/dirY aim now
+        sendInput();
         return;
       }
 
-      // Right click: use currently selected consumable slot (1/2/3 selection via wheel)
+      // Right click: use currently selected consumable slot
       if (e.button === 2) {
         e.preventDefault();
         socket.emit("useUpgradeSlot", { slotIndex: activeConsumableSlotIndex });
@@ -1529,27 +1500,25 @@ if (md && me) {
       }
     });
 
-    // prevent context menu so RMB can be used
     el.canvasWrap.addEventListener("contextmenu", (e) => {
       if (!isGameRunning()) return;
       if (localInputMode !== "kbm") return;
       e.preventDefault();
     });
 
-    // mouse wheel cycles consumable slot (0..2)
     el.canvasWrap.addEventListener("wheel", (e) => {
       if (!isGameRunning()) return;
       if (localInputMode !== "kbm") return;
       if (isUiBlockingInput() || el.upgradeOverlay.classList.contains("show") || el.overlay.classList.contains("show")) return;
 
       e.preventDefault();
-      const dir = Math.sign(e.deltaY); // +1 down, -1 up
+      const dir = Math.sign(e.deltaY);
       if (dir === 0) return;
 
       if (dir > 0) activeConsumableSlotIndex = (activeConsumableSlotIndex + 1) % 3;
       else activeConsumableSlotIndex = (activeConsumableSlotIndex + 2) % 3;
 
-      renderUpgradeBar(true); // force to reflect "active" highlight
+      renderUpgradeBar(true);
       showBubble(`Selected slot: ${activeConsumableSlotIndex + 1}`, 700);
     }, { passive:false });
 
@@ -1557,7 +1526,6 @@ if (md && me) {
     window.addEventListener("keydown", (e) => {
       if (!isGameRunning()) return;
 
-      // end overlay: only allow Enter/Escape to go back
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
@@ -1566,7 +1534,6 @@ if (md && me) {
         return;
       }
 
-      // Drop overlay: Y/N / Escape, and 8/9/0 selection in choose stage
       if (el.dropOverlay.classList.contains("show")) {
         const k = e.key.toLowerCase();
 
@@ -1590,9 +1557,6 @@ if (md && me) {
         return;
       }
 
-      // Upgrade picker open:
-      // - Escape closes and declines offer server-side
-      // - In KB-only mode, WASD navigates tiles, Space selects
       if (el.upgradeOverlay.classList.contains("show")) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1603,13 +1567,11 @@ if (md && me) {
         if (localInputMode === "kb") {
           const k = e.key.toLowerCase();
 
-          // W/A/S/D nav
           if (k === "w" || e.key === "ArrowUp") { e.preventDefault(); moveUpgradeSel(-upgradePicker.cols); return; }
           if (k === "s" || e.key === "ArrowDown") { e.preventDefault(); moveUpgradeSel(+upgradePicker.cols); return; }
           if (k === "a" || e.key === "ArrowLeft") { e.preventDefault(); moveUpgradeSel(-1); return; }
           if (k === "d" || e.key === "ArrowRight") { e.preventDefault(); moveUpgradeSel(+1); return; }
 
-          // Space selects
           if (e.code === "Space" || e.key === " ") {
             e.preventDefault();
             clickUpgradeSel();
@@ -1620,28 +1582,22 @@ if (md && me) {
         return;
       }
 
-      // Respawn overlay open: no gameplay hotkeys
       if (el.respawnOverlay.classList.contains("show")) {
         if (e.key === "Escape") e.preventDefault();
         return;
       }
 
-      // Prompt open: no gameplay hotkeys
       if (el.overlay.classList.contains("show")) return;
-
-      // ignore typing in inputs
       if (isTypingInForm(e)) return;
 
       const k = e.key.toLowerCase();
 
-      // Interact
       if (k === "e") {
         e.preventDefault();
         socket.emit("tryInteract");
         return;
       }
 
-      // Debug
       if (k === "v") {
         DEBUG_SHOW_VIS = !DEBUG_SHOW_VIS;
         e.preventDefault();
@@ -1655,10 +1611,8 @@ if (md && me) {
         return;
       }
 
-      // Block gameplay hotkeys while any UI is up (extra safety)
       if (isUiBlockingInput()) return;
 
-      // Use upgrade slots 8/9/0 (legacy keyboard hotkeys)
       if (e.key === "8" || e.key === "9" || e.key === "0") {
         e.preventDefault();
         const slotIndex = (e.key === "8") ? 0 : (e.key === "9") ? 1 : 2;
@@ -1666,7 +1620,6 @@ if (md && me) {
         return;
       }
 
-      // ✅ KBM convenience: 1/2/3 selects slot, RMB uses it
       if (localInputMode === "kbm") {
         if (e.key === "1" || e.key === "2" || e.key === "3") {
           e.preventDefault();
@@ -1770,7 +1723,6 @@ if (md && me) {
         btns[k].classList.toggle("sel", k === idx);
       }
 
-      // keep in view (nice on smaller screens)
       try {
         btns[idx].scrollIntoView({ block: "nearest", inline: "nearest" });
       } catch(_) {}
@@ -1791,7 +1743,6 @@ if (md && me) {
       if (b && typeof b.click === "function") b.click();
     }
 
-    // ✅ robust offerId parsing + capture offerId for click handlers
     function openUpgradeOffer(payload = {}) {
       const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
       const options = payload.options;
@@ -1807,7 +1758,6 @@ if (md && me) {
       const grid = document.createElement("div");
       grid.className = "upgGrid" + (use4 ? " grid4" : "");
 
-      // reset picker state
       upgradePicker.open = true;
       upgradePicker.buttons = [];
       upgradePicker.cols = use4 ? 4 : 3;
@@ -1852,7 +1802,6 @@ if (md && me) {
         tile.appendChild(foot);
 
         tile.addEventListener("click", () => {
-          // ✅ use captured offerId (prevents races / stale globals)
           socket.emit("chooseUpgrade", { offerId, upgradeId: opt.id });
         });
 
@@ -1862,12 +1811,9 @@ if (md && me) {
 
       el.upgradeList.appendChild(grid);
       el.upgradeOverlay.classList.add("show");
-
-      // highlight first tile for kb navigation
       setUpgradeSel(0);
     }
 
-    // ✅ single “force close” helper (used by local close + server ACK)
     function forceCloseUpgradeUI(){
       activeOfferId = null;
       closeDropPicker();
@@ -1880,35 +1826,24 @@ if (md && me) {
     }
 
     function closeUpgradeOffer() {
-      // ✅ IMPORTANT: always tell server to close offer (prevents offer_open lock)
-      if (activeOfferId) {
-        socket.emit("declineUpgrade", { offerId: activeOfferId });
-      } else {
-        // ✅ tolerate servers that close “any pending offer for this player”
-        socket.emit("declineUpgrade", {});
-      }
+      if (activeOfferId) socket.emit("declineUpgrade", { offerId: activeOfferId });
+      else socket.emit("declineUpgrade", {});
       forceCloseUpgradeUI();
     }
 
     el.upgradeCloseBtn.addEventListener("click", closeUpgradeOffer);
     socket.on("UPGRADE_OFFER", (p) => { openUpgradeOffer(p); });
 
-    // ✅ IMPORTANT FIX: handle server decline consistently (and ignore stale declines)
     function onUpgradeDeclined(p) {
       if (!p) { forceCloseUpgradeUI(); return; }
 
       const serverOfferId = p.offerId ?? p.offerID ?? p.offer_id ?? null;
-
-      // If server includes offerId, ignore stale declines for older offers.
       if (serverOfferId && activeOfferId && serverOfferId !== activeOfferId) return;
 
-      // Whether ok or not, we close UI locally to avoid getting stuck.
       forceCloseUpgradeUI();
     }
 
-    // Primary
     socket.on("UPGRADE_DECLINED", onUpgradeDeclined);
-    // Tolerate alternate server event names (harmless if never emitted)
     socket.on("DECLINE_UPGRADE", onUpgradeDeclined);
     socket.on("UPGRADE_DECLINED_ACK", onUpgradeDeclined);
 
@@ -2146,8 +2081,6 @@ if (md && me) {
     // ===== Upgrade bar render (two sections) =====
     function renderUpgradeBar(force){
       const sig = computeUpgSig(myServerUpgrades);
-
-      // If not forced, only rerender when upgrade contents changed.
       if (!force && sig === lastUpgSig) return;
       lastUpgSig = sig;
 
@@ -2264,7 +2197,6 @@ if (md && me) {
     let VIEW_W = 900;
     let VIEW_H = 520;
 
-    // ✅ fog canvas sizing only when needed
     let lastFogW = -1;
     let lastFogH = -1;
 
@@ -2386,7 +2318,6 @@ if (md && me) {
       return null;
     }
 
-    // ✅ Ray cast in WORLD coords (no per-frame segment transforms)
     function castRayToWallsWorld(px, py, ang, maxLen, segsWorld){
       const rx = Math.cos(ang);
       const ry = Math.sin(ang);
@@ -2402,7 +2333,6 @@ if (md && me) {
 
     function getWallCornerAnglesWorld(px, py) {
       const out = [];
-      // corners are cached per map
       for (const c of wallCornersWorld) {
         const ang = Math.atan2(c.y - py, c.x - px);
         out.push(ang - 0.0008, ang, ang + 0.0008);
@@ -2418,7 +2348,6 @@ if (md && me) {
         if (a >= baseAng - halfAng && a <= baseAng + halfAng) angles.push(a);
       }
 
-      // ✅ fewer samples (visual-only perf)
       const samples = 160;
       for (let i = 1; i < samples; i++) {
         const t = i / samples;
@@ -2429,7 +2358,6 @@ if (md && me) {
       return angles;
     }
 
-    // ✅ Fill cone by casting in WORLD, drawing in SCREEN (cam-subtracted)
     function fillConeFromPlayerApexWorld(ctx2, pxW, pyW, camX, camY, baseAng, halfAng, maxLen, segsWorld, extraAngles) {
       const angles = buildAnglesForCone(baseAng, halfAng, extraAngles);
       const outer = [];
@@ -2447,9 +2375,6 @@ if (md && me) {
       return true;
     }
 
-    // ---------------------------
-    // ✅ Jack-in-the-Box list access (robust)
-    // ---------------------------
     function getJackBoxesFromSnapshot(snap){
       if (!snap) return null;
       return (
@@ -2460,19 +2385,12 @@ if (md && me) {
       );
     }
 
-    // ---------------------------
-    // ✅ Fog mask + JackBox reveal sources (UI only)
-    // ---------------------------
     function renderFogMask(meObj, camX, camY, nowMs) {
       if (!FOG_ENABLED) return;
       if (!meObj) return;
 
-      // ✅ only resize fog buffers if view changed
       if (VIEW_W !== lastFogW || VIEW_H !== lastFogH) resizeFogCanvases();
 
-      // ✅ Facing angle:
-      // - If KBM and we have mouse aim, use it for VISUAL cone direction.
-      // - Otherwise fall back to snapshot dir.
       if (localInputMode === "kbm" && mouseAim.has) {
         const ax = camX + mouseAim.x;
         const ay = camY + mouseAim.y;
@@ -2497,13 +2415,11 @@ if (md && me) {
       visCtx.globalAlpha = 1;
       visCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
-      // base: player cone
       visCtx.fillStyle = "rgba(255,255,255,1)";
       const okCone = fillConeFromPlayerApexWorld(
         visCtx, meObj.x, meObj.y, camX, camY, ang, half, visionLen, wallSegsWorld, cornerAngles
       );
 
-      // tiny dot at player
       visCtx.beginPath();
       visCtx.arc(meObj.x - camX, meObj.y - camY, 2, 0, Math.PI*2);
       visCtx.fill();
@@ -2514,7 +2430,6 @@ if (md && me) {
         visCtx.fill();
       }
 
-      // ✅ extra visibility from Jack-in-the-Box (if server sends them)
       const jacks = getJackBoxesFromSnapshot(lastSnapshot);
       if (Array.isArray(jacks) && jacks.length) {
         const myTeam = (Number.isFinite(meObj.teamId) ? meObj.teamId : null);
@@ -2655,9 +2570,6 @@ if (md && me) {
       ctx.lineWidth = 1;
     }
 
-    // ---------------------------
-    // ✅ Mines / bombs / traps rendering
-    // ---------------------------
     function drawMines(camX, camY){
       const list =
         (Array.isArray(lastSnapshot?.mines) ? lastSnapshot.mines : null) ||
@@ -2690,9 +2602,6 @@ if (md && me) {
       ctx.lineWidth = 1;
     }
 
-    // ---------------------------
-    // ✅ Jack-in-the-Box rendering (NEW)
-    // ---------------------------
     function drawJackBoxes(camX, camY){
       const list = getJackBoxesFromSnapshot(lastSnapshot);
       if (!Array.isArray(list)) return;
@@ -2878,7 +2787,35 @@ if (md && me) {
       }
     }
 
-    function drawPlayerBody(p, camX, camY, isMe, nowMs){
+    // ---------------------------
+    // ✅ CLOWN RENDERER (vector, top-down)
+    // - Only hair + one foot tip (walk) + small hand nub
+    // - Team color = hair color
+    // ---------------------------
+    const TEAM_HAIR = [
+      "#ff3b3b", // team 1 red
+      "#2b66ff", // team 2 blue
+      "#22c55e", // team 3 green
+      "#f6c451", // team 4 yellow/gold
+      "#a855f7", // fallback purple
+      "#06b6d4", // cyan
+    ];
+
+    function clamp01(t){ return Math.max(0, Math.min(1, t)); }
+
+    function getHairColor(teamId){
+      if (!Number.isFinite(teamId)) return "rgba(200,200,200,.95)";
+      const idx = Math.abs(teamId|0) % TEAM_HAIR.length;
+      return TEAM_HAIR[idx];
+    }
+
+    function drawCircle(c, x, y, r){
+      c.beginPath();
+      c.arc(x, y, r, 0, Math.PI*2);
+      c.closePath();
+    }
+
+    function drawClownTopDown(p, camX, camY, isMe, nowMs){
       if (p.alive === false) return;
 
       const px = p.x - camX;
@@ -2886,26 +2823,117 @@ if (md && me) {
 
       const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
       const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
-
       const blinkOff = invuln && ((nowMs % 240) < 110);
       if (blinkOff) return;
 
-      ctx.fillStyle = isMe ? "rgba(43,102,255,.95)" : "rgba(255,255,255,.75)";
-      ctx.fillRect(px - 14, py - 14, 28, 28);
+      const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+      const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+      const dir = norm(dx, dy);
+      const perp = { x: -dir.y, y: dir.x };
 
-      if (invuln) {
+      const moving = (Math.abs(dx) + Math.abs(dy)) > 0.01;
+      const stepPhase = moving ? Math.sin(nowMs * 0.020) : 0;
+      const stepIsLeft = stepPhase >= 0;
+
+      const hairCol = getHairColor(p.teamId);
+
+      // simple "shadow"
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = "rgba(0,0,0,1)";
+      drawCircle(ctx, px + 2, py + 8, 14);
+      ctx.fill();
+      ctx.restore();
+
+      // head (skin)
+      ctx.save();
+      ctx.fillStyle = "rgba(245, 220, 200, .98)";
+      drawCircle(ctx, px, py, 12);
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.stroke();
+      ctx.restore();
+
+      // nose (red)
+      ctx.save();
+      ctx.fillStyle = "rgba(239,68,68,.98)";
+      drawCircle(ctx, px + dir.x * 9, py + dir.y * 9, 3.3);
+      ctx.fill();
+      ctx.restore();
+
+      // hair: only visible "top" (behind head in facing direction = opposite dir)
+      const hairBackX = px - dir.x * 5;
+      const hairBackY = py - dir.y * 5;
+
+      ctx.save();
+      ctx.fillStyle = hairCol;
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.lineWidth = 1.2;
+
+      // draw 6-7 tufts
+      const tuftR = 3.6;
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 1.15 + Math.PI * 0.40; // mostly back arc
+        const ox = Math.cos(a) * 9.2;
+        const oy = Math.sin(a) * 9.2;
+
+        const x = hairBackX + ox;
+        const y = hairBackY + oy;
+
+        drawCircle(ctx, x, y, tuftR);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // one foot tip (alternating left/right)
+      const footSide = stepIsLeft ? -1 : +1;
+      const footX = px + perp.x * (6 * footSide) + dir.x * 3;
+      const footY = py + perp.y * (6 * footSide) + dir.y * 6;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(10,10,10,.92)";
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(footX, footY, 4.3, 3.1, Math.atan2(dir.y, dir.x), 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // tiny hand nub (optional, side)
+      const handX = px + perp.x * (9 * -footSide) + dir.x * 0.5;
+      const handY = py + perp.y * (9 * -footSide) + dir.y * 1.5;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,.95)";
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.lineWidth = 1.0;
+      drawCircle(ctx, handX, handY, 2.2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // me outline (subtle)
+      if (isMe) {
         ctx.save();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(34,197,94,.95)";
-        ctx.strokeRect(px - 14, py - 14, 28, 28);
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = "rgba(255,255,255,.45)";
+        drawCircle(ctx, px, py, 14.5);
+        ctx.stroke();
         ctx.restore();
       }
 
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + (p.dirX || 1) * 18, py + (p.dirY || 0) * 18);
-      ctx.stroke();
+      // invuln ring
+      if (invuln) {
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(34,197,94,.92)";
+        drawCircle(ctx, px, py, 16);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     function drawPlayerLabel(p, camX, camY){
@@ -2956,7 +2984,6 @@ if (md && me) {
     }
 
     function drawCrosshair(){
-      // ✅ dot-only crosshair (arrow hidden via CSS cursor:none)
       if (!mouseAim.has) return;
 
       ctx.save();
@@ -2966,7 +2993,6 @@ if (md && me) {
       ctx.fillStyle = "white";
       ctx.fill();
 
-      // subtle outline for visibility
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgba(0,0,0,.55)";
       ctx.stroke();
@@ -3009,7 +3035,7 @@ if (md && me) {
       drawBullets(camX, camY);
 
       for (const p of lastSnapshot.players) {
-        drawPlayerBody(p, camX, camY, p.id === myId, nowMs);
+        drawClownTopDown(p, camX, camY, p.id === myId, nowMs);
       }
 
       if (me) {
@@ -3048,7 +3074,6 @@ if (md && me) {
 
       if (me && me.alive !== false) drawSpeechBubble(me.x, me.y, camX, camY, nowMs);
 
-      // ✅ draw crosshair LAST so it never hides under fog/walls
       drawCrosshair();
     }
 
