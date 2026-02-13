@@ -2928,6 +2928,39 @@ function walkFrame(nowMs, moving){
   return Math.floor((nowMs / 125) % SPR_COLS);
 }
 
+    // --- Wig sprite (64x64) ---
+const wigImg = new Image();
+wigImg.src = "client/assets/wig_master_64.png"; // ✅ served by Express static
+// If your client is served from /client already, use: "assets/wig_master_64.png"
+
+function drawWigSprite(px, py, ang, sway, hairR = 16){
+  // wait until loaded
+  if (!wigImg.complete || !wigImg.naturalWidth) return;
+
+  // We want wig roughly ~32px diameter on screen (hairR*2)
+  const size = hairR * 2.2;          // tweak: 2.0–2.4
+  const half = size / 2;
+
+  ctx.save();
+
+  // move to player center
+  ctx.translate(px, py);
+
+  // rotate wig to face direction
+  ctx.rotate(ang);
+
+  // subtle sway: tiny sideways + tiny rotation
+  ctx.translate(sway * 1.2, 0);
+  ctx.rotate(sway * 0.03);
+
+  // draw centered (bird perspective)
+  ctx.imageSmoothingEnabled = false; // crisp pixels
+  ctx.drawImage(wigImg, -half, -half, size, size);
+
+  ctx.restore();
+}
+
+
     function drawClownTopDown(p, camX, camY, isMe, nowMs){
   if (p.alive === false) return;
 
