@@ -2818,92 +2818,142 @@
       c.closePath();
     }
 
-    function drawClownTopDown(p, camX, camY, isMe, nowMs){
-      if (p.alive === false) return;
+function drawClownTopDown(p, camX, camY, isMe, nowMs){
+  if (p.alive === false) return;
 
-      const px = p.x - camX;
-      const py = p.y - camY;
+  const px = p.x - camX;
+  const py = p.y - camY;
 
-      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-      const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
-      const blinkOff = invuln && ((nowMs % 240) < 110);
-      if (blinkOff) return;
+  // invuln blink (keep your existing rule)
+  const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
+  const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+  const blinkOff = invuln && ((nowMs % 240) < 110);
+  if (blinkOff) return;
 
-      const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
-      const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
-      const dir = norm(dx, dy);
-      const perp = { x: -dir.y, y: dir.x };
+  const dx = Number.isFinite(p.dirX) ? p.dirX : 1;
+  const dy = Number.isFinite(p.dirY) ? p.dirY : 0;
+  const dir = norm(dx, dy);
+  const perp = { x: -dir.y, y: dir.x };
 
-      const moving = (Math.abs(dx) + Math.abs(dy)) > 0.01;
-      const stepPhase = moving ? Math.sin(nowMs * 0.020) : 0;
-      const stepIsLeft = stepPhase >= 0;
+  const moving = (Math.abs(dx) + Math.abs(dy)) > 0.01;
+  const step = moving ? Math.sin(nowMs * 0.020) : 0; // -1..+1
+  const stepIsLeft = step >= 0;
 
+  const hairCol = getHairColor(p.teamId);
 
-      // simple "shadow"
-      ctx.save();
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = "rgba(0,0,0,1)";
-      drawCircle(ctx, px + 2, py + 8, 14);
-      ctx.fill();
-      ctx.restore();
+  // --- Shadow (soft, under hair) ---
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = "black";
+  ctx.beginPath();
+  ctx.ellipse(px + 2, py + 12, 18, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
-      // hair: always BEHIND head (draw first), only on back hemisphere
-      const hairCol = getHairColor(p.teamId);
-      const hairBackX = px - dir.x * 7;
-      const hairBackY = py - dir.y * 7;
+  // --- WIG (all hair, dominant) ---
+  // Make it a big fluffy mass with a few subtle bumps (still vector, not “tufts”)
+  const R = 22;
 
-      ctx.save();
-      ctx.fillStyle = hairCol;
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.lineWidth = 1.1;
+  ctx.save();
+  ctx.fillStyle = hairCol;
 
-      // 6 tufts, strictly behind (centered opposite facing direction)
-      const tuftR = 3.4;
-      const base = Math.atan2(-dir.y, -dir.x); // "behind" angle
-      for (let i = 0; i < 6; i++) {
-        const t = (i / 5) - 0.5;               // -0.5 .. +0.5
-        const a = base + t * 1.25;             // ~72° spread, behind only
-        const ox = Math.cos(a) * 9.0;
-        const oy = Math.sin(a) * 9.0;
+  // base mass
+  ctx.beginPath();
+  ctx.arc(px, py, R, 0, Math.PI * 2);
+  ctx.fill();
 
-        drawCircle(ctx, hairBackX + ox, hairBackY + oy, tuftR);
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.restore();
+  // fluffy bumps (very subtle, no outlines)
+  ctx.globalAlpha = 0.92;
+  const bumps = [
+    { a: 0.3,  r: 6.2, d: 18.5 },
+    { a: 1.2,  r: 5.8, d: 18.0 },
+    { a: 2.1,  r: 6.4, d: 18.6 },
+    { a: 3.1,  r: 5.6, d: 18.2 },
+    { a: 4.0,  r: 6.1, d: 18.4 },
+    { a: 5.1,  r: 5.9, d: 18.1 },
+  ];
+  for (const b of bumps) {
+    const x = px + Math.cos(b.a) * b.d;
+    const y = py + Math.sin(b.a) * b.d;
+    ctx.beginPath();
+    ctx.arc(x, y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-      // head (skin)
-      ctx.save();
-      ctx.fillStyle = "rgba(245, 220, 200, .98)";
-      drawCircle(ctx, px, py, 12);
-      ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.stroke();
-      ctx.restore();
+  // tiny walk sway (hair shifts a pixel sideways)
+  if (moving) {
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = "black";
+    ctx.beginPath();
+    ctx.arc(px + step * 1.2, py, R, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-      // nose (red)
-      ctx.save();
-      ctx.fillStyle = "rgba(239,68,68,.98)";
-      drawCircle(ctx, px + dir.x * 9, py + dir.y * 9, 3.3);
-      ctx.fill();
-      ctx.restore();
+  ctx.restore();
 
+  // --- Nose (sticks out from under wig) ---
+  // Slightly lower than center so it reads “under hair”
+  ctx.save();
+  ctx.fillStyle = "rgba(225,45,45,1)";
+  ctx.beginPath();
+  ctx.arc(
+    px + dir.x * 18,
+    py + dir.y * 18 + 3,   // under hair
+    4.2,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+  ctx.restore();
 
-      // one foot tip (alternating left/right)
-      const footSide = stepIsLeft ? -1 : +1;
-      const footX = px + perp.x * (6 * footSide) + dir.x * 3;
-      const footY = py + perp.y * (6 * footSide) + dir.y * 6;
+  // --- Shoes (ONLY when moving; alternate left/right) ---
+  if (moving) {
+    const footSide = stepIsLeft ? -1 : +1;
 
-      ctx.save();
-      ctx.fillStyle = "rgba(10,10,10,.92)";
-      ctx.strokeStyle = "rgba(0,0,0,.35)";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.ellipse(footX, footY, 4.3, 3.1, Math.atan2(dir.y, dir.x), 0, Math.PI*2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
+    // place shoe “behind” the nose direction a bit so it feels grounded
+    const shoeBaseX = px - dir.x * 2;
+    const shoeBaseY = py + dir.y * 10;
+
+    const shoeX = shoeBaseX + perp.x * (11 * footSide) + dir.x * 6;
+    const shoeY = shoeBaseY + perp.y * (11 * footSide) + dir.y * 2;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.92)";
+    ctx.beginPath();
+    ctx.ellipse(
+      shoeX,
+      shoeY,
+      6.5, 4.3,
+      Math.atan2(dir.y, dir.x),
+      0, Math.PI * 2
+    );
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- Me ring (optional, subtle) ---
+  if (isMe) {
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,.35)";
+    ctx.beginPath();
+    ctx.arc(px, py, R + 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- Invuln ring (keep) ---
+  if (invuln) {
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(34,197,94,.92)";
+    ctx.beginPath();
+    ctx.arc(px, py, R + 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 
 
       // me outline (subtle)
