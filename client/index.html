@@ -2955,28 +2955,6 @@ function drawClownTopDown(p, camX, camY, isMe, nowMs){
 }
 
 
-
-      // me outline (subtle)
-      if (isMe) {
-        ctx.save();
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = "rgba(255,255,255,.45)";
-        drawCircle(ctx, px, py, 14.5);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // invuln ring
-      if (invuln) {
-        ctx.save();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(34,197,94,.92)";
-        drawCircle(ctx, px, py, 16);
-        ctx.stroke();
-        ctx.restore();
-      }
-    }
-
     function drawPlayerLabel(p, camX, camY){
       // intentionally empty (names hidden)
     }
