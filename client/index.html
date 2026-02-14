@@ -2697,10 +2697,13 @@ function renderUpgradeBar(force){
       fogCtx.globalAlpha = 1;
       fogCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
 
-fogCtx.globalAlpha = 0.6;
-fogCtx.globalCompositeOperation = "lighter";
+fogCtx.globalCompositeOperation = "destination-out";
+fogCtx.globalAlpha = 1;
+fogCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
+
+fogCtx.globalAlpha = EDGE_STRENGTH;
 fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
-fogCtx.globalCompositeOperation = "source-over";
+
 
 
 
