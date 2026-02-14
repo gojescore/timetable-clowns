@@ -263,17 +263,53 @@
     }
     .overlay.show{display:flex}
   /* ✅ Upgrade modal: never exceed viewport, keep a small margin */
-#upgradeOverlay .modal{
-  max-height: calc(100vh - 32px);
-  overflow: auto;
+/* Overlay stays centered */
+#upgradeOverlay{
+  display:flex;
+  align-items:center;
+  justify-content:center;
 }
 
-/* On smaller screens give a bit more breathing room */
-@media (max-width: 980px){
-  #upgradeOverlay .modal{
-    max-height: calc(100vh - 40px);
-  }
+/* Modal auto-adjusts to viewport */
+.upgrade-modal{
+  width:min(820px, 92vw);
+  max-height:92vh;
+  padding:18px 20px 20px 20px;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  gap:16px;
 }
+
+/* Header layout */
+.upgrade-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+/* Close button top-right */
+.close-btn{
+  background:var(--line);
+  border:1px solid var(--line);
+  padding:6px 12px;
+  cursor:pointer;
+  font-size:14px;
+}
+
+.close-btn:hover{
+  background:var(--accent);
+  color:white;
+}
+
+/* Options area */
+.upgrade-options{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  justify-content:center;
+}
+
 
     .modal{
       width:min(640px, 100%);
@@ -648,17 +684,21 @@
   </div>
 
   <!-- Upgrade overlay -->
-  <div class="overlay" id="upgradeOverlay">
-    <div class="modal">
-      <h3>Choose an upgrade</h3>
-      <p class="muted" style="margin:.2em 0 .6em">Pick one.</p>
-      <div id="upgradeList"></div>
-      <div class="actions">
-        <button id="upgradeCloseBtn">Close(ESC)</button>
-      </div>
-      <div class="msg" id="upgradeMsg"></div>
+<div id="upgradeOverlay" class="overlay">
+  <div class="modal upgrade-modal">
+
+    <div class="upgrade-header">
+      <h2>Choose an upgrade</h2>
+      <button id="upgradeCloseBtn" class="close-btn">
+        Close (Esc)
+      </button>
     </div>
+
+    <div id="upgradeOptions" class="upgrade-options"></div>
+
   </div>
+</div>
+
 
   <!-- Drop/Replace overlay -->
   <div class="overlay" id="dropOverlay">
