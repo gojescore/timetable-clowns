@@ -3282,6 +3282,8 @@ function renderUpgradeBar(force){
 
       drawWalls(camX, camY);
       drawMachines(camX, camY);
+      // ✅ splats are world decals
+      drawSplats(camX, camY, nowMs);
 
       drawMines(camX, camY);
       drawJackBoxes(camX, camY);
