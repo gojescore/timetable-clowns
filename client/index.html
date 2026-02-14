@@ -3299,50 +3299,37 @@ function renderUpgradeBar(force){
       ctx.strokeStyle = "rgba(255,255,255,.12)";
       ctx.strokeRect(-camX + 20, -camY + 20, world.w - 40, world.h - 40);
 
-      drawWalls(camX, camY);
-      drawMachines(camX, camY);
+drawWalls(camX, camY);
+// drawMachines(camX, camY); // ❌ remove this (machines get covered by fog)
 
+drawMines(camX, camY);
+drawJackBoxes(camX, camY);
+drawBullets(camX, camY);
 
-      drawMines(camX, camY);
-      drawJackBoxes(camX, camY);
+if (me) renderFogMask(me, camX, camY, nowMs);
 
-      drawBullets(camX, camY);
+for (const p of lastSnapshot.players) {
+  drawClownTopDown(p, camX, camY, p.id === myId, nowMs);
+}
 
-      if (me) renderFogMask(me, camX, camY, nowMs);
+if (me) {
+  if (DEBUG_SHOW_VIS) {
+    // ... your debug VIS code ...
+  } else if (DEBUG_SHOW_EDGE) {
+    // ... your debug EDGE code ...
+  } else {
+    ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
+    drawWallsFogOutline(camX, camY);
+  }
+}
 
-      for (const p of lastSnapshot.players) {
-        drawClownTopDown(p, camX, camY, p.id === myId, nowMs);
-      }
+// ✅ NOW draw machines on top of fog
+drawMachines(camX, camY);
 
-      if (me) {
-        if (DEBUG_SHOW_VIS) {
-          ctx.save();
-          ctx.globalCompositeOperation = "source-over";
-          ctx.globalAlpha = 0.85;
-          ctx.fillStyle = "rgba(0,0,0,1)";
-          ctx.fillRect(0,0,VIEW_W,VIEW_H);
-          ctx.globalAlpha = 1;
-          ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
-          ctx.restore();
-        } else if (DEBUG_SHOW_EDGE) {
-          ctx.save();
-          ctx.globalCompositeOperation = "source-over";
-          ctx.globalAlpha = 0.9;
-          ctx.fillStyle = "rgba(0,255,255,1)";
-          ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-          ctx.globalCompositeOperation = "destination-in";
-          ctx.globalAlpha = 1;
-          ctx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
-          ctx.restore();
-        } else {
-          ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
-          drawWallsFogOutline(camX, camY);
-        }
+// ✅ splats still on top (as you wanted)
+drawSplats(camX, camY, nowMs);
+drawPickups(camX, camY);
 
-      }
-      // ✅ splats are world decals
-      drawSplats(camX, camY, nowMs);
-      drawPickups(camX, camY);
 
       for (const p of lastSnapshot.players) {
         drawPlayerLabel(p, camX, camY);
