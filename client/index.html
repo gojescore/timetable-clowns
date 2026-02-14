@@ -262,54 +262,6 @@
       z-index:50;
     }
     .overlay.show{display:flex}
-  /* ✅ Upgrade modal: never exceed viewport, keep a small margin */
-/* Overlay stays centered */
-#upgradeOverlay{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-
-/* Modal auto-adjusts to viewport */
-.upgrade-modal{
-  width:min(820px, 92vw);
-  max-height:92vh;
-  padding:18px 20px 20px 20px;
-  box-sizing:border-box;
-  display:flex;
-  flex-direction:column;
-  gap:16px;
-}
-
-/* Header layout */
-.upgrade-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-}
-
-/* Close button top-right */
-.close-btn{
-  background:var(--line);
-  border:1px solid var(--line);
-  padding:6px 12px;
-  cursor:pointer;
-  font-size:14px;
-}
-
-.close-btn:hover{
-  background:var(--accent);
-  color:white;
-}
-
-/* Options area */
-.upgrade-options{
-  display:flex;
-  flex-wrap:wrap;
-  gap:12px;
-  justify-content:center;
-}
-
 
     .modal{
       width:min(640px, 100%);
@@ -336,16 +288,55 @@
     .msg.good{color:var(--good)}
     .msg.bad{color:var(--bad)}
 
+    /* ✅ Upgrade modal: auto-fit viewport, NO scrollbars, close top-right */
+    .modal.upgrade-modal{
+      width:min(820px, 92vw);
+      max-height:92vh;
+      padding:14px 16px 16px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+
+      /* NO scrolling */
+      overflow:hidden;
+    }
+    .upgrade-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .upgrade-header h3{
+      margin:0;
+      font-size:18px;
+      font-weight:1000;
+    }
+    .close-btn{
+      padding:6px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0e1630;
+      color:var(--ink);
+      font-weight:900;
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .close-btn:hover{
+      background:var(--accent);
+      border-color:var(--accent);
+      color:white;
+    }
+
     /* Upgrade picker tiles */
     .upgGrid{
       display:grid;
       gap:10px;
-      grid-template-columns:repeat(3, minmax(0, 1fr));
-      margin-top:10px;
+
+      /* auto-fit makes it adapt to window size */
+      grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+      margin-top:6px;
     }
-    .upgGrid.grid4{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
     .upgTile{
-      aspect-ratio: 1 / 1;
       border-radius:14px;
       border:1px solid var(--line);
       background:#0e1630;
@@ -356,6 +347,10 @@
       flex-direction:column;
       justify-content:space-between;
       transition: transform .06s ease, border-color .06s ease;
+
+      /* keep tiles from getting too tall */
+      min-height:110px;
+      height:clamp(110px, 16vh, 150px);
     }
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
     .upgTile.sel{
@@ -683,22 +678,18 @@
     </div>
   </div>
 
-  <!-- Upgrade overlay -->
-<div id="upgradeOverlay" class="overlay">
-  <div class="modal upgrade-modal">
+  <!-- ✅ Upgrade overlay (fixed ids + header + close text) -->
+  <div class="overlay" id="upgradeOverlay">
+    <div class="modal upgrade-modal">
+      <div class="upgrade-header">
+        <h3>Choose an upgrade</h3>
+        <button id="upgradeCloseBtn" class="close-btn">Close (Esc)</button>
+      </div>
 
-    <div class="upgrade-header">
-      <h2>Choose an upgrade</h2>
-      <button id="upgradeCloseBtn" class="close-btn">
-        Close (Esc)
-      </button>
+      <div id="upgradeList"></div>
+      <div class="msg" id="upgradeMsg"></div>
     </div>
-
-    <div id="upgradeOptions" class="upgrade-options"></div>
-
   </div>
-</div>
-
 
   <!-- Drop/Replace overlay -->
   <div class="overlay" id="dropOverlay">
@@ -1639,9 +1630,6 @@
       // Movement keys
       if (isUiBlockingInput()) return;
 
-      // If upgrade picker is open AND kb-only mode, WASD should navigate UI, not move.
-      if (el.upgradeOverlay.classList.contains("show") && localInputMode === "kb") return;
-
       let used = true;
 
       if (k === "w" || e.key === "ArrowUp") inputState.up = true;
@@ -1766,10 +1754,6 @@
       for (let k = 0; k < btns.length; k++) {
         btns[k].classList.toggle("sel", k === idx);
       }
-
-      try {
-        btns[idx].scrollIntoView({ block: "nearest", inline: "nearest" });
-      } catch(_) {}
     }
     function moveUpgradeSel(delta){
       const btns = upgradePicker.buttons || [];
@@ -1798,13 +1782,12 @@
       const opts = Array.isArray(options) ? options : [];
       el.upgradeList.innerHTML = "";
 
-      const use4 = opts.length >= 10;
       const grid = document.createElement("div");
-      grid.className = "upgGrid" + (use4 ? " grid4" : "");
+      grid.className = "upgGrid";
 
       upgradePicker.open = true;
       upgradePicker.buttons = [];
-      upgradePicker.cols = use4 ? 4 : 3;
+      upgradePicker.cols = 3;
       upgradePicker.index = 0;
 
       for (const opt of opts) {
@@ -1870,7 +1853,6 @@
     }
 
     function closeUpgradeOffer() {
-      // ✅ keep declineUpgrade consistent + offerId if we have it
       if (activeOfferId) socket.emit("declineUpgrade", { offerId: activeOfferId });
       else socket.emit("declineUpgrade", {});
       forceCloseUpgradeUI();
@@ -1888,7 +1870,6 @@
       forceCloseUpgradeUI();
     }
 
-    // ✅ accept multiple server event names
     socket.on("UPGRADE_DECLINED", onUpgradeDeclined);
     socket.on("DECLINE_UPGRADE", onUpgradeDeclined);
     socket.on("UPGRADE_DECLINED_ACK", onUpgradeDeclined);
@@ -2040,9 +2021,8 @@
 
       el.respawnList.innerHTML = "";
 
-      const use4 = options.length >= 10;
       const grid = document.createElement("div");
-      grid.className = "upgGrid" + (use4 ? " grid4" : "");
+      grid.className = "upgGrid";
 
       for (const o of options) {
         const tile = document.createElement("button");
@@ -2837,12 +2817,8 @@
 
     // ---------------------------
     // ✅ CHARACTER RENDER (HYBRID, CLEAN)
-    // Pixel HEAD: wig_master_64.png (tinted per team)
-    // Vector FEET: simple paths
-    // Facing: lastFacingAng (same as view cone)
     // ---------------------------
 
-    // Team colors for tinting (match your old ones)
     const TEAM_COLORS = [
       { r: 255, g: 60,  b: 60  }, // team 0
       { r: 60,  g: 140, b: 255 }, // team 1
@@ -2858,7 +2834,6 @@
       return TEAM_COLORS[idx];
     }
 
-    // ✅ This is your only asset now (no /assets/clown_base.png, no /assets/clown_hair64.png)
     const wigImg = new Image();
     wigImg.src = "/assets/wig_master_64.png";
     let wigReady = false;
@@ -2868,20 +2843,17 @@
       console.warn("Failed to load /assets/wig_master_64.png");
     };
 
-    // cache tinted wig per team
     const tintedWigCache = new Map();
 
     function isWigPixel(r, g, b, a){
-      if (a < 10) return false;                 // transparent stays transparent
+      if (a < 10) return false; // transparent stays transparent
 
       // keep very dark pixels as outline/shadow (don’t tint them)
       const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
       if (lum < 0.12) return false;
 
-  return true; // everything else gets tinted
-}
-  tintedWigCache.clear();
-
+      return true; // everything else gets tinted
+    }
 
     function getTintedWigForTeam(teamId){
       if (!wigReady || !wigImg.naturalWidth) return null;
@@ -2927,11 +2899,9 @@
     }
 
     function drawVectorFeet(px, py, ang, nowMs, moving){
-      // Feet behind the head along facing direction
       const backX = -Math.cos(ang);
       const backY = -Math.sin(ang);
 
-      // Perp (for left/right foot)
       const pxp = -backY;
       const pyp = backX;
 
@@ -2951,7 +2921,6 @@
       ctx.save();
       ctx.globalAlpha = 0.95;
 
-      // little shadow under feet
       ctx.globalAlpha = 0.18;
       ctx.fillStyle = "black";
       ctx.beginPath();
@@ -2980,8 +2949,7 @@
       const tinted = getTintedWigForTeam(teamId) || (wigReady ? wigImg : null);
       if (!tinted) return;
 
-      // size in world pixels
-      const size = 34; // tweak later
+      const size = 34;
       const half = size / 2;
 
       ctx.save();
@@ -3003,12 +2971,10 @@
       const blinkOff = invuln && ((nowMs % 240) < 110);
       if (blinkOff) return;
 
-      // Movement vector for walking animation only
       const dx0 = Number.isFinite(p.dirX) ? p.dirX : 0;
       const dy0 = Number.isFinite(p.dirY) ? p.dirY : 0;
       const moving = (Math.abs(dx0) + Math.abs(dy0)) > 0.01;
 
-      // ✅ facing: me uses view cone direction; others use their dirX/dirY
       let ang = 0;
       if (isMe) {
         ang = lastFacingAng;
@@ -3017,13 +2983,9 @@
         ang = Math.atan2(d.y, d.x);
       }
 
-      // Feet (vector)
       drawVectorFeet(px, py, ang, nowMs, moving);
-
-      // Head/hair/nose (pixel)
       drawPixelHead(px, py, ang, p.teamId);
 
-      // Rings
       if (isMe) {
         ctx.save();
         ctx.lineWidth = 2;
@@ -3143,7 +3105,6 @@
 
       drawBullets(camX, camY);
 
-      // ✅ Render fog first to compute lastFacingAng this frame (for me sprite)
       if (me) renderFogMask(me, camX, camY, nowMs);
 
       for (const p of lastSnapshot.players) {
