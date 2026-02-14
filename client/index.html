@@ -1005,21 +1005,24 @@ function getRespawnInvulnUntil(playerId){
     }
 
     // invuln HUD update (driven by latest snapshot each frame)
-    function updateInvulnHudFromMe(me, nowMs) {
-      if (!me || me.alive === false) {
-        el.hudInvuln.classList.add("hidden");
-        return;
-      }
-      const until = Number.isFinite(me.invulnUntil) ? me.invulnUntil : 0;
-      const msLeft = until - nowMs;
+function updateInvulnHudFromMe(me, nowMs) {
+  if (!me || me.alive === false) {
+    el.hudInvuln.classList.add("hidden");
+    return;
+  }
 
-      if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
-        el.hudInvuln.classList.remove("hidden");
-        el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
-      } else {
-        el.hudInvuln.classList.add("hidden");
-      }
-    }
+  // ✅ ONLY after death->respawn
+  const until = getRespawnInvulnUntil(me.id);
+  const msLeft = until - nowMs;
+
+  if (msLeft > INVULN_SHOW_THRESHOLD_MS) {
+    el.hudInvuln.classList.remove("hidden");
+    el.hudInvulnText.textContent = "INV " + (msLeft / 1000).toFixed(1) + "s";
+  } else {
+    el.hudInvuln.classList.add("hidden");
+  }
+}
+
 
     // balloon status HUD (UI only; server decides effects)
     function getBalloonUntilFromMe(me){
