@@ -3347,6 +3347,7 @@ if (me) {
     // ... your debug EDGE code ...
   } else {
     ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
+    drawVisionTint();              // ✅ adds soft transparent tint inside cone
     drawWallsFogOutline(camX, camY);
   }
 }
