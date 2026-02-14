@@ -1228,6 +1228,8 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
 
     socket.on("GAME_STARTED", (payload = {}) => {
       document.body.classList.add("inGame");
+      alivePrev.clear();
+      respawnInvulnUntil.clear();
 
       el.lobby.classList.add("hidden");
       el.running.classList.remove("hidden");
