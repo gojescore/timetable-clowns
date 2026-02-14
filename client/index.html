@@ -1278,6 +1278,8 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
       if (snap.world) world = snap.world;
 
       const nowMs = Date.now();
+      noteRespawnInvulnFromSnapshot(snap, nowMs);
+
       updateTimerHudFromSnapshot(snap, nowMs);
 
       const me = snap.players?.find(p => p.id === myId);
