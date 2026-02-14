@@ -196,7 +196,19 @@ Client rules:
 
 ---------------------------------------------------------------------
 
-## 11) Socket event contracts
+## 11) Client-only visuals (no networking)
+
+Splats (death decals):
+- Splats are client-only visuals (no socket events, no server state).
+- Client detects death transitions using `STATE_SNAPSHOT.players[].alive`:
+  - "was alive" → "now dead" triggers a splat at the player’s last (x,y).
+- Splats are short-lived (flash), e.g. ~0.5 seconds.
+- Splats render ABOVE fog (visible even outside the cone).
+- Cosmetic only; never affects gameplay.
+
+---------------------------------------------------------------------
+
+## 12) Socket event contracts
 
 ### Client → Server
 
@@ -213,10 +225,6 @@ Client rules:
 - chooseUpgradeReplace { offerId, upgradeId, dropId }
 - useUpgradeSlot { slotIndex }      (0..2)
 - chooseRespawn { spawnId }
-- Splats (death decals) are client-only visuals.
-Client detects death transitions from STATE_SNAPSHOT.players[].alive and spawns a short-lived splat at the player’s last (x,y).
-Splats render above fog (visible even outside the cone).
-This is purely cosmetic and does not affect gameplay.
 
 ### Server → Client
 
@@ -261,7 +269,7 @@ End:
 
 ---------------------------------------------------------------------
 
-## 12) UI/overlay blocking rules (client-side)
+## 13) UI/overlay blocking rules (client-side)
 
 Client should block gameplay input while any of these are open:
 - Math prompt overlay
@@ -276,7 +284,7 @@ End overlay:
 
 ---------------------------------------------------------------------
 
-## 13) Input mode notes
+## 14) Input mode notes
 
 Input modes:
 - kbm: aim direction comes from mouse; fire via mouse or Space; slot select via 1/2/3 or wheel; use via RMB or 8/9/0
@@ -287,7 +295,7 @@ Server still accepts input payload the same way; client chooses which fields to 
 
 ---------------------------------------------------------------------
 
-## 14) Versioning rule
+## 15) Versioning rule
 
 If you change any event name, payload shape, or meaning:
 - Update this PROTOCOL.md first (or at the same time)
