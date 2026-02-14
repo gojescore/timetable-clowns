@@ -36,7 +36,7 @@ const UPGRADES = [
 
   // NOTE: id is "big_eyes" but name is shown as "Glasses" in UI.
   {
-    id: "big_eyes",
+    id: "clown_glasses",
     name: "Clown Glasses",
     kind: "permanent",
     acquireCost: 150,
