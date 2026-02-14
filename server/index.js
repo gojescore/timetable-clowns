@@ -1,5 +1,6 @@
 // server/index.js
-console.log("SERVER BUILD:", "2026-02-11 A");
+console.log("SERVER BUILD:", "2026-02-14 SPLAT A");
+
 const path = require("path");
 const express = require("express");
 const http = require("http");
@@ -95,6 +96,10 @@ const JACK_BOX_DEFAULT_MAX_ACTIVE = 1;
 
 // ✅ Mine kinds
 const MINE_KIND_CAKE_SURPRISE = "cake_surprise";
+
+// ✅ SPLAT (kill pop)
+const SPLAT_RADIUS = 520; // who counts as "vicinity" (tune)
+const SPLAT_TTL_MS = 500;
 
 // In-memory game store
 const games = Object.create(null);
@@ -395,6 +400,33 @@ function findNearbyMachine(game, x, y, radius) {
     }
   }
   return best;
+}
+
+// ✅ SPLAT: notify nearby players (victim does NOT see; shows even through fog on client)
+function emitSplatToNearby(io, game, victim) {
+  if (!io || !game || !victim) return;
+  if (!Number.isFinite(victim.x) || !Number.isFinite(victim.y)) return;
+
+  const r2 = SPLAT_RADIUS * SPLAT_RADIUS;
+  const now = Date.now();
+
+  for (const p of game.players.values()) {
+    if (!p) continue;
+    if (p.id === victim.id) continue; // victim does NOT see it
+    if (!p.alive) continue; // dead players see nothing (matches your rule)
+
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    if (dist2(p.x, p.y, victim.x, victim.y) > r2) continue;
+
+    const targetSocket = p.socketId || p.id;
+    io.to(targetSocket).emit("SPLAT", {
+      x: victim.x,
+      y: victim.y,
+      ttlMs: SPLAT_TTL_MS,
+      at: now,
+      victimId: victim.id,
+    });
+  }
 }
 
 // Sweep segment vs circle (player hits)
@@ -754,7 +786,6 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-
 // --------------------
 // Server tick loop
 // --------------------
@@ -842,6 +873,9 @@ setInterval(() => {
             p.cakes = 0;
             p.pendingPrompt = null;
             p.pendingUpgradeOffer = null;
+
+            // ✅ SPLAT
+            emitSplatToNearby(io, game, p);
 
             const opts = buildRespawnOptions(game, p);
             p.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
@@ -1066,6 +1100,9 @@ setInterval(() => {
             victim.cakes = 0;
             victim.pendingPrompt = null;
             victim.pendingUpgradeOffer = null;
+
+            // ✅ SPLAT
+            emitSplatToNearby(io, game, victim);
 
             const opts = buildRespawnOptions(game, victim);
             victim.pendingRespawn = { options: opts.map((o) => o.id), createdAt: now };
@@ -1400,6 +1437,9 @@ setInterval(() => {
           hitPlayer.pendingPrompt = null;
           hitPlayer.pendingUpgradeOffer = null;
 
+          // ✅ SPLAT
+          emitSplatToNearby(io, game, hitPlayer);
+
           const opts = buildRespawnOptions(game, hitPlayer);
           hitPlayer.pendingRespawn = {
             options: opts.map((o) => o.id),
@@ -1505,6 +1545,9 @@ setInterval(() => {
         const owner = game.players.get(m.ownerId) || null;
         victim.killedByName = owner ? owner.name : "Mine";
         victim.killedById = owner ? owner.id : null;
+
+        // ✅ SPLAT
+        emitSplatToNearby(io, game, victim);
 
         const opts = buildRespawnOptions(game, victim);
         victim.pendingRespawn = {
