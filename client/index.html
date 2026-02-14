@@ -2697,10 +2697,6 @@ function renderUpgradeBar(force){
       fogCtx.globalAlpha = 1;
       fogCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
 
-fogCtx.globalCompositeOperation = "destination-out";
-fogCtx.globalAlpha = 1;
-fogCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
-
 fogCtx.globalAlpha = EDGE_STRENGTH;
 fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
 
@@ -3351,8 +3347,6 @@ if (me) {
     // ... your debug EDGE code ...
   } else {
     ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
-    // ✅ add candyfloss tint inside the cone
-    drawVisionTint();
     drawWallsFogOutline(camX, camY);
   }
 }
