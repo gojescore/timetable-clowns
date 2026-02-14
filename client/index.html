@@ -927,9 +927,8 @@ const SPLAT_LIFETIME_MS = 120000; // 2 min, tweak
     // ✅ Only show invuln visuals after DEATH->RESPAWN (not on hit/save)
 const alivePrev = new Map();              // playerId -> boolean
 const respawnInvulnUntil = new Map();     // playerId -> ms timestamp
-
-function noteRespawnInvulnFromSnapshot(snap, nowMs){
-  function noteDeathSplatsFromSnapshot(snap, nowMs){
+  
+    function noteDeathSplatsFromSnapshot(snap, nowMs){
   const ps = Array.isArray(snap?.players) ? snap.players : [];
   for (const p of ps) {
     if (!p || !p.id) continue;
@@ -945,6 +944,9 @@ function noteRespawnInvulnFromSnapshot(snap, nowMs){
     }
   }
 }
+    
+function noteRespawnInvulnFromSnapshot(snap, nowMs){
+  noteDeathSplatsFromSnapshot(snap, nowMs);
 
   const ps = Array.isArray(snap?.players) ? snap.players : [];
   for (const p of ps) {
