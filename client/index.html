@@ -2693,6 +2693,31 @@ function renderUpgradeBar(force){
       c.arcTo(x, y, x + w, y, rr);
       c.closePath();
     }
+    function drawSplats(camX, camY, nowMs){
+  if (!splatReady || !splatImg) return;
+
+  // cleanup old
+  for (let i = splats.length - 1; i >= 0; i--) {
+    if ((nowMs - splats[i].createdAt) > SPLAT_LIFETIME_MS) splats.splice(i, 1);
+  }
+
+  for (const s of splats) {
+    const x = s.x - camX;
+    const y = s.y - camY;
+
+    ctx.save();
+    // tiny fade near the end (optional)
+    const age = nowMs - s.createdAt;
+    if (age > SPLAT_LIFETIME_MS - 2000) {
+      ctx.globalAlpha = Math.max(0, (SPLAT_LIFETIME_MS - age) / 2000);
+    }
+
+    ctx.imageSmoothingEnabled = true; // splat can be smooth
+    ctx.drawImage(splatImg, x - SPLAT_SIZE/2, y - SPLAT_SIZE/2, SPLAT_SIZE, SPLAT_SIZE);
+    ctx.restore();
+  }
+}
+
 
     function drawWalls(camX, camY){
       if (!mapData?.walls) return;
