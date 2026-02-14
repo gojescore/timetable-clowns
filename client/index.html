@@ -896,6 +896,39 @@
     let mapData = null;
     let world = { w: 2400, h: 1600 };
     let lastSnapshot = null;
+    // ✅ Only show invuln visuals after DEATH->RESPAWN (not on hit/save)
+const alivePrev = new Map();              // playerId -> boolean
+const respawnInvulnUntil = new Map();     // playerId -> ms timestamp
+
+function noteRespawnInvulnFromSnapshot(snap, nowMs){
+  const ps = Array.isArray(snap?.players) ? snap.players : [];
+  for (const p of ps) {
+    if (!p || !p.id) continue;
+
+    const alive = (p.alive !== false);
+    const prevAlive = alivePrev.get(p.id);
+
+    // record current
+    alivePrev.set(p.id, alive);
+
+    // detect respawn: was dead, now alive
+    if (prevAlive === false && alive === true) {
+      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : (nowMs + 600);
+      respawnInvulnUntil.set(p.id, until);
+    }
+
+    // if dead, clear any stored invuln
+    if (alive === false) {
+      respawnInvulnUntil.set(p.id, 0);
+    }
+  }
+}
+
+function getRespawnInvulnUntil(playerId){
+  const v = respawnInvulnUntil.get(playerId);
+  return Number.isFinite(v) ? v : 0;
+}
+
 
     let activePromptId = null;
     let activeOfferId = null;
