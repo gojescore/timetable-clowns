@@ -74,7 +74,13 @@ timetable-clowns/
   - mines (if present)
   - jack boxes reveal objects (if present)
 - Client camera follows local player
-- Death splat flash: client shows a short (≈500ms) splat at death location; splats are rendered above fog (client-only).
+
+Death splat flash (client-only):
+- Client detects death transitions using STATE_SNAPSHOT.players[].alive
+  - "was alive" → "now dead" triggers a splat at the player’s last (x,y)
+- Splat is short-lived (~500ms flash)
+- Rendered ABOVE fog (visible even outside cone)
+- Purely cosmetic (no server state, no gameplay impact)
 
 ### C) Input + overlays
 - Movement: WASD / Arrow keys
@@ -148,6 +154,9 @@ timetable-clowns/
 - Server sends RESPAWN_OPTIONS to victim
 - Client shows respawn overlay; chooses spawn via chooseRespawn
 - Server responds RESPAWN_RESULT
+- Respawn invulnerability visuals:
+  - Client only shows invuln ring after death→respawn transition
+  - Controlled by snapshot alive state + invulnUntil
 
 ---------------------------------------------------------------------
 
@@ -155,6 +164,7 @@ timetable-clowns/
 
 - Client never computes gameplay modifiers from upgrades (mods only from server)
 - Server is authoritative for all simulation (movement, bullets, collisions, pickups, upgrades)
+- Death splats are client-only visuals (no server involvement)
 - End screen must only offer “Back to lobby” (reload)
 - Overlay states block gameplay input
 
@@ -200,8 +210,6 @@ timetable-clowns/
 
 ## Next expected work (short list)
 
-- Ensure server standardizes the “upgrade declined” ACK event name (client currently tolerates aliases)
+- Ensure server standardizes the “upgrade declined” ACK event name
 - Continue tightening protocol + state docs anytime payload shapes change
 - Keep `player.mods` complete and always present in snapshots (with defaults)
-
----------------------------------------------------------------------
