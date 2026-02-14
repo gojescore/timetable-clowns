@@ -352,6 +352,26 @@
       min-height:110px;
       height:clamp(110px, 16vh, 150px);
     }
+    .upgTile{
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.upgTile::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.65));
+  pointer-events:none;
+}
+
+.upgTile > *{
+  position: relative;
+  z-index: 1;
+}
+
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
     .upgTile.sel{
       border-color: rgba(43,102,255,.85);
@@ -1817,6 +1837,8 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
         tile.type = "button";
         tile.className = "upgTile";
         tile.title = opt.desc || "";
+        setUpgradeCardBackground(tile, opt.id);
+
 
         const name = document.createElement("div");
         name.className = "upgName";
