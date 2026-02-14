@@ -2211,6 +2211,13 @@ if (s) {
   icon.className = "uIcon";
   icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
   left.appendChild(icon);
+  if (p) {
+  const icon = document.createElement("div");
+  icon.className = "uIcon";
+  icon.style.backgroundImage = `url(${getUpgradeImage(p.id)})`;
+  left.appendChild(icon);
+}
+
 }
 
 
