@@ -74,6 +74,7 @@ Client is responsible for:
 - rendering
 - input collection
 - showing UI (lobby, prompt, upgrades, respawn options, end screen)
+- purely visual presentation of players (sprites, tinting, cosmetics)
 
 ---------------------------------------------------------------------
 
@@ -157,20 +158,9 @@ mods: {
   visionLenAdd: number,  // default 0 (pixels)
   fovAddDeg: number      // default 0 (degrees)
 }
-Rules:
-
-Client must not derive mods from upgrades
-
-Client must render fog/vision from mods only:
-
-visionLen = BASE_VISION_LEN + me.mods.visionLenAdd
-
-coneDeg = CONE_ANGLE_BASE_DEG + me.mods.fovAddDeg
-
-Server is the only source of truth for speed/fog gameplay values
-
 6) Networking contracts (Socket.IO)
 6.1 Lobby / session
+
 Client → Server:
 
 hello { name }
@@ -204,6 +194,7 @@ GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard, w
 RETURNED_TO_LOBBY { ok:true }
 
 6.2 State replication
+
 Server → Client (authoritative, frequent):
 
 STATE_SNAPSHOT { time, world, phase, endAt?, pickups, mines?, jackBoxes?, bullets, players }
@@ -229,11 +220,10 @@ stats: kills, deaths, correct
 optional effects summary: balloon stage/until (client UI only)
 
 6.3 Input + interaction
+
 Client → Server:
 
 input { up, down, left, right, fire, aimX, aimY }
-
-aimX/aimY are treated as WORLD coords when large; may be treated as direction if unit-ish
 
 tryInteract
 
@@ -248,6 +238,7 @@ ANSWER_RESULT { ok, correct? }
 INTERACT_DENIED { reason, nextMachineNum, tried }
 
 6.4 Upgrades flow
+
 Server → Client:
 
 UPGRADE_OFFER { offerId, options }
@@ -270,13 +261,12 @@ useUpgradeSlot { slotIndex }
 
 Slot-full contract:
 
-Server replies:
-
-UPGRADE_RESULT { ok:false, reason:'slots_full', requested, slots, money }
+Server replies: UPGRADE_RESULT { ok:false, reason:'slots_full', requested, slots, money }
 
 Client must show a replace UI and call chooseUpgradeReplace
 
 6.5 Death / respawn
+
 Server → Client:
 
 PLAYER_DIED { playerId } (to room)
@@ -290,6 +280,7 @@ Client → Server:
 chooseRespawn { spawnId }
 
 7) End of game rule (UI requirement)
+
 When the game ends:
 
 The ONLY next action is “Back to lobby”.
@@ -297,10 +288,30 @@ The ONLY next action is “Back to lobby”.
 Host triggers backToLobby, server resets match state and emits:
 
 RETURNED_TO_LOBBY { ok:true }
+followed by:
 
-followed by LOBBY_UPDATE
+LOBBY_UPDATE
 
-8) Debugging rules
+8) Player visuals (client-only contract)
+
+Player cosmetics are client-only rendering.
+
+Team color may be represented via tinting a sprite asset.
+
+Facing direction for top-down visuals SHOULD match the fog cone facing direction.
+
+None of this affects gameplay; server remains authoritative.
+
+Asset:
+
+client/assets/wig_master_64.png
+
+MUST have a transparent background (alpha).
+
+MUST be designed to tint cleanly (see STATE_OF_THE_GAME.md for details).
+
+9) Debugging rules
+
 If something “looks wrong”:
 
 Believe the server snapshot, not the UI.
