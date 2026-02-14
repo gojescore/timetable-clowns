@@ -78,7 +78,8 @@ module.exports = {
         { side: "E", at: 130, size: 120 },
         { side: "S", at: 210, size: 120 },
       ],
-      machines: [{ id: "m1", num: 1, x: 350, y: 270 }],
+      // old 1 -> new 8
+      machines: [{ id: "m1", num: 8, x: 350, y: 270 }],
     },
     {
       id: "r2",
@@ -87,6 +88,7 @@ module.exports = {
         { side: "W", at: 130, size: 120 },
         { side: "S", at: 210, size: 120 },
       ],
+      // old 2 -> new 2
       machines: [{ id: "m2", num: 2, x: 830, y: 270 }],
     },
     {
@@ -96,6 +98,7 @@ module.exports = {
         { side: "E", at: 130, size: 120 },
         { side: "S", at: 210, size: 120 },
       ],
+      // old 3 -> new 3
       machines: [{ id: "m3", num: 3, x: 1310, y: 270 }],
     },
     {
@@ -105,7 +108,8 @@ module.exports = {
         { side: "W", at: 130, size: 120 },
         { side: "S", at: 210, size: 120 },
       ],
-      machines: [{ id: "m4", num: 4, x: 1790, y: 270 }],
+      // old 4 -> new 5
+      machines: [{ id: "m4", num: 5, x: 1790, y: 270 }],
     },
 
     // Row 2 (y ~ 500)
@@ -116,7 +120,8 @@ module.exports = {
         { side: "E", at: 130, size: 120 },
         { side: "N", at: 210, size: 120 },
       ],
-      machines: [{ id: "m5", num: 5, x: 350, y: 630 }],
+      // old 5 -> new 6
+      machines: [{ id: "m5", num: 6, x: 350, y: 630 }],
     },
     {
       id: "r6",
@@ -125,7 +130,8 @@ module.exports = {
         { side: "W", at: 130, size: 120 },
         { side: "N", at: 210, size: 120 },
       ],
-      machines: [{ id: "m6", num: 6, x: 830, y: 630 }],
+      // old 6 -> new 1
+      machines: [{ id: "m6", num: 1, x: 830, y: 630 }],
     },
     {
       id: "r7",
@@ -134,7 +140,8 @@ module.exports = {
         { side: "E", at: 130, size: 120 },
         { side: "N", at: 210, size: 120 },
       ],
-      machines: [{ id: "m7", num: 7, x: 1310, y: 630 }],
+      // old 7 -> new 4
+      machines: [{ id: "m7", num: 4, x: 1310, y: 630 }],
     },
     {
       id: "r8",
@@ -143,7 +150,8 @@ module.exports = {
         { side: "W", at: 130, size: 120 },
         { side: "N", at: 210, size: 120 },
       ],
-      machines: [{ id: "m8", num: 8, x: 1790, y: 630 }],
+      // old 8 -> new 7
+      machines: [{ id: "m8", num: 7, x: 1790, y: 630 }],
     },
 
     // Row 3 (2 rooms centered)
@@ -154,7 +162,8 @@ module.exports = {
         { side: "E", at: 180, size: 140 },
         { side: "S", at: 280, size: 140 },
       ],
-      machines: [{ id: "m9", num: 9, x: 780, y: 1160 }],
+      // old 9 -> new 10
+      machines: [{ id: "m9", num: 10, x: 780, y: 1160 }],
     },
     {
       id: "r10",
@@ -163,7 +172,8 @@ module.exports = {
         { side: "W", at: 180, size: 140 },
         { side: "S", at: 280, size: 140 },
       ],
-      machines: [{ id: "m10", num: 10, x: 1620, y: 1160 }],
+      // old 10 -> new 9
+      machines: [{ id: "m10", num: 9, x: 1620, y: 1160 }],
     },
   ],
 
