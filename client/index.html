@@ -912,6 +912,23 @@ const alivePrev = new Map();              // playerId -> boolean
 const respawnInvulnUntil = new Map();     // playerId -> ms timestamp
 
 function noteRespawnInvulnFromSnapshot(snap, nowMs){
+  function noteDeathSplatsFromSnapshot(snap, nowMs){
+  const ps = Array.isArray(snap?.players) ? snap.players : [];
+  for (const p of ps) {
+    if (!p || !p.id) continue;
+
+    const alive = (p.alive !== false);
+    const prevAlive = alivePrev.get(p.id);
+
+    // detect death: was alive, now dead
+    if (prevAlive === true && alive === false) {
+      if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+        splats.push({ x: p.x, y: p.y, createdAt: nowMs });
+      }
+    }
+  }
+}
+
   const ps = Array.isArray(snap?.players) ? snap.players : [];
   for (const p of ps) {
     if (!p || !p.id) continue;
