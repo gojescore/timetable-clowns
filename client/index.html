@@ -2820,10 +2820,15 @@
     const tintedWigCache = new Map();
 
     function isWigPixel(r, g, b, a){
-      if (a < 10) return false;
-      // "wig-ish" pixels: red/pink-ish base (adjust later if needed)
-      return (r > 140 && g < 120 && b < 140 && (r - Math.max(g, b)) > 30);
-    }
+      if (a < 10) return false;                 // transparent stays transparent
+
+      // keep very dark pixels as outline/shadow (don’t tint them)
+      const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+      if (lum < 0.12) return false;
+
+  return true; // everything else gets tinted
+}
+
 
     function getTintedWigForTeam(teamId){
       if (!wigReady || !wigImg.naturalWidth) return null;
