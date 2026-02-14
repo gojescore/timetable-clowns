@@ -1055,6 +1055,28 @@
       }
     });
 
+function getUpgradeImage(id) {
+  return `assets/${id}.png`;
+}
+
+function setUpgradeCardBackground(cardEl, upgradeId) {
+  const src = getUpgradeImage(upgradeId);
+  cardEl.style.backgroundImage = `url(${src})`;
+  cardEl.style.backgroundSize = "cover";
+  cardEl.style.backgroundPosition = "center";
+
+  // Optional: fallback if file missing
+  const img = new Image();
+  img.onload = () => {};
+  img.onerror = () => {
+    cardEl.style.backgroundImage = "none";
+    cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+  };
+  img.src = src;
+}
+
+
+
     socket.on("GAME_CREATED", ({ gameCode }) => {
       el.gameCode.textContent = gameCode;
       el.start.classList.add("hidden");
