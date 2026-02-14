@@ -2717,6 +2717,29 @@ fogCtx.globalCompositeOperation = "source-over";
       c.arcTo(x, y, x + w, y, rr);
       c.closePath();
     }
+
+    function drawVisionTint(){
+  // visCanvas is already a white mask of the visible area in VIEW coords
+  // We’ll paint a soft pink glow only where visCanvas is white.
+
+  ctx.save();
+
+  // Paint a pink layer…
+  ctx.globalAlpha = 0.18; // tweak 0.10..0.28
+  ctx.fillStyle = "rgba(255, 190, 235, 1)"; // candyfloss pink
+
+  // …but restrict it to the visible mask
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
+
+  // Add a little “glow” feeling (optional but nice)
+  ctx.globalAlpha = 0.10;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
+
+  ctx.restore();
+}
+
     function drawSplats(camX, camY, nowMs){
   if (!splatReady || !splatImg) return;
 
@@ -3324,6 +3347,8 @@ if (me) {
     // ... your debug EDGE code ...
   } else {
     ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
+    // ✅ add candyfloss tint inside the cone
+    drawVisionTint();
     drawWallsFogOutline(camX, camY);
   }
 }
