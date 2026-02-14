@@ -795,6 +795,17 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
+    // --- Splats (visual decals) ---
+const splatImg = new Image();
+splatImg.src = "/assets/splat.png";
+let splatReady = false;
+splatImg.onload = () => splatReady = true;
+splatImg.onerror = () => console.warn("Missing splat asset: /assets/splat.png");
+
+const splats = []; // {x,y,createdAt}
+const SPLAT_SIZE = 64;        // tweak
+const SPLAT_LIFETIME_MS = 120000; // 2 min, tweak
+
 
     const el = {
       start: document.getElementById("startCard"),
