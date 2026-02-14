@@ -1075,25 +1075,43 @@
       }
     });
 
+const upgradeImgOk = new Map(); // id -> true/false
+
 function getUpgradeImage(id) {
-  return `assets/${id}.png`;
+  // ✅ absolute path (matches your wig asset usage)
+  return `/assets/${id}.png`;
 }
 
 function setUpgradeCardBackground(cardEl, upgradeId) {
   const src = getUpgradeImage(upgradeId);
+
+  // If we already know the result, apply instantly
+  if (upgradeImgOk.get(upgradeId) === false) {
+    cardEl.style.backgroundImage = "none";
+    cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+    return;
+  }
+
   cardEl.style.backgroundImage = `url(${src})`;
   cardEl.style.backgroundSize = "cover";
   cardEl.style.backgroundPosition = "center";
 
-  // Optional: fallback if file missing
+  // Only probe once per upgradeId
+  if (upgradeImgOk.has(upgradeId)) return;
+
   const img = new Image();
-  img.onload = () => {};
+  img.onload = () => upgradeImgOk.set(upgradeId, true);
   img.onerror = () => {
-    cardEl.style.backgroundImage = "none";
-    cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+    upgradeImgOk.set(upgradeId, false);
+    // If this tile is still showing that same upgrade, remove the broken bg
+    if (cardEl && cardEl.style.backgroundImage.includes(src)) {
+      cardEl.style.backgroundImage = "none";
+      cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+    }
   };
   img.src = src;
 }
+
 
 
 
