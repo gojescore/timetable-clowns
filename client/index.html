@@ -2178,139 +2178,131 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
     });
 
     // ===== Upgrade bar render (two sections) =====
-    function renderUpgradeBar(force){
-      const sig = computeUpgSig(myServerUpgrades);
-      if (!force && sig === lastUpgSig) return;
-      lastUpgSig = sig;
+function renderUpgradeBar(force){
+  const sig = computeUpgSig(myServerUpgrades);
+  if (!force && sig === lastUpgSig) return;
+  lastUpgSig = sig;
 
-      el.upgradeSlotsCons.innerHTML = "";
-      el.upgradeSlotsPerm.innerHTML = "";
+  el.upgradeSlotsCons.innerHTML = "";
+  el.upgradeSlotsPerm.innerHTML = "";
 
-      const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
-      const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
+  const perm = Array.isArray(myServerUpgrades?.permanent) ? myServerUpgrades.permanent : [];
+  const cons = Array.isArray(myServerUpgrades?.slots) ? myServerUpgrades.slots : [];
 
-      const hotkeys = ["8", "9", "0"];
+  const hotkeys = ["8", "9", "0"];
 
-      for (let i = 0; i < 3; i++) {
-        const s = cons[i];
+  // ---- Consumables ----
+  for (let i = 0; i < 3; i++) {
+    const s = cons[i];
 
-        const slot = document.createElement("div");
-        slot.className = "uSlot";
-        if (localInputMode === "kbm" && i === activeConsumableSlotIndex) slot.classList.add("active");
-        slot.title = s?.info?.desc ? s.info.desc : "";
+    const slot = document.createElement("div");
+    slot.className = "uSlot";
+    if (localInputMode === "kbm" && i === activeConsumableSlotIndex) slot.classList.add("active");
+    slot.title = s?.info?.desc ? s.info.desc : "";
 
-        const left = document.createElement("div");
-        left.className = "uLeft";
+    const left = document.createElement("div");
+    left.className = "uLeft";
 
-        const hk = document.createElement("div");
-        hk.className = "uHotkey";
-        hk.textContent = hotkeys[i];
-        left.appendChild(hk);
-if (s) {
-  const icon = document.createElement("div");
-  icon.className = "uIcon";
-  icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
-  left.appendChild(icon);
-  if (p) {
-  const icon = document.createElement("div");
-  icon.className = "uIcon";
-  icon.style.backgroundImage = `url(${getUpgradeImage(p.id)})`;
-  left.appendChild(icon);
-}
+    const hk = document.createElement("div");
+    hk.className = "uHotkey";
+    hk.textContent = hotkeys[i];
+    left.appendChild(hk);
 
-}
-
-
-
-        const stack = document.createElement("div");
-        stack.className = "uStack";
-
-        const name = document.createElement("div");
-        name.className = "uName";
-        name.textContent = s ? (s.info?.name || s.info?.id || s.id) : "";
-        stack.appendChild(name);
-
-        const meta = document.createElement("div");
-        meta.className = "uMeta";
-        if (!s) meta.textContent = "";
-        else {
-          const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
-          meta.textContent = `use $${useCost}`;
-        }
-        stack.appendChild(meta);
-
-        left.appendChild(stack);
-
-        const uses = document.createElement("div");
-        uses.className = "uUses";
-        if (!s) uses.textContent = "";
-        else {
-          const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
-          uses.textContent = "$" + useCost;
-        }
-
-        slot.appendChild(left);
-        slot.appendChild(uses);
-
-        el.upgradeSlotsCons.appendChild(slot);
-      }
-
-      for (let i = 0; i < 3; i++) {
-        const p = perm[i];
-
-        const slot = document.createElement("div");
-        slot.className = "uSlot";
-        slot.title = p?.info?.desc ? p.info.desc : "";
-
-        const left = document.createElement("div");
-        left.className = "uLeft";
-
-        const hk = document.createElement("div");
-        hk.className = "uHotkey";
-        hk.textContent = "★";
-        left.appendChild(hk);
-
-        if (s) {
-        const icon = document.createElement("div");
-        icon.className = "uIcon";
-        icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
-        left.appendChild(icon);
-        }
-
-
-        const stack = document.createElement("div");
-        stack.className = "uStack";
-
-        const name = document.createElement("div");
-        name.className = "uName";
-        name.textContent = p ? (p.info?.name || p.info?.id || p.id) : "";
-        stack.appendChild(name);
-
-        const meta = document.createElement("div");
-        meta.className = "uMeta";
-        if (!p) meta.textContent = "";
-        else {
-          const buy = Number.isFinite(p.info?.acquireCost) ? p.info.acquireCost : 0;
-          meta.textContent = `buy $${buy} · stacks`;
-        }
-        stack.appendChild(meta);
-
-        left.appendChild(stack);
-
-        const uses = document.createElement("div");
-        uses.className = "uUses";
-        if (!p) uses.textContent = "";
-        else {
-          const count = Number.isFinite(p.count) ? p.count : 1;
-          uses.textContent = "x" + count;
-        }
-
-        slot.appendChild(left);
-        slot.appendChild(uses);
-
-        el.upgradeSlotsPerm.appendChild(slot);
-      }
+    if (s && s.id) {
+      const icon = document.createElement("div");
+      icon.className = "uIcon";
+      icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
+      left.appendChild(icon);
     }
+
+    const stack = document.createElement("div");
+    stack.className = "uStack";
+
+    const name = document.createElement("div");
+    name.className = "uName";
+    name.textContent = s ? (s.info?.name || s.info?.id || s.id) : "";
+    stack.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "uMeta";
+    if (!s) meta.textContent = "";
+    else {
+      const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
+      meta.textContent = `use $${useCost}`;
+    }
+    stack.appendChild(meta);
+
+    left.appendChild(stack);
+
+    const uses = document.createElement("div");
+    uses.className = "uUses";
+    if (!s) uses.textContent = "";
+    else {
+      const useCost = Number.isFinite(s.info?.useCost) ? s.info.useCost : 0;
+      uses.textContent = "$" + useCost;
+    }
+
+    slot.appendChild(left);
+    slot.appendChild(uses);
+    el.upgradeSlotsCons.appendChild(slot);
+  }
+
+  // ---- Permanents ----
+  for (let i = 0; i < 3; i++) {
+    const p = perm[i];
+
+    const slot = document.createElement("div");
+    slot.className = "uSlot";
+    slot.title = p?.info?.desc ? p.info.desc : "";
+
+    const left = document.createElement("div");
+    left.className = "uLeft";
+
+    const hk = document.createElement("div");
+    hk.className = "uHotkey";
+    hk.textContent = "★";
+    left.appendChild(hk);
+
+    if (p && p.id) {
+      const icon = document.createElement("div");
+      icon.className = "uIcon";
+      icon.style.backgroundImage = `url(${getUpgradeImage(p.id)})`;
+      left.appendChild(icon);
+    }
+
+    const stack = document.createElement("div");
+    stack.className = "uStack";
+
+    const name = document.createElement("div");
+    name.className = "uName";
+    name.textContent = p ? (p.info?.name || p.info?.id || p.id) : "";
+    stack.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "uMeta";
+    if (!p) meta.textContent = "";
+    else {
+      const buy = Number.isFinite(p.info?.acquireCost) ? p.info.acquireCost : 0;
+      meta.textContent = `buy $${buy} · stacks`;
+    }
+    stack.appendChild(meta);
+
+    left.appendChild(stack);
+
+    const uses = document.createElement("div");
+    uses.className = "uUses";
+    if (!p) uses.textContent = "";
+    else {
+      const count = Number.isFinite(p.count) ? p.count : 1;
+      uses.textContent = "x" + count;
+    }
+
+    slot.appendChild(left);
+    slot.appendChild(uses);
+    el.upgradeSlotsPerm.appendChild(slot);
+  }
+}
+
 
     // ---------- Canvas rendering ----------
     const canvas = el.canvas;
