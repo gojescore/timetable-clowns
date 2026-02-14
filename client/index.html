@@ -3094,8 +3094,10 @@ function renderUpgradeBar(force){
       const px = p.x - camX;
       const py = p.y - camY;
 
-      const until = Number.isFinite(p.invulnUntil) ? p.invulnUntil : 0;
-      const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+    // ✅ ONLY after death->respawn
+    const until = getRespawnInvulnUntil(p.id);
+    const invuln = (until - nowMs) > INVULN_SHOW_THRESHOLD_MS;
+
       const blinkOff = invuln && ((nowMs % 240) < 110);
       if (blinkOff) return;
 
