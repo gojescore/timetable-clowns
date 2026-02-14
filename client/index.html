@@ -3301,8 +3301,7 @@ function renderUpgradeBar(force){
 
       drawWalls(camX, camY);
       drawMachines(camX, camY);
-      // ✅ splats are world decals
-      drawSplats(camX, camY, nowMs);
+
 
       drawMines(camX, camY);
       drawJackBoxes(camX, camY);
@@ -3339,8 +3338,10 @@ function renderUpgradeBar(force){
           ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
           drawWallsFogOutline(camX, camY);
         }
-      }
 
+      }
+      // ✅ splats are world decals
+      drawSplats(camX, camY, nowMs);
       drawPickups(camX, camY);
 
       for (const p of lastSnapshot.players) {
