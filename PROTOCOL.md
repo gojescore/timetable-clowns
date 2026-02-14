@@ -213,6 +213,10 @@ Client rules:
 - chooseUpgradeReplace { offerId, upgradeId, dropId }
 - useUpgradeSlot { slotIndex }      (0..2)
 - chooseRespawn { spawnId }
+- Splats (death decals) are client-only visuals.
+Client detects death transitions from STATE_SNAPSHOT.players[].alive and spawns a short-lived splat at the player’s last (x,y).
+Splats render above fog (visible even outside the cone).
+This is purely cosmetic and does not affect gameplay.
 
 ### Server → Client
 
