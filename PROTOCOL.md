@@ -1,321 +1,290 @@
-# Timetable Clowns — PROTOCOL.md (Single Source of Truth)
+# Timetable Clowns — Protocol (Single Source of Truth)
 
-This file is the canonical reference for rules, architecture, and networking contracts for Timetable Clowns.
+This file is the canonical reference for rules, architecture, and networking contracts for the Timetable Clowns project.
 
-When starting a NEW chat thread, paste ALL THREE:
+When starting a NEW ChatGPT thread, paste ALL THREE:
 1) PROTOCOL.md
 2) STATE_OF_THE_GAME.md
 3) the file currently being edited
+
+Last updated: 2026-02-14
 
 ---------------------------------------------------------------------
 
 🔒 NON-NEGOTIABLE RULE (LOCKED)
 
-The client may display upgrades, UI, and visuals, but MUST NEVER compute gameplay modifiers from upgrades or effects.
+The client may display upgrades, UI, and visuals,
+but must NEVER compute gameplay modifiers from them.
 
-All gameplay modifiers come ONLY from `player.mods` computed by the server and sent in `STATE_SNAPSHOT`.
+All gameplay modifiers come ONLY from `player.mods`
+computed by the server and sent in STATE_SNAPSHOT.
 
-If the client needs fog/speed/etc. it uses:
-- me.mods.speedMult
-- me.mods.visionLenAdd
-- me.mods.fovAddDeg
+(Examples: fog cone width, vision length, movement speed multipliers.)
 
 ---------------------------------------------------------------------
 
-## 1) Game concept
+## 1) High-level architecture
 
-Timetable Clowns is a silly top-down multiplayer game for practicing multiplication tables.
+Server-authoritative simulation:
+- Server owns truth for: movement, collisions, bullets, upgrades, money, machines, deaths, respawns, timers, win conditions
+- Client owns: input capture, rendering, UI/overlays
+
+Networking:
+- Express + Socket.IO
+- Server runs a tick loop (e.g. 20 Hz)
+- Client sends input events; server broadcasts snapshots
+
+---------------------------------------------------------------------
+
+## 2) Game concept
+
+A silly top-down multiplayer game for practicing multiplication tables.
 
 - 2–12 players per match
-- Host creates a match and gets a join code
-- Guests join using the code
-- Players roam a 2D map with rooms + corridors
-- Each room contains one machine labeled 1–10
-- Each player must clear machines in numeric order: 1 → 2 → … → 10
-- Interaction at a machine prompts: base × machineNum = ?
-- Server validates answers
+- Host creates a game and receives a join code
+- Guests join with the join code
+- Each player progresses independently through machines 1 → 10
+- Answering machine prompts correctly advances your next machine number
+- Combat exists (shooting), plus money + upgrades
 
 ---------------------------------------------------------------------
 
-## 2) Host-selectable settings
+## 3) Host-selectable settings (createGame)
 
-Sent on `createGame`:
+Sent from client → server in `createGame`:
 
-- `tableBase`: 1–10
-- `mode`: `"ffa"` | `"teams"`
-- `teamCount`: 1–4 (Teams only)
-- `friendlyFire`: boolean (Teams only)
-- `inputMode`: `"kb"` | `"kbm"` | `"kbm_gamepad"` (currently keyboard is authoritative)
-- `mapChoice`: `"map01"` | `"random"` (random may pick from known maps)
-- `sessionMode`: `"standard"` | `"timed"`
-- `sessionMinutes`: 1–60 (Timed only)
-- `winMode`: `"standard"` | `"money"`
-  - standard: sorts by correct, kills, money, deaths
-  - money: sorts by money, correct, kills, deaths
+- mode: "ffa" | "teams"
+- teamCount: number (only when mode="teams")
+- friendlyFire: boolean (only when mode="teams")
+- tableBase: number 1..10
+- mapChoice: "map01" | "random" (server may resolve "random")
+- inputMode: "kbm" | "kb" | "kbm_gamepad"
+- sessionMode: "standard" | "timed"
+- sessionMinutes: integer 1..60 (only when sessionMode="timed")
+- winMode: "standard" | "money"
+  - standard: leaderboard priority is correct → kills → money → deaths(asc)
+  - money: leaderboard priority is money → correct → kills → deaths(asc)
 
-Constraints:
-- Start game requires >= 2 players
-- In Teams mode every player must have teamId assigned before start
-
----------------------------------------------------------------------
-
-## 3) Architecture and authority
-
-Server is authoritative for:
-- movement + collision
-- bullets/projectiles
-- mines/jack boxes/pickups
-- machine interaction validation and progression
-- money + costs
-- upgrades inventory + slot rules
-- all gameplay modifiers (mods)
-
-Client is responsible for:
-- rendering
-- input collection
-- showing UI (lobby, prompt, upgrades, respawn options, end screen)
-- purely visual presentation of players (sprites, tinting, cosmetics)
+Rules:
+- Standard sessions end immediately when any player clears machine 10.
+- Timed sessions end when server time >= endAt.
 
 ---------------------------------------------------------------------
 
-## 4) Entities and core rules
+## 4) Lobby rules + validation
 
-### 4.1 Players
-Server tracks for each player:
-- position x,y and facing dirX,dirY
-- alive/dead and invulnerability timer
-- nextMachineNum progression (1..10)
-- cleared machine set
-- money
-- cakes ammo (MAX_CAKES)
-- upgrades inventory (permanent slots, consumable slots)
-- effects (dash, balloon, shield, etc.) server-side
-- computed `mods` (speed/fog/etc.)
+Lobby flow:
+- Players exist in lobby with id, name, teamId (teamId required in Teams mode)
+- Host can assign teams (teams only)
+- Start validation:
+  - must be >= 2 players
+  - if mode="teams": every player must have a teamId
 
-### 4.2 Machines
-- Each machine has a unique id and a number `num` in 1..10.
-- Player can interact only if:
-  - within `INTERACT_RADIUS`
-  - machine not already cleared by that player
-  - machine.num === player.nextMachineNum
-- On correct answer:
-  - server increments correct stat
-  - marks machine cleared
-  - advances nextMachineNum up to 10
-  - refills cakes
-  - awards economy reward and may spawn pickups
-  - server offers upgrades (UPGRADE_OFFER)
-- Clearing machine #10 ends the game immediately (standard end condition)
-
-### 4.3 Combat / bullets
-- Players can shoot cakes (hold Space on client)
-- Bullets are server simulated
-- Bullet collisions:
-  - walls: destroy (banana bounces)
-  - machines: destroy (banana destroys too)
-  - players: kill (respect invulnerability, friendly fire rules)
-- Respawn: dead player must choose a respawn option from server
-
-### 4.4 Respawn system
-- When a player dies server emits `RESPAWN_OPTIONS` to that player:
-  - corners always
-  - any machines that player has cleared
-- Player selects with `chooseRespawn`
-- Server validates selection and spawns player with brief invulnerability
-
-### 4.5 Economy
-- Players start with $100
-- Correct answers can award money/pickups
-- Wrong answers can penalize
-- Purchases:
-  - permanent upgrades charge on acquire
-  - consumables charge on use
-
-### 4.6 Upgrades system
-Two kinds:
-- permanent
-  - stored in limited permSlots (stacking counts per id)
-  - cost charged on acquire
-- consumable
-  - stored in limited consSlots (max 3)
-  - cost charged on use
-  - if slots full, server returns `UPGRADE_RESULT { ok:false, reason:'slots_full' }` and client must show replace flow (`chooseUpgradeReplace`)
-
-Implemented / expected upgrades (current build):
-- permanents: XL Shoes, Glasses, Giraffoscope, Big Nose (one-time bullet save)
-- consumables: Rubber Chicken (dash attack), Cake Surprise (mine), Banana Shot (bouncy projectile), Jack in the Box (fog reveal object), Balloon (phase through walls with pre/post stun)
+Friendly fire:
+- Only applies in Teams mode
+- If friendlyFire=false, server must not allow damage to teammates
 
 ---------------------------------------------------------------------
 
-## 5) 🔒 Mods (server-sent computed effects) — LOCKED CONTRACT
+## 5) Map contract
 
-Server computes `mods` and includes it in every snapshot, per player:
+Server sends map in GAME_STARTED payload.
 
-`STATE_SNAPSHOT.players[i].mods`:
-```js
+Map fields (minimum):
+- world: { w:number, h:number }
+- walls: Array<{ x:number, y:number, w:number, h:number }>
+- machines: Array<{ num:number, x:number, y:number }>
+
+Notes:
+- map01 ("Training Hall") has 10 rooms and machines 1..10
+- Machines must be completed in numeric order per player (nextMachineNum)
+
+---------------------------------------------------------------------
+
+## 6) Machines + math prompts
+
+Interact:
+- Client sends: `tryInteract` (usually bound to E key)
+- Server checks player distance to nearest machine, and progression rules
+
+Server responses:
+- `MATH_PROMPT { promptId, base, machineNum }` (to that player only)
+- `INTERACT_DENIED { reason, nextMachineNum? }`
+
+Prompt submit:
+- Client sends: `submitAnswer { promptId, answer:number }`
+- Server validates and responds:
+  - `ANSWER_RESULT { promptId, ok:boolean, correct:number }`
+
+Progression:
+- Each player has `nextMachineNum` (starts at 1)
+- Correct answer increments nextMachineNum
+- If nextMachineNum becomes 10 and player completes it:
+  - in standard sessions: server ends game (reason="machine10")
+  - in timed sessions: game does NOT end unless time ends (but player can still progress/reward; exact rewards are server-defined)
+
+---------------------------------------------------------------------
+
+## 7) Money, pickups, economy
+
+Server authoritative:
+- Money is earned from game actions (pickups, rewards, etc.)
+- Pickups exist in snapshots, client renders them
+- Server resolves pickup collection
+
+Snapshot pickups (current minimal):
+- pickups: Array<{ id?, type:"money", x:number, y:number, amount?:number }>
+
+Client never mutates money directly; it displays snapshot values.
+
+---------------------------------------------------------------------
+
+## 8) Combat + bullets + mines (overview)
+
+Server authoritative:
+- Shooting: server spawns bullets; simulates bullet movement + collisions
+- Mines (e.g., Cake Surprise): server places mine objects and resolves triggers + explosions
+- Optional special projectiles (e.g. banana) are encoded via `bullets[].kind`
+
+Snapshot bullets:
+- bullets: Array<{ id:string, ownerId:string, x:number, y:number, kind?:string }>
+
+Snapshot mines (if present):
+- mines: Array<{ id?, ownerId?, x:number, y:number, armedAt?, ... }>
+
+No client-side physics authority.
+
+---------------------------------------------------------------------
+
+## 9) Upgrades system (permanent + consumable)
+
+Two categories:
+
+A) Permanent upgrades
+- Purchased when chosen (cost = acquireCost)
+- Stored in `player.upgrades.permanent` as stackable types:
+  - { id, count, info? }
+- Limited: max 3 distinct permanent types at a time (server-enforced)
+- Stacking increases `count`
+
+B) Consumable upgrades
+- Stored in `player.upgrades.slots` (3 slots only, keys 8 / 9 / 0)
+- Paid when USED (cost = useCost)
+- If choosing a consumable with full slots, server returns slots_full and client must replace/drop one via chooseUpgradeReplace
+
+IMPORTANT:
+- Client may show upgrade name/desc/costs, but must not compute gameplay effects from upgrades.
+- Gameplay effects are always server-computed into `player.mods`.
+
+---------------------------------------------------------------------
+
+## 10) MODS contract (server-sent computed effects)
+
+Every player in STATE_SNAPSHOT.players[] includes:
+
 mods: {
   speedMult: number,     // default 1.0
-  visionLenAdd: number,  // default 0 (pixels)
-  fovAddDeg: number      // default 0 (degrees)
+  visionLenAdd: number,  // default 0 (pixels added to base)
+  fovAddDeg: number      // default 0 (degrees added to base cone)
 }
-6) Networking contracts (Socket.IO)
-6.1 Lobby / session
 
-Client → Server:
-
-hello { name }
-
-createGame { tableBase, mode, teamCount, friendlyFire, inputMode, mapChoice, sessionMode, sessionMinutes, winMode }
-
-joinGame { gameCode }
-
-assignTeam { playerId, teamId } (host only; Teams only)
-
-startGame (host only)
-
-backToLobby (host only; ended only)
-
-Server → Client:
-
-WELCOME { playerId }
-
-GAME_CREATED { gameCode }
-
-JOIN_SUCCESS { gameCode, players, settings }
-
-JOIN_FAILED { reason }
-
-LOBBY_UPDATE { players, settings }
-
-GAME_STARTED { map, settings, endAt? }
-
-GAME_ENDED { reason, endedAt, winnerId, winnerName, winnerTeamId, leaderboard, winMode }
-
-RETURNED_TO_LOBBY { ok:true }
-
-6.2 State replication
-
-Server → Client (authoritative, frequent):
-
-STATE_SNAPSHOT { time, world, phase, endAt?, pickups, mines?, jackBoxes?, bullets, players }
-
-Players in snapshot include:
-
-identity: id, name, teamId
-
-position: x, y, dirX, dirY
-
-progression: nextMachineNum
-
-economy: money
-
-inventory (for UI): upgrades.permanent, upgrades.slots
-
-mods (for gameplay render): mods
-
-combat: cakes, alive, invulnUntil
-
-stats: kills, deaths, correct
-
-optional effects summary: balloon stage/until (client UI only)
-
-6.3 Input + interaction
-
-Client → Server:
-
-input { up, down, left, right, fire, aimX, aimY }
-
-tryInteract
-
-submitAnswer { promptId, answer }
-
-Server → Client:
-
-MATH_PROMPT { promptId, base, machineNum }
-
-ANSWER_RESULT { ok, correct? }
-
-INTERACT_DENIED { reason, nextMachineNum, tried }
-
-6.4 Upgrades flow
-
-Server → Client:
-
-UPGRADE_OFFER { offerId, options }
-
-UPGRADE_RESULT { ok, ... }
-
-UPGRADE_USED { ok, ... }
-
-UPGRADE_DECLINED { ok, offerId? }
-
-Client → Server:
-
-chooseUpgrade { offerId, upgradeId }
-
-declineUpgrade { offerId }
-
-chooseUpgradeReplace { offerId, upgradeId, dropId }
-
-useUpgradeSlot { slotIndex }
-
-Slot-full contract:
-
-Server replies: UPGRADE_RESULT { ok:false, reason:'slots_full', requested, slots, money }
-
-Client must show a replace UI and call chooseUpgradeReplace
-
-6.5 Death / respawn
-
-Server → Client:
-
-PLAYER_DIED { playerId } (to room)
-
-RESPAWN_OPTIONS { killedBy, options:[{id,label,kind}] } (to dead player only)
-
-RESPAWN_RESULT { ok, reason? }
-
-Client → Server:
-
-chooseRespawn { spawnId }
-
-7) End of game rule (UI requirement)
-
-When the game ends:
-
-The ONLY next action is “Back to lobby”.
-
-Host triggers backToLobby, server resets match state and emits:
-
-RETURNED_TO_LOBBY { ok:true }
-followed by:
-
-LOBBY_UPDATE
-
-8) Player visuals (client-only contract)
-
-Player cosmetics are client-only rendering.
-
-Team color may be represented via tinting a sprite asset.
-
-Facing direction for top-down visuals SHOULD match the fog cone facing direction.
-
-None of this affects gameplay; server remains authoritative.
-
-Asset:
-
-client/assets/wig_master_64.png
-
-MUST have a transparent background (alpha).
-
-MUST be designed to tint cleanly (see STATE_OF_THE_GAME.md for details).
-
-9) Debugging rules
-
-If something “looks wrong”:
-
-Believe the server snapshot, not the UI.
-
-Verify the client uses player.mods for fog/speed and does not recompute.
-
-Check for duplicated client listeners causing duplicate input / stale UI state.
+Client rules:
+- Fog cone angle uses: base + fovAddDeg (clamped client-side to prevent extremes)
+- Vision length uses: base + visionLenAdd (clamped)
+- Movement speed visuals should not assume anything; movement is server-authoritative anyway
+- Client MUST NOT derive mods from upgrades
+
+---------------------------------------------------------------------
+
+## 11) Socket event contracts
+
+### Client → Server
+
+- hello { name }
+- createGame { settings... }
+- joinGame { gameCode }
+- assignTeam { playerId, teamId }   (host only; teams mode only)
+- startGame                         (host only)
+- input { up,down,left,right,fire, dirX?,dirY?, aimX?,aimY? }
+- tryInteract
+- submitAnswer { promptId, answer }
+- chooseUpgrade { offerId, upgradeId }
+- declineUpgrade { offerId? }
+- chooseUpgradeReplace { offerId, upgradeId, dropId }
+- useUpgradeSlot { slotIndex }      (0..2)
+- chooseRespawn { spawnId }
+
+### Server → Client
+
+Lobby:
+- WELCOME { playerId }
+- GAME_CREATED { gameCode }
+- JOIN_SUCCESS { gameCode, players, settings }
+- JOIN_FAILED { reason }
+- LOBBY_UPDATE { players, settings }
+
+Game start + state:
+- GAME_STARTED { map, settings, endAt? }
+- STATE_SNAPSHOT { time?, world, phase?, endAt?, players[], bullets[], pickups[], mines?, jackBoxes? }
+
+Machines:
+- MATH_PROMPT { promptId, base, machineNum }
+- ANSWER_RESULT { promptId, ok, correct }
+- INTERACT_DENIED { reason, nextMachineNum? }
+
+Upgrades:
+- UPGRADE_OFFER { offerId, options[] }
+- UPGRADE_RESULT { ok, reason?, need?, requested?, slots?, money? }
+- UPGRADE_USED { ok, reason?, used?, paid?, need?, money? }
+- UPGRADE_DECLINED (optional ACK; server may send one of several names)
+  - Client should tolerate aliases, but server should standardize on one.
+
+Death/respawn:
+- PLAYER_DIED { playerId, killedBy? }
+- RESPAWN_OPTIONS { options[], killedBy? }
+- RESPAWN_RESULT { ok, reason? }
+
+End:
+- GAME_ENDED {
+    reason: "time" | "machine10" | "unknown",
+    endedAt,
+    winMode,
+    winnerId?,
+    winnerName,
+    winnerTeamId?,
+    leaderboard: Array<{ id,name,teamId?,correct,kills,deaths,money }>
+  }
+
+---------------------------------------------------------------------
+
+## 12) UI/overlay blocking rules (client-side)
+
+Client should block gameplay input while any of these are open:
+- Math prompt overlay
+- Upgrade offer overlay
+- Drop/replace overlay
+- Respawn overlay
+- End/leaderboard overlay
+
+End overlay:
+- Only action should be “Back to lobby” (page reload).
+- No “Continue”.
+
+---------------------------------------------------------------------
+
+## 13) Input mode notes
+
+Input modes:
+- kbm: aim direction comes from mouse; fire via mouse or Space; slot select via 1/2/3 or wheel; use via RMB or 8/9/0
+- kb: aim direction comes from last movement direction; uses remembered facing vector
+- kbm_gamepad: treated like kbm for now unless implemented later
+
+Server still accepts input payload the same way; client chooses which fields to include.
+
+---------------------------------------------------------------------
+
+## 14) Versioning rule
+
+If you change any event name, payload shape, or meaning:
+- Update this PROTOCOL.md first (or at the same time)
+- Keep STATE_OF_THE_GAME.md aligned with what currently works

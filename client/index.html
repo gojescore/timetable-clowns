@@ -352,6 +352,26 @@
       min-height:110px;
       height:clamp(110px, 16vh, 150px);
     }
+    .upgTile{
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.upgTile::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.65));
+  pointer-events:none;
+}
+
+.upgTile > *{
+  position: relative;
+  z-index: 1;
+}
+
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
     .upgTile.sel{
       border-color: rgba(43,102,255,.85);
@@ -1054,6 +1074,46 @@
         socket.emit("joinGame", { gameCode: (el.joinCode.value || "").trim().toUpperCase() });
       }
     });
+
+const upgradeImgOk = new Map(); // id -> true/false
+
+function getUpgradeImage(id) {
+  // ✅ absolute path (matches your wig asset usage)
+  return `/assets/${id}.png`;
+}
+
+function setUpgradeCardBackground(cardEl, upgradeId) {
+  const src = getUpgradeImage(upgradeId);
+
+  // If we already know the result, apply instantly
+  if (upgradeImgOk.get(upgradeId) === false) {
+    cardEl.style.backgroundImage = "none";
+    cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+    return;
+  }
+
+  cardEl.style.backgroundImage = `url(${src})`;
+  cardEl.style.backgroundSize = "cover";
+  cardEl.style.backgroundPosition = "center";
+
+  // Only probe once per upgradeId
+  if (upgradeImgOk.has(upgradeId)) return;
+
+  const img = new Image();
+  img.onload = () => upgradeImgOk.set(upgradeId, true);
+  img.onerror = () => {
+    upgradeImgOk.set(upgradeId, false);
+    // If this tile is still showing that same upgrade, remove the broken bg
+    if (cardEl && cardEl.style.backgroundImage.includes(src)) {
+      cardEl.style.backgroundImage = "none";
+      cardEl.style.backgroundColor = "rgba(0,0,0,0.25)";
+    }
+  };
+  img.src = src;
+}
+
+
+
 
     socket.on("GAME_CREATED", ({ gameCode }) => {
       el.gameCode.textContent = gameCode;
@@ -1795,6 +1855,8 @@
         tile.type = "button";
         tile.className = "upgTile";
         tile.title = opt.desc || "";
+        setUpgradeCardBackground(tile, opt.id);
+
 
         const name = document.createElement("div");
         name.className = "upgName";
