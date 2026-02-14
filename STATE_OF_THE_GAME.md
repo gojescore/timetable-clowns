@@ -74,6 +74,7 @@ timetable-clowns/
   - mines (if present)
   - jack boxes reveal objects (if present)
 - Client camera follows local player
+- Death splat flash: client shows a short (≈500ms) splat at death location; splats are rendered above fog (client-only).
 
 ### C) Input + overlays
 - Movement: WASD / Arrow keys
