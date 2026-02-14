@@ -525,6 +525,17 @@
       .modal.modalEnd{ width:min(720px, 100%); }
       .winnerBanner .who{ font-size:28px; }
     }
+    .uIcon{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+  background-size:cover;
+  background-position:center;
+  flex:0 0 auto;
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 2px 6px rgba(0,0,0,.25);
+}
+
   </style>
 </head>
 <body>
@@ -2195,6 +2206,14 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
         hk.className = "uHotkey";
         hk.textContent = hotkeys[i];
         left.appendChild(hk);
+if (s) {
+  const icon = document.createElement("div");
+  icon.className = "uIcon";
+  icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
+  left.appendChild(icon);
+}
+
+
 
         const stack = document.createElement("div");
         stack.className = "uStack";
@@ -2243,6 +2262,14 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
         hk.className = "uHotkey";
         hk.textContent = "★";
         left.appendChild(hk);
+
+        if (s) {
+        const icon = document.createElement("div");
+        icon.className = "uIcon";
+        icon.style.backgroundImage = `url(${getUpgradeImage(s.id)})`;
+        left.appendChild(icon);
+        }
+
 
         const stack = document.createElement("div");
         stack.className = "uStack";
