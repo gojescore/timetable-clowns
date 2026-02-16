@@ -5,16 +5,16 @@ When starting a NEW ChatGPT thread, paste ALL THREE:
 2) PROTOCOL.md
 3) the file currently being edited
 
-Last updated: 2026-02-14
+Last updated: 2026-02-16
 
 ---------------------------------------------------------------------
 
 🔒 NON-NEGOTIABLE RULE (LOCKED)
 
 Client may display upgrades,
-but must never compute gameplay modifiers from them.
+but must NEVER compute gameplay modifiers from them.
 
-All gameplay modifiers come only from `player.mods`
+All gameplay modifiers come ONLY from `player.mods`
 sent by the server in STATE_SNAPSHOT.
 
 ---------------------------------------------------------------------
@@ -44,172 +44,276 @@ timetable-clowns/
 ## What works right now (implemented)
 
 ### A) Lobby / multiplayer
+
 - Host / guest flow works
 - Host gets join code; guests join by code
 - Lobby shows players list
 - Teams mode:
-  - host can assign teams
-  - start validation requires all players have teamId
-- Settings exist in the UI:
-  - mode: ffa/teams
-  - teamCount (teams only)
-  - friendlyFire (teams only)
-  - tableBase
-  - mapChoice
-  - inputMode (kbm / kb / kbm_gamepad)
-  - sessionMode (standard / timed)
-  - sessionMinutes
-  - winMode (standard / money)
+  - Host can assign teams
+  - Start validation requires all players have teamId
+- Host settings are editable only by host
+- Guests see host settings in a read-only summary
+- Player name is remembered per tab (sessionStorage)
+
+Settings available in UI:
+- mode: ffa / teams
+- teamCount (teams only)
+- friendlyFire (teams only)
+- tableBase
+- mapChoice
+- inputMode (kbm / kb / kbm_gamepad)
+- sessionMode (standard / timed)
+- sessionMinutes
+- winMode (standard / money)
+
+---------------------------------------------------------------------
 
 ### B) Game start + snapshot loop
+
 - Server starts match and sends:
   - GAME_STARTED { map, settings, endAt? }
+
 - Server broadcasts:
-  - STATE_SNAPSHOT periodically (server tick)
-- Client renders:
-  - map (walls + machines)
-  - players (top-down clowns)
-  - bullets (including banana styling if kind="banana")
-  - money pickups
-  - mines (if present)
-  - jack boxes reveal objects (if present)
-- Client camera follows local player
+  - STATE_SNAPSHOT periodically (server tick ~20Hz)
 
-Death splat flash (client-only):
+Client renders:
+- map (walls + machines)
+- players (top-down clowns)
+- bullets (including banana styling if kind="banana")
+- money pickups
+- mines (if present)
+- jack boxes reveal objects (if present)
+- camera follows local player
+
+---------------------------------------------------------------------
+
+### C) Death splat (client-only visual)
+
 - Client detects death transitions using STATE_SNAPSHOT.players[].alive
-  - "was alive" → "now dead" triggers a splat at the player’s last (x,y)
-- Splat is short-lived (~500ms flash)
-- Rendered ABOVE fog (visible even outside cone)
-- Purely cosmetic (no server state, no gameplay impact)
+  - "was alive" → "now dead" triggers a splat at last known position
+- Splat lifetime ≈ 500ms
+- Rendered ABOVE fog
+- Purely cosmetic
+- No gameplay logic depends on splats
 
-### C) Input + overlays
-- Movement: WASD / Arrow keys
-- Interact: E sends tryInteract
-- Shoot: Space (and LMB in kbm mode)
-- Consumables:
-  - use slots with 8 / 9 / 0
-  - in kbm mode: wheel or 1/2/3 selects active slot; RMB uses active slot
-- Overlay blocking is implemented:
-  - math prompt blocks gameplay
-  - upgrade picker blocks gameplay
-  - drop/replace picker blocks gameplay
-  - respawn picker blocks gameplay
-  - end screen blocks gameplay and only allows “Back to lobby” (reload)
+---------------------------------------------------------------------
 
-### D) Machines + math prompts
+### D) Input + overlays
+
+Movement:
+- WASD / Arrow keys
+
+Interact:
+- E → tryInteract
+
+Shoot:
+- Space
+- LMB in kbm mode
+
+Consumables:
+- 8 / 9 / 0 to use slots
+- In kbm mode:
+  - 1/2/3 or wheel selects slot
+  - RMB uses active slot
+
+Overlay blocking:
+- Math prompt blocks gameplay
+- Upgrade picker blocks gameplay
+- Drop/replace picker blocks gameplay
+- Respawn picker blocks gameplay
+- End screen blocks gameplay
+- End screen only allows “Back to lobby” (reload)
+
+---------------------------------------------------------------------
+
+### E) Machines + math prompts
+
 - Machines 1..10 exist on map
-- Players have nextMachineNum
+- Players track nextMachineNum
 - Interacting sends prompt if valid
 - Server validates answer and sends ANSWER_RESULT
-- Wrong order / already cleared gives INTERACT_DENIED with reason and nextMachineNum
+- Wrong order or already cleared → INTERACT_DENIED
 
-### E) Timed sessions + winMode
+Progression:
+- Standard session:
+  - Ends when any player clears machine 10
+- Timed session:
+  - Ends when server time >= endAt
+
+---------------------------------------------------------------------
+
+### F) Timed sessions + winMode
+
 - Timed sessions show timer HUD on client
 - Server supplies endAt (GAME_STARTED and/or STATE_SNAPSHOT)
-- End of game:
-  - Standard ends on machine10
-  - Timed ends on time
 - GAME_ENDED overlay:
-  - bigger winner banner
-  - highlights winner row / winner team
-  - only button: Back to lobby (reload)
+  - Larger winner banner
+  - Highlights winner row or winner team
+  - Only button: Back to lobby (reload)
 
-### F) Upgrades
-- Server sends UPGRADE_OFFER after rewards (e.g. correct answers)
-- Client shows upgrade picker overlay
-- Client sends chooseUpgrade or declineUpgrade
-- Consumables:
-  - stored in 3 slots
-  - paid on use (useCost)
-  - if slots full, server returns UPGRADE_RESULT slots_full
-  - client shows replace flow and sends chooseUpgradeReplace
-- Permanents:
-  - stored as stackable entries (id + count)
-  - bought on selection (acquireCost)
-  - max 3 permanent types
-- Upgrade bar renders both:
-  - Consumables (8/9/0)
-  - Permanents (stacking xN)
+---------------------------------------------------------------------
 
-### G) Server-sent MODS (IMPORTANT)
-- Server is the only authority converting upgrades/effects into gameplay modifiers
-- Client uses only `player.mods` to render fog parameters:
-  - speedMult (future use / informational)
-  - visionLenAdd (affects fog vision distance)
-  - fovAddDeg (affects fog cone width)
-- Client clamps fog params for safety (visual only)
+### G) Upgrades
 
-### H) Fog-of-war + facing direction
+Server sends UPGRADE_OFFER after rewards.
+
+Client:
+- Shows upgrade picker overlay
+- Sends chooseUpgrade or declineUpgrade
+
+Consumables:
+- Stored in 3 slots
+- Paid on use (useCost)
+- If slots full:
+  - Server returns UPGRADE_RESULT { reason:"slots_full" }
+  - Client shows replace flow and sends chooseUpgradeReplace
+
+Permanents:
+- Stored as stackable entries (id + count)
+- Paid on selection (acquireCost)
+- Max 3 permanent types
+
+Upgrade bar renders:
+- Consumables (8/9/0)
+- Permanents (stacking xN)
+
+---------------------------------------------------------------------
+
+### H) Server-sent MODS (LOCKED CONTRACT)
+
+Server computes gameplay modifiers.
+
+STATE_SNAPSHOT.players[].mods includes:
+
+mods:
+- speedMult
+- visionLenAdd
+- fovAddDeg
+
+Client uses ONLY these values for fog:
+- Vision length = base + visionLenAdd
+- Cone angle = base + fovAddDeg
+- Client clamps for visual safety only
+
+Client NEVER derives fog or speed from upgrades.
+
+---------------------------------------------------------------------
+
+### I) Fog-of-war + facing direction
+
 - Client has fog-of-war cone
-- Facing direction is unified:
-  - `lastFacingAng` is used for BOTH fog cone and local sprite facing
-  - In kbm mode: facing from mouse aim when mouseAim.has
-  - In kb mode: facing from last movement direction (remembered vector)
-- Debug keys:
-  - V toggles raw visibility mask view
-  - B toggles edge ring debug view
+- Facing direction unified:
+  - lastFacingAng controls:
+    - fog cone
+    - local sprite facing
 
-### I) Death + respawn
-- Server emits PLAYER_DIED for victims
-- Server sends RESPAWN_OPTIONS to victim
-- Client shows respawn overlay; chooses spawn via chooseRespawn
-- Server responds RESPAWN_RESULT
-- Respawn invulnerability visuals:
-  - Client only shows invuln ring after death→respawn transition
-  - Controlled by snapshot alive state + invulnUntil
+kbm:
+- facing from mouse aim (if mouseAim.has)
 
----------------------------------------------------------------------
+kb:
+- facing from last movement direction (remembered vector)
 
-## Known “rules we keep stable”
+Debug:
+- V toggles raw visibility mask
+- B toggles edge ring
 
-- Client never computes gameplay modifiers from upgrades (mods only from server)
-- Server is authoritative for all simulation (movement, bullets, collisions, pickups, upgrades)
-- Death splats are client-only visuals (no server involvement)
-- End screen must only offer “Back to lobby” (reload)
-- Overlay states block gameplay input
+Machines are rendered above fog.
+Walls can render outline above fog.
 
 ---------------------------------------------------------------------
 
-## Data shapes used by the client (current expectations)
+### J) Death + respawn
 
-### STATE_SNAPSHOT (client-consumed fields)
+- Server emits PLAYER_DIED
+- Server sends RESPAWN_OPTIONS
+- Client shows respawn overlay
+- Client sends chooseRespawn
+- Server sends RESPAWN_RESULT
+
+Respawn invulnerability:
+- Client shows invuln ring only after death→respawn transition
+- Controlled by alive state + invulnUntil
+
+---------------------------------------------------------------------
+
+## Known rules we keep stable
+
+- Server authoritative for:
+  - movement
+  - bullets
+  - collisions
+  - pickups
+  - upgrades
+  - economy
+  - deaths
+  - win conditions
+
+- Client:
+  - renders only
+  - never computes gameplay effects from upgrades
+
+- End screen:
+  - only action = reload
+
+- Overlay states:
+  - block gameplay input
+
+---------------------------------------------------------------------
+
+## Data shapes used by client (current expectations)
+
+### STATE_SNAPSHOT
+
 - world: { w, h }
-- endAt?: number (ms timestamp; timed sessions)
-- players: Array of:
-  - id, name?, teamId?
+- endAt?: number
+- players:
+  - id
+  - name?
+  - teamId?
   - x, y
   - dirX, dirY
-  - alive: boolean
-  - invulnUntil?: number
-  - money: number
-  - cakes: number
-  - nextMachineNum: number
+  - alive
+  - invulnUntil?
+  - money
+  - cakes
+  - nextMachineNum
   - upgrades:
-    - permanent: Array<{ id, count, info? }>
-    - slots: Array<{ id, info? }>
+      - permanent: Array<{ id, count, info? }>
+      - slots: Array<{ id, info? }>
   - mods:
-    - speedMult
-    - visionLenAdd
-    - fovAddDeg
-  - effects/status fields may exist (balloonUntil etc.) but server remains authoritative
+      - speedMult
+      - visionLenAdd
+      - fovAddDeg
+  - additional effect fields may exist (server authoritative)
+
 - bullets: Array<{ id, ownerId, x, y, kind? }>
 - pickups: Array<{ type:"money", x, y, amount? }>
-- mines?: Array<{ x, y, ... }>
-- jackBoxes?: Array<{ x, y, radius/revealRadius, ownerId/teamId?, expiresAt/until? }>
-
-### GAME_ENDED payload
-- reason: "time" | "machine10" | "unknown"
-- endedAt: ms timestamp
-- winMode: "standard" | "money"
-- winnerName: string
-- winnerId?: string
-- winnerTeamId?: number
-- leaderboard: Array<{ id, name, teamId?, correct, kills, deaths, money }>
+- mines?: Array<...>
+- jackBoxes?: Array<...>
 
 ---------------------------------------------------------------------
 
-## Next expected work (short list)
+### GAME_ENDED
 
-- Ensure server standardizes the “upgrade declined” ACK event name
-- Continue tightening protocol + state docs anytime payload shapes change
-- Keep `player.mods` complete and always present in snapshots (with defaults)
+- reason: "time" | "machine10" | "unknown"
+- endedAt
+- winMode
+- winnerName
+- winnerId?
+- winnerTeamId?
+- leaderboard:
+  - id
+  - name
+  - teamId?
+  - correct
+  - kills
+  - deaths
+  - money
+
+---------------------------------------------------------------------
+
+## Next expected work
+
+- Standardize UPGRADE_DECLINED ACK event naming
+- Keep player.mods always present (with defaults)
+- Continue tightening protocol whenever payload shapes change
