@@ -1248,6 +1248,68 @@ function updateInvulnHudFromMe(me, nowMs) {
       }
     }
 
+    function fillSelect(elm, items, valueKey="value", labelKey="label"){
+  if (!elm) return;
+  elm.innerHTML = "";
+  for (const it of items) {
+    const opt = document.createElement("option");
+    opt.value = String(it[valueKey]);
+    opt.textContent = String(it[labelKey]);
+    elm.appendChild(opt);
+  }
+}
+
+function initStartSelectOptions(){
+  // 1–10
+  fillSelect(el.tableBase, Array.from({length:10}, (_,i)=>({value:i+1, label:String(i+1)})));
+
+  // Teams 2–4 (adjust if you allow 1)
+  fillSelect(el.teamCount, [2,3,4].map(n=>({value:n, label:String(n)})));
+
+  // Friendly fire
+  fillSelect(el.friendlyFire, [
+    {value:"0", label:"OFF"},
+    {value:"1", label:"ON"},
+  ]);
+
+  // Maps (adjust to your actual server options)
+  fillSelect(el.mapChoice, [
+    {value:"map01", label:"Training Hall (map01)"},
+    {value:"random", label:"Random"},
+  ]);
+
+  // Input modes (match your protocol)
+  fillSelect(el.inputMode, [
+    {value:"kb", label:"Keyboard"},
+    {value:"kbm", label:"Keyboard + Mouse"},
+    {value:"kbm_gamepad", label:"KBM + Gamepad"},
+  ]);
+
+  // Win mode
+  fillSelect(el.winMode, [
+    {value:"standard", label:"Standard"},
+    {value:"money", label:"Money"},
+  ]);
+
+  // Session mode
+  fillSelect(el.sessionMode, [
+    {value:"standard", label:"Standard"},
+    {value:"timed", label:"Timed"},
+  ]);
+
+  // Defaults (optional)
+  el.tableBase.value = "1";
+  el.teamCount.value = "2";
+  el.friendlyFire.value = "0";
+  el.mapChoice.value = "map01";
+  el.inputMode.value = "kbm";
+  el.winMode.value = "standard";
+  el.sessionMode.value = "standard";
+}
+
+initStartSelectOptions();
+
+
     // ===== Role UI =====
     function updateRoleUI(){
       const guest = el.role.value === "guest";
