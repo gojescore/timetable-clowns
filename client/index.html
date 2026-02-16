@@ -3318,6 +3318,8 @@ drawWalls(camX, camY);
 
 drawMines(camX, camY);
 drawJackBoxes(camX, camY);
+// ✅ draw bullets BEFORE fog so fog hides them outside the cone
+drawBullets(camX, camY);
 
 if (me) renderFogMask(me, camX, camY, nowMs);
 
@@ -3336,8 +3338,6 @@ if (me) {
     drawWallsFogOutline(camX, camY);
   }
 }
-    
-drawBullets(camX, camY);
 
 // ✅ NOW draw machines on top of fog
 drawMachines(camX, camY);
