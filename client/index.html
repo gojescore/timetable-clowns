@@ -903,37 +903,49 @@
     const socket = io();
     // --- Splats (visual decals) ---
 
-    socket.on("SPLAT", (payload = {}) => {
+ // --------------------------------------------------
+// SPLAT SYSTEM (client-side visual only)
+// --------------------------------------------------
+
+// Storage
+const splats = []; // { x, y, createdAt }
+
+// Config
+const SPLAT_SIZE = 64;          // tweak
+const SPLAT_LIFETIME_MS = 500;  // 0.5 seconds
+
+// Image
+const splatImg = new Image();
+splatImg.src = "/assets/splat.png";
+
+let splatReady = false;
+splatImg.onload = () => { splatReady = true; };
+splatImg.onerror = () => {
+  console.warn("Missing splat asset: /assets/splat.png");
+};
+
+// --------------------------------------------------
+// Server event
+// --------------------------------------------------
+
+socket.on("SPLAT", (payload = {}) => {
   const x = Number(payload.x);
   const y = Number(payload.y);
-  const ttlMs = Number(payload.ttlMs);
 
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
   const now = Date.now();
-  const ttl = Number.isFinite(ttlMs) ? ttlMs : 1500;
 
   splats.push({ x, y, createdAt: now });
 
-  // Optional: cap
-  if (splats.length > 80) splats.splice(0, splats.length - 80);
+  // Optional: cap amount to avoid memory growth
+  if (splats.length > 80) {
+    splats.splice(0, splats.length - 80);
+  }
 });
-
-const splatImg = new Image();
-splatImg.src = "/assets/splat.png";
-let splatReady = false;
-splatImg.onload = () => splatReady = true;
-splatImg.onerror = () => console.warn("Missing splat asset: /assets/splat.png");
-
-const splats = []; // {x,y,createdAt}
-const SPLAT_SIZE = 64;        // tweak
-const SPLAT_LIFETIME_MS = 500; // 0.5 secs, tweak
 
 
     const el = {
-      guestSettingsCard: document.getElementById("guestSettingsCard"),
-      guestSettingsText: document.getElementById("guestSettingsText"),
-
       start: document.getElementById("startCard"),
       name: document.getElementById("name"),
       role: document.getElementById("role"),
