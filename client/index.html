@@ -1373,6 +1373,31 @@ function updateSessionUI(){
       }
     });
 
+    function settingsSummary(s){
+  if (!s) return "—";
+  const mode = s.mode === "teams" ? `Teams (${s.teamCount ?? 2})` : "FFA";
+  const ff = (s.mode === "teams") ? (s.friendlyFire ? "ON" : "OFF") : "—";
+  const session = (s.sessionMode === "timed") ? `Timed (${s.sessionMinutes ?? 5} min)` : "Standard";
+  const win = (s.winMode === "money") ? "Money" : "Standard";
+
+  return [
+    `Mode: ${mode}`,
+    `Friendly fire: ${ff}`,
+    `Table: ${s.tableBase ?? "—"}`,
+    `Map: ${s.mapChoice ?? "—"}`,
+    `Input: ${s.inputMode ?? "—"}`,
+    `Win: ${win}`,
+    `Session: ${session}`,
+  ].join(" · ");
+}
+
+function updateSettingsCard(){
+  // show it for BOTH host and guest:
+  el.guestSettingsCard.classList.remove("hidden");
+  el.guestSettingsText.textContent = settingsSummary(settings);
+}
+
+
 const upgradeImgOk = new Map(); // id -> true/false
 
 function getUpgradeImage(id) {
