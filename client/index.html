@@ -628,15 +628,35 @@
       </p>
     </div>
 
-    <div class="card" id="startCard">
-      <div class="row">
-        <input id="name" placeholder="Your name" />
-        <select id="role">
-          <option value="host" selected>Host</option>
-          <option value="guest">Guest</option>
-        </select>
-        <input id="joinCode" placeholder="Game code (guest)" class="hidden" />
-      </div>
+<div class="card" id="startCard">
+
+  <!-- Row 1: name + role -->
+  <div class="row">
+    <input id="name" placeholder="Your name" />
+    <select id="role">
+      <option value="host" selected>Host</option>
+      <option value="guest">Guest</option>
+    </select>
+  </div>
+
+  <!-- Row 2: join code (always visible) -->
+  <div class="row">
+    <input id="joinCode" placeholder="Game code (guest)" />
+  </div>
+
+  <!-- Host settings -->
+  <div id="hostSettings" class="settingsCol">
+    ...
+  </div>
+
+  <!-- Row 3: Go underneath -->
+  <div class="row">
+    <button id="go" class="primary">Go</button>
+    <span id="status" class="muted">Connecting…</span>
+  </div>
+
+</div>
+
 
 <div id="hostSettings" class="settingsCol">
   <div class="field">
