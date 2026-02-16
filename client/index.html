@@ -2036,32 +2036,46 @@ function openUpgradeOffer(payload = {}) {
     tipEl.style.top = "";
   }
 
+  function priceLineForOpt(opt){
+    if (!opt) return "";
+    if (opt.kind === "permanent") {
+      const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
+      return `Permanent · buy $${c}`;
+    }
+    const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
+    return `Consumable · use $${c}`;
+  }
+
   function showUpgTipNearTile(tileEl, opt) {
     if (!tipEl || !tileEl) return;
 
     const title = (opt?.name || opt?.id || "Upgrade");
     const desc = (opt?.desc || "");
-    if (tipTitleEl) tipTitleEl.textContent = title;
-    if (tipDescEl) tipDescEl.textContent = desc || "—";
+    const priceLine = priceLineForOpt(opt);
 
-    // position: to the right of the hovered tile, but keep inside viewport
+    if (tipTitleEl) tipTitleEl.textContent = title;
+
+    // ✅ prices go into info screen (tooltip)
+    if (tipDescEl) {
+      // needs CSS: white-space: pre-line;
+      tipDescEl.textContent = priceLine + (desc ? `\n${desc}` : "");
+    }
+
+    // position: to the right of the hovered tile, clamp to viewport
     const r = tileEl.getBoundingClientRect();
     const margin = 10;
 
-    // Make visible first so it has size
     tipEl.classList.remove("hidden");
 
-    const tw = tipEl.offsetWidth || 260;
-    const th = tipEl.offsetHeight || 120;
+    const tw = tipEl.offsetWidth || 280;
+    const th = tipEl.offsetHeight || 140;
 
     let left = r.right + margin;
     let top = r.top;
 
-    // clamp horizontally
     const maxLeft = window.innerWidth - tw - margin;
     if (left > maxLeft) left = Math.max(margin, r.left - tw - margin);
 
-    // clamp vertically
     const maxTop = window.innerHeight - th - margin;
     if (top > maxTop) top = maxTop;
     if (top < margin) top = margin;
@@ -2084,30 +2098,17 @@ function openUpgradeOffer(payload = {}) {
     tile.type = "button";
     tile.className = "upgTile";
 
-    // ✅ full image, not cut
-    // (assumes your .upgTile CSS uses background-size: contain; background-repeat: no-repeat;)
+    // IMPORTANT: your CSS must be background-size: contain; background-repeat: no-repeat;
     setUpgradeCardBackground(tile, opt.id);
 
-    // ✅ remove headline from tile (image is the primary)
-    // Title/desc appear in tooltip instead.
+    // ✅ Image-first tile; no big headline; price+desc are in tooltip
     const foot = document.createElement("div");
     foot.className = "upgFoot";
-
-    const tag = document.createElement("div");
-    tag.className = "upgTag";
-    if (opt.kind === "permanent") {
-      const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
-      tag.textContent = `permanent · buy $${c}`;
-    } else {
-      const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
-      tag.textContent = `consumable · use $${c}`;
-    }
 
     const pick = document.createElement("div");
     pick.className = "upgPick";
     pick.textContent = "Pick";
 
-    foot.appendChild(tag);
     foot.appendChild(pick);
     tile.appendChild(foot);
 
@@ -2130,13 +2131,14 @@ function openUpgradeOffer(payload = {}) {
   el.upgradeOverlay.classList.add("show");
   setUpgradeSel(0);
 
-  // show tip for selected tile (nice for keyboard users)
-  const btns = upgradePicker.buttons || [];
-  if (btns.length) showUpgTipNearTile(btns[0], opts[0]);
+  // show tooltip for first option (nice for KB users)
+  if (upgradePicker.buttons.length && opts.length) {
+    showUpgTipNearTile(upgradePicker.buttons[0], opts[0]);
+  }
 
-  // hide tip if user clicks outside tiles / scrolls
   window.addEventListener("scroll", hideUpgTip, { passive: true, once: true });
 }
+
 
 
     function forceCloseUpgradeUI(){
