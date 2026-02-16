@@ -2945,8 +2945,11 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
       }
 
       ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+
 
       for (const b of list) {
         if (!b) continue;
@@ -2954,7 +2957,8 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
         const x = b.x - camX;
         const y = b.y - camY;
 
-        ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75;
+        ctx.globalAlpha = 1; // no haze/fade  
+        //Before: ctx.globalAlpha = (b.ownerId === myId) ? 1 : 0.75; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         const kind = (typeof b.kind === "string")
           ? b.kind.trim().toLowerCase()
