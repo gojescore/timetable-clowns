@@ -3314,7 +3314,6 @@ drawWalls(camX, camY);
 
 drawMines(camX, camY);
 drawJackBoxes(camX, camY);
-drawBullets(camX, camY);
 
 if (me) renderFogMask(me, camX, camY, nowMs);
 
@@ -3333,6 +3332,8 @@ if (me) {
     drawWallsFogOutline(camX, camY);
   }
 }
+// ✅ NOW draw bullets on top of fog      
+drawBullets(camX, camY);
 
 // ✅ NOW draw machines on top of fog
 drawMachines(camX, camY);
