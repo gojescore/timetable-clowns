@@ -2689,7 +2689,7 @@ function renderUpgradeBar(force){
       fogCtx.globalAlpha = 1;
       fogCtx.clearRect(0,0,VIEW_W,VIEW_H);
 
-      fogCtx.fillStyle = `rgba(0,0,0,${FOG_ALPHA})`;
+      fogCtx.fillStyle = `rgba(0,15,35,${FOG_ALPHA})`;
 
       fogCtx.fillRect(0,0,VIEW_W,VIEW_H);
 
@@ -2717,32 +2717,6 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
       c.arcTo(x, y, x + w, y, rr);
       c.closePath();
     }
-
-function drawVisionTint(){
-  // Make a soft tint ONLY inside the visible mask (visCanvas).
-  // This avoids “hazing” bullets and other sprites in-view.
-
-  ctx.save();
-
-  // 1) Paint a full-screen tint...
-  ctx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = 0.16; // tweak 0.08..0.20
-  ctx.fillStyle = "rgba(255, 190, 235, 1)";
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-
-  // 2) ...then keep it ONLY where visCanvas is visible
-  ctx.globalCompositeOperation = "destination-in";
-  ctx.globalAlpha = 1;
-  ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
-
-  // Optional gentle glow (still masked)
-  ctx.globalCompositeOperation = "lighter";
-  ctx.globalAlpha = 0.06; // tweak 0.00..0.10
-  ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
-
-  ctx.restore();
-}
-
 
     function drawSplats(camX, camY, nowMs){
   if (!splatReady || !splatImg) return;
