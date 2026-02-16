@@ -1051,29 +1051,6 @@ socket.on("SPLAT", (payload = {}) => {
 const alivePrev = new Map();              // playerId -> boolean
 const respawnInvulnUntil = new Map();     // playerId -> ms timestamp
 
-    function settingsSummary(s){
-  if (!s) return "—";
-  const mode = s.mode === "teams" ? `Teams (${(s.teamCount ?? 2)} teams)` : "FFA";
-  const ff = (s.mode === "teams") ? (s.friendlyFire ? "ON" : "OFF") : "—";
-  const base = Number.isFinite(s.tableBase) ? s.tableBase : "—";
-  const map = s.mapChoice || "—";
-  const input = s.inputMode || "—";
-  const win = (s.winMode === "money") ? "Money" : "Standard";
-  const session = (s.sessionMode === "timed")
-    ? `Timed (${s.sessionMinutes ?? 5} min)`
-    : "Standard";
-
-  return [
-    `Mode: ${mode}`,
-    `Friendly fire: ${ff}`,
-    `Table: ${base}`,
-    `Map: ${map}`,
-    `Input: ${input}`,
-    `Win: ${win}`,
-    `Session: ${session}`,
-  ].join(" · ");
-}
-
 function updateGuestSettingsUI(){
   const isGuest = !isHost;
   el.guestSettingsCard.classList.toggle("hidden", !isGuest);
