@@ -2426,6 +2426,9 @@ function renderUpgradeBar(force){
     const fogCanvas = document.createElement("canvas");
     const fogCtx = fogCanvas.getContext("2d", { alpha: true });
 
+    const bulletCanvas = document.createElement("canvas");
+    const bulletCtx = bulletCanvas.getContext("2d", { alpha: true });
+
     const visCanvas = document.createElement("canvas");
     const visCtx = visCanvas.getContext("2d", { alpha: true });
 
@@ -2439,7 +2442,8 @@ function renderUpgradeBar(force){
       const needW = Math.round(VIEW_W);
       const needH = Math.round(VIEW_H);
 
-      const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas];
+      const canvases = [fogCanvas, visCanvas, blurCanvas, edgeCanvas, bulletCanvas];
+
       for (const c of canvases) {
         if (c.width !== needW || c.height !== needH) {
           c.width = needW;
@@ -2451,6 +2455,8 @@ function renderUpgradeBar(force){
       visCtx.setTransform(1, 0, 0, 1, 0, 0);
       blurCtx.setTransform(1, 0, 0, 1, 0, 0);
       edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      bulletCtx.setTransform(1, 0, 0, 1, 0, 0);
+
 
       lastFogW = VIEW_W;
       lastFogH = VIEW_H;
@@ -3112,6 +3118,77 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
       return c;
     }
 
+    function drawBullets(ctx2, camX, camY){
+  const list = lastSnapshot?.bullets;
+  if (!Array.isArray(list)) return;
+
+  const aliveIds = new Set();
+  for (const b of list) if (b && b.id) aliveIds.add(b.id);
+  for (const id of bulletPrev.keys()) {
+    if (!aliveIds.has(id)) bulletPrev.delete(id);
+  }
+
+  ctx2.save();
+  ctx2.globalCompositeOperation = "source-over";
+  ctx2.globalAlpha = 1;
+  ctx2.textAlign = "center";
+  ctx2.textBaseline = "middle";
+
+  for (const b of list) {
+    if (!b) continue;
+
+    const x = b.x - camX;
+    const y = b.y - camY;
+
+    ctx2.globalAlpha = 1; // keep it crisp in cone
+
+    const kind = (typeof b.kind === "string") ? b.kind.trim().toLowerCase() : "cake";
+
+    if (kind === "banana") {
+      let ang = 0;
+      if (b.id) {
+        const prev = bulletPrev.get(b.id);
+        if (prev && Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+          const dx = b.x - prev.x;
+          const dy = b.y - prev.y;
+          if (Math.abs(dx) + Math.abs(dy) > 1e-6) ang = Math.atan2(dy, dx);
+          else if (Number.isFinite(prev.ang)) ang = prev.ang;
+        }
+        bulletPrev.set(b.id, { x: b.x, y: b.y, ang });
+      }
+      drawBanana(ctx2, x, y, ang);
+      continue;
+    }
+
+    if (kind === "cake_surprise") {
+      ctx2.save();
+      ctx2.globalAlpha *= 0.95;
+      ctx2.beginPath();
+      ctx2.arc(x, y, 10, 0, Math.PI * 2);
+      ctx2.strokeStyle = "rgba(255, 210, 80, .85)";
+      ctx2.lineWidth = 3;
+      ctx2.stroke();
+      ctx2.restore();
+
+      ctx2.font = "18px system-ui";
+      ctx2.fillText("🍰", x, y);
+      ctx2.font = "14px system-ui";
+      ctx2.fillText("✨", x + 12, y - 10);
+
+      if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+      continue;
+    }
+
+    ctx2.font = "18px system-ui";
+    ctx2.fillText("🍰", x, y);
+
+    if (b.id) bulletPrev.set(b.id, { x: b.x, y: b.y, ang: 0 });
+  }
+
+  ctx2.restore();
+}
+
+
     function drawVectorFeet(px, py, ang, nowMs, moving){
       const backX = -Math.cos(ang);
       const backY = -Math.sin(ang);
@@ -3334,7 +3411,18 @@ if (me) {
     // ... your debug EDGE code ...
   } else {
     ctx.drawImage(fogCanvas, 0, 0, VIEW_W, VIEW_H);
-    
+    // 1) draw bullets into bulletCanvas
+    bulletCtx.clearRect(0, 0, VIEW_W, VIEW_H);
+    drawBullets(bulletCtx, camX, camY);
+
+    // 2) mask bullets to cone (visCanvas)
+    bulletCtx.save();
+    bulletCtx.globalCompositeOperation = "destination-in";
+    bulletCtx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
+    bulletCtx.restore();
+
+    // 3) draw masked bullets on top (crisp, only in cone)
+    ctx.drawImage(bulletCanvas, 0, 0, VIEW_W, VIEW_H);
     drawWallsFogOutline(camX, camY);
   }
 }
