@@ -328,45 +328,40 @@
     }
 
     /* Upgrade picker tiles */
-    .upgGrid{
-      display:grid;
-      gap:10px;
+/* Upgrade picker tiles */
+.upgGrid{
+  display:grid;
+  gap:12px;
+  grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); /* bigger */
+  margin-top:6px;
+}
 
-      /* auto-fit makes it adapt to window size */
-      grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
-      margin-top:6px;
-    }
-    .upgTile{
-      border-radius:14px;
-      border:1px solid var(--line);
-      background:#0e1630;
-      color:var(--ink);
-      cursor:pointer;
-      padding:10px;
-      display:flex;
-      flex-direction:column;
-      justify-content:space-between;
-      transition: transform .06s ease, border-color .06s ease;
-
-      /* keep tiles from getting too tall */
-      min-height:110px;
-      height:clamp(110px, 16vh, 150px);
-    }
-/* Upgrade tiles: show full image (no crop) */
 .upgTile{
-  position: relative;
-  overflow: hidden;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background-color:#0e1630;
+  color:var(--ink);
+  cursor:pointer;
+  padding:10px;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  transition: transform .06s ease, border-color .06s ease;
 
-  /* ✅ do NOT crop the image */
+  /* bigger tiles (~20%) */
+  min-height:132px;
+  height:clamp(132px, 19vh, 180px);
+
+  /* ✅ show full image (NO crop) */
   background-size: contain;
   background-position: center;
   background-repeat: no-repeat;
 
-  /* helps when images have transparency */
-  background-color: rgba(0,0,0,.18);
+  position: relative;
+  overflow: hidden;
 }
 
-/* ✅ remove the heavy gradient overlay (so image is not "cut" visually) */
+/* Light overlay (optional; keep subtle so image stays clear) */
 .upgTile::before{
   content:"";
   position:absolute;
@@ -380,7 +375,7 @@
   z-index: 1;
 }
 
-/* --- Tooltip (side popup) --- */
+/* Tooltip (side popup) */
 .upgTooltip{
   position: fixed;
   z-index: 9999;
@@ -404,12 +399,9 @@
   font-size: 12px;
   color: rgba(230,237,247,.78);
   line-height: 1.35;
+  white-space: pre-line; /* allows price + newline + desc */
 }
 
-.upgTile > *{
-  position: relative;
-  z-index: 1;
-}
 
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
     .upgTile.sel{
