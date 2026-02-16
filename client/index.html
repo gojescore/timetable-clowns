@@ -1042,9 +1042,21 @@ socket.on("SPLAT", (payload = {}) => {
       winnerLabel: document.getElementById("winnerLabel"),
     };
 
-    el.leaveLobby.addEventListener("click", () => location.reload());
-    el.leaveGame.addEventListener("click", () => location.reload());
-    el.endBackBtn.addEventListener("click", () => location.reload());
+el.leaveLobby.addEventListener("click", () => {
+  persistNameNow();
+  location.reload();
+});
+
+el.leaveGame.addEventListener("click", () => {
+  persistNameNow();
+  location.reload();
+});
+
+el.endBackBtn.addEventListener("click", () => {
+  persistNameNow();
+  location.reload();
+});
+
 
 // -----------------------------
 // Remember player name (PER TAB)
