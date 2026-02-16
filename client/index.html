@@ -2022,6 +2022,7 @@ socket.on("STATE_SNAPSHOT", (snap) => {
       if (el.endOverlay.classList.contains("show")) {
         if (e.key === "Enter" || e.key === "Escape") {
           e.preventDefault();
+          persistNameNow();
           location.reload();
         }
         return;
