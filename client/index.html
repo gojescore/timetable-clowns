@@ -2718,27 +2718,31 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
       c.closePath();
     }
 
-    function drawVisionTint(){
-  // visCanvas is already a white mask of the visible area in VIEW coords
-  // We’ll paint a soft pink glow only where visCanvas is white.
+function drawVisionTint(){
+  // Make a soft tint ONLY inside the visible mask (visCanvas).
+  // This avoids “hazing” bullets and other sprites in-view.
 
   ctx.save();
 
-  // Paint a pink layer…
-  ctx.globalAlpha = 0.18; // tweak 0.10..0.28
-  ctx.fillStyle = "rgba(255, 190, 235, 1)"; // candyfloss pink
+  // 1) Paint a full-screen tint...
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 0.16; // tweak 0.08..0.20
+  ctx.fillStyle = "rgba(255, 190, 235, 1)";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  // …but restrict it to the visible mask
-  ctx.globalCompositeOperation = "source-atop";
+  // 2) ...then keep it ONLY where visCanvas is visible
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.globalAlpha = 1;
   ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
 
-  // Add a little “glow” feeling (optional but nice)
-  ctx.globalAlpha = 0.10;
+  // Optional gentle glow (still masked)
   ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.06; // tweak 0.00..0.10
   ctx.drawImage(visCanvas, 0, 0, VIEW_W, VIEW_H);
 
   ctx.restore();
 }
+
 
     function drawSplats(camX, camY, nowMs){
   if (!splatReady || !splatImg) return;
@@ -2755,9 +2759,13 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
     ctx.save();
     // tiny fade near the end (optional)
     const age = nowMs - s.createdAt;
-    if (age > SPLAT_LIFETIME_MS - 2000) {
-      ctx.globalAlpha = Math.max(0, (SPLAT_LIFETIME_MS - age) / 2000);
+     const FADE_MS = Math.min(200, Math.floor(SPLAT_LIFETIME_MS * 0.5));
+    if (FADE_MS > 0 && age > SPLAT_LIFETIME_MS - FADE_MS) {
+    ctx.globalAlpha = Math.max(0, (SPLAT_LIFETIME_MS - age) / FADE_MS);
+    } else {
+    ctx.globalAlpha = 1;
     }
+
 
     ctx.imageSmoothingEnabled = true; // splat can be smooth
     ctx.drawImage(splatImg, x - SPLAT_SIZE/2, y - SPLAT_SIZE/2, SPLAT_SIZE, SPLAT_SIZE);
