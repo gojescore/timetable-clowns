@@ -2013,79 +2013,134 @@ function hideUpgTip(){
       if (b && typeof b.click === "function") b.click();
     }
 
-    function openUpgradeOffer(payload = {}) {
-      const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
-      const options = payload.options;
+function openUpgradeOffer(payload = {}) {
+  const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
+  const options = payload.options;
 
-      activeOfferId = offerId;
-      el.upgradeMsg.textContent = "";
-      el.upgradeMsg.className = "msg";
+  activeOfferId = offerId;
+  el.upgradeMsg.textContent = "";
+  el.upgradeMsg.className = "msg";
 
-      const opts = Array.isArray(options) ? options : [];
-      el.upgradeList.innerHTML = "";
+  const opts = Array.isArray(options) ? options : [];
+  el.upgradeList.innerHTML = "";
 
-      const grid = document.createElement("div");
-      grid.className = "upgGrid";
+  // ---- tooltip helpers (UI only) ----
+  const tipEl = document.getElementById("upgTooltip");
+  const tipTitleEl = document.getElementById("upgTooltipTitle");
+  const tipDescEl = document.getElementById("upgTooltipDesc");
 
-      upgradePicker.open = true;
-      upgradePicker.buttons = [];
-      upgradePicker.cols = 3;
-      upgradePicker.index = 0;
+  function hideUpgTip() {
+    if (!tipEl) return;
+    tipEl.classList.add("hidden");
+    tipEl.style.left = "";
+    tipEl.style.top = "";
+  }
 
-      for (const opt of opts) {
-        const tile = document.createElement("button");
-        tile.type = "button";
-        tile.className = "upgTile";
-        tile.title = opt.desc || "";
-        setUpgradeCardBackground(tile, opt.id);
+  function showUpgTipNearTile(tileEl, opt) {
+    if (!tipEl || !tileEl) return;
 
+    const title = (opt?.name || opt?.id || "Upgrade");
+    const desc = (opt?.desc || "");
+    if (tipTitleEl) tipTitleEl.textContent = title;
+    if (tipDescEl) tipDescEl.textContent = desc || "—";
 
-        const name = document.createElement("div");
-        name.className = "upgName";
-        name.textContent = opt.name || opt.id || "Upgrade";
+    // position: to the right of the hovered tile, but keep inside viewport
+    const r = tileEl.getBoundingClientRect();
+    const margin = 10;
 
-        const kind = document.createElement("div");
-        kind.className = "upgKind";
-        kind.textContent = opt.desc || (opt.kind ? `(${opt.kind})` : "");
+    // Make visible first so it has size
+    tipEl.classList.remove("hidden");
 
-        const foot = document.createElement("div");
-        foot.className = "upgFoot";
+    const tw = tipEl.offsetWidth || 260;
+    const th = tipEl.offsetHeight || 120;
 
-        const tag = document.createElement("div");
-        tag.className = "upgTag";
-        if (opt.kind === "permanent") {
-          const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
-          tag.textContent = `permanent · buy $${c}`;
-        } else {
-          const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
-          tag.textContent = `consumable · use $${c}`;
-        }
+    let left = r.right + margin;
+    let top = r.top;
 
-        const pick = document.createElement("div");
-        pick.className = "upgPick";
-        pick.textContent = "Pick";
+    // clamp horizontally
+    const maxLeft = window.innerWidth - tw - margin;
+    if (left > maxLeft) left = Math.max(margin, r.left - tw - margin);
 
-        foot.appendChild(tag);
-        foot.appendChild(pick);
+    // clamp vertically
+    const maxTop = window.innerHeight - th - margin;
+    if (top > maxTop) top = maxTop;
+    if (top < margin) top = margin;
 
-        tile.appendChild(name);
-        tile.appendChild(kind);
-        tile.appendChild(foot);
+    tipEl.style.left = Math.round(left) + "px";
+    tipEl.style.top = Math.round(top) + "px";
+  }
 
-        tile.addEventListener("click", () => {
-          socket.emit("chooseUpgrade", { offerId, upgradeId: opt.id });
-        });
+  // ---- build tiles ----
+  const grid = document.createElement("div");
+  grid.className = "upgGrid";
 
-        grid.appendChild(tile);
-        upgradePicker.buttons.push(tile);
-      }
+  upgradePicker.open = true;
+  upgradePicker.buttons = [];
+  upgradePicker.cols = 3;
+  upgradePicker.index = 0;
 
-      el.upgradeList.appendChild(grid);
-      el.upgradeOverlay.classList.add("show");
-      setUpgradeSel(0);
+  for (const opt of opts) {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "upgTile";
+
+    // ✅ full image, not cut
+    // (assumes your .upgTile CSS uses background-size: contain; background-repeat: no-repeat;)
+    setUpgradeCardBackground(tile, opt.id);
+
+    // ✅ remove headline from tile (image is the primary)
+    // Title/desc appear in tooltip instead.
+    const foot = document.createElement("div");
+    foot.className = "upgFoot";
+
+    const tag = document.createElement("div");
+    tag.className = "upgTag";
+    if (opt.kind === "permanent") {
+      const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
+      tag.textContent = `permanent · buy $${c}`;
+    } else {
+      const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
+      tag.textContent = `consumable · use $${c}`;
     }
 
+    const pick = document.createElement("div");
+    pick.className = "upgPick";
+    pick.textContent = "Pick";
+
+    foot.appendChild(tag);
+    foot.appendChild(pick);
+    tile.appendChild(foot);
+
+    // tooltip wiring
+    tile.addEventListener("pointerenter", () => showUpgTipNearTile(tile, opt));
+    tile.addEventListener("pointermove", () => showUpgTipNearTile(tile, opt));
+    tile.addEventListener("pointerleave", hideUpgTip);
+    tile.addEventListener("blur", hideUpgTip);
+
+    tile.addEventListener("click", () => {
+      hideUpgTip();
+      socket.emit("chooseUpgrade", { offerId, upgradeId: opt.id });
+    });
+
+    grid.appendChild(tile);
+    upgradePicker.buttons.push(tile);
+  }
+
+  el.upgradeList.appendChild(grid);
+  el.upgradeOverlay.classList.add("show");
+  setUpgradeSel(0);
+
+  // show tip for selected tile (nice for keyboard users)
+  const btns = upgradePicker.buttons || [];
+  if (btns.length) showUpgTipNearTile(btns[0], opts[0]);
+
+  // hide tip if user clicks outside tiles / scrolls
+  window.addEventListener("scroll", hideUpgTip, { passive: true, once: true });
+}
+
+
     function forceCloseUpgradeUI(){
+      hideUpgTip();
       activeOfferId = null;
       closeDropPicker();
       el.upgradeOverlay.classList.remove("show");
@@ -2097,6 +2152,7 @@ function hideUpgTip(){
     }
 
     function closeUpgradeOffer() {
+      hideUpgTip();
       if (activeOfferId) socket.emit("declineUpgrade", { offerId: activeOfferId });
       else socket.emit("declineUpgrade", {});
       forceCloseUpgradeUI();
