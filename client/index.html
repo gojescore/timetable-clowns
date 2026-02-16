@@ -2104,43 +2104,34 @@ function openUpgradeOffer(payload = {}) {
     return `Consumable · use $${c}`;
   }
 
-  function showUpgTipNearTile(tileEl, opt) {
-    if (!tipEl || !tileEl) return;
+function showUpgTipNearTile(tileEl, opt) {
+  if (!tipEl || !tileEl) return;
 
-    const title = (opt?.name || opt?.id || "Upgrade");
-    const desc = (opt?.desc || "");
-    const priceLine = priceLineForOpt(opt);
+  // ✅ USE YOUR formatter (Headline / Purchase / Use / Description)
+  setTooltipContent(opt);
 
-    if (tipTitleEl) tipTitleEl.textContent = title;
+  const r = tileEl.getBoundingClientRect();
+  const margin = 10;
 
-    // ✅ prices go into info screen (tooltip)
-    if (tipDescEl) {
-      // needs CSS: white-space: pre-line;
-      tipDescEl.textContent = priceLine + (desc ? `\n${desc}` : "");
-    }
+  tipEl.classList.remove("hidden");
 
-    // position: to the right of the hovered tile, clamp to viewport
-    const r = tileEl.getBoundingClientRect();
-    const margin = 10;
+  const tw = tipEl.offsetWidth || 280;
+  const th = tipEl.offsetHeight || 140;
 
-    tipEl.classList.remove("hidden");
+  let left = r.right + margin;
+  let top = r.top;
 
-    const tw = tipEl.offsetWidth || 280;
-    const th = tipEl.offsetHeight || 140;
+  const maxLeft = window.innerWidth - tw - margin;
+  if (left > maxLeft) left = Math.max(margin, r.left - tw - margin);
 
-    let left = r.right + margin;
-    let top = r.top;
+  const maxTop = window.innerHeight - th - margin;
+  if (top > maxTop) top = maxTop;
+  if (top < margin) top = margin;
 
-    const maxLeft = window.innerWidth - tw - margin;
-    if (left > maxLeft) left = Math.max(margin, r.left - tw - margin);
+  tipEl.style.left = Math.round(left) + "px";
+  tipEl.style.top = Math.round(top) + "px";
+}
 
-    const maxTop = window.innerHeight - th - margin;
-    if (top > maxTop) top = maxTop;
-    if (top < margin) top = margin;
-
-    tipEl.style.left = Math.round(left) + "px";
-    tipEl.style.top = Math.round(top) + "px";
-  }
 
   // ---- build tiles ----
   const grid = document.createElement("div");
