@@ -628,77 +628,81 @@
       </p>
     </div>
 
-    <!-- ✅ START / CONNECT CARD (ONE hostSettings, ONE Go button) -->
-    <div class="card" id="startCard">
-      <div class="row">
-        <input id="name" placeholder="Your name" />
+   <!-- ✅ START / CONNECT CARD (Go button moved to TOP row) -->
+<div class="card" id="startCard">
+  <!-- Top row: name + role + joinCode + GO -->
+  <div class="row">
+    <input id="name" placeholder="Your name" />
 
-        <select id="role">
-          <option value="host" selected>Host</option>
-          <option value="guest">Guest</option>
-        </select>
+    <select id="role">
+      <option value="host" selected>Host</option>
+      <option value="guest">Guest</option>
+    </select>
 
-        <!-- Always visible; JS disables unless Guest -->
-        <input id="joinCode" placeholder="Game code (guest)" />
-      </div>
+    <!-- Always visible; JS disables unless Guest -->
+    <input id="joinCode" placeholder="Game code (guest)" />
 
-      <!-- Host settings (host only; JS hides/locks for guest) -->
-      <div id="hostSettings" class="settingsCol">
-        <div class="field">
-          <label for="mode">Game mode</label>
-          <select id="mode">
-            <option value="ffa" selected>All vs All (FFA)</option>
-            <option value="teams">Teams</option>
-          </select>
-        </div>
+    <!-- ✅ Go belongs up here -->
+    <button id="go" class="primary" style="flex:0 0 auto">Go</button>
+  </div>
 
-        <div class="field">
-          <label for="tableBase">Times table</label>
-          <select id="tableBase"></select>
-        </div>
-
-        <div class="field" id="teamCountWrap">
-          <label for="teamCount">Teams count</label>
-          <select id="teamCount"></select>
-        </div>
-
-        <div class="field" id="friendlyFireWrap">
-          <label for="friendlyFire">Friendly fire</label>
-          <select id="friendlyFire"></select>
-        </div>
-
-        <div class="field">
-          <label for="mapChoice">Map</label>
-          <select id="mapChoice"></select>
-        </div>
-
-        <div class="field">
-          <label for="inputMode">Input</label>
-          <select id="inputMode"></select>
-        </div>
-
-        <div class="field">
-          <label for="winMode">Win mode</label>
-          <select id="winMode"></select>
-        </div>
-
-        <div class="field">
-          <label for="sessionMode">Session</label>
-          <select id="sessionMode"></select>
-        </div>
-
-        <div class="field" id="sessionMinutesWrap">
-          <label for="sessionMinutes">Timed minutes</label>
-          <input id="sessionMinutes" type="number" min="1" max="60" value="5" />
-        </div>
-      </div>
-
-      <!-- ✅ ONE Go row, ONE Go button -->
-      <div class="row">
-        <button id="go" class="primary">Go</button>
-        <span id="status" class="muted">Connecting…</span>
-      </div>
+  <!-- Host settings (host only; JS hides/locks for guest) -->
+  <div id="hostSettings" class="settingsCol">
+    <div class="field">
+      <label for="mode">Game mode</label>
+      <select id="mode">
+        <option value="ffa" selected>All vs All (FFA)</option>
+        <option value="teams">Teams</option>
+      </select>
     </div>
+
+    <div class="field">
+      <label for="tableBase">Times table</label>
+      <select id="tableBase"></select>
+    </div>
+
+    <div class="field" id="teamCountWrap">
+      <label for="teamCount">Teams count</label>
+      <select id="teamCount"></select>
+    </div>
+
+    <div class="field" id="friendlyFireWrap">
+      <label for="friendlyFire">Friendly fire</label>
+      <select id="friendlyFire"></select>
+    </div>
+
+    <div class="field">
+      <label for="mapChoice">Map</label>
+      <select id="mapChoice"></select>
+    </div>
+
+    <div class="field">
+      <label for="inputMode">Input</label>
+      <select id="inputMode"></select>
+    </div>
+
+    <div class="field">
+      <label for="winMode">Win mode</label>
+      <select id="winMode"></select>
+    </div>
+
+    <div class="field">
+      <label for="sessionMode">Session</label>
+      <select id="sessionMode"></select>
+    </div>
+
+    <div class="field" id="sessionMinutesWrap">
+      <label for="sessionMinutes">Timed minutes</label>
+      <input id="sessionMinutes" type="number" min="1" max="60" value="5" />
+    </div>
+  </div>
+
+  <!-- Status line stays below -->
+  <div class="row">
+    <span id="status" class="muted">Connecting…</span>
+  </div>
+</div>
+
 
     <!-- ✅ LOBBY CARD -->
     <div class="card hidden" id="lobbyCard">
