@@ -1485,32 +1485,43 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
 
 
 
-    socket.on("GAME_CREATED", ({ gameCode }) => {
-      el.gameCode.textContent = gameCode;
-      el.start.classList.add("hidden");
-      el.lobby.classList.remove("hidden");
-      el.hostControls.style.display = "block";
-    });
+socket.on("GAME_CREATED", ({ gameCode }) => {
+  el.gameCode.textContent = gameCode;
 
-    socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
-      el.gameCode.textContent = gameCode;
-      el.start.classList.add("hidden");
-      el.lobby.classList.remove("hidden");
-      el.hostControls.style.display = isHost ? "block" : "none";
+  // ✅ show ONLY lobby
+  document.body.classList.remove("inGame");
+  el.start.classList.add("hidden");
+  el.running.classList.add("hidden");
+  el.lobby.classList.remove("hidden");
 
-      settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
-      setHostSettingsDisabled(!isHost);
-      updateSettingsCard();
-      localInputMode = settings?.inputMode || el.inputMode?.value || "kbm";
+  el.hostControls.style.display = "block";
+});
 
-      const win = (settings.winMode === "money") ? " Win: Money." : " Win: Standard.";
-      el.lobbyHint.textContent =
-        (settings.mode === "ffa")
-          ? ("All vs All: teams are automatic." + win)
-          : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF.") + win);
 
-      renderPlayers(Array.isArray(players) ? players : []);
-    });
+socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
+  el.gameCode.textContent = gameCode;
+
+  // ✅ show ONLY lobby
+  document.body.classList.remove("inGame");
+  el.start.classList.add("hidden");
+  el.running.classList.add("hidden");
+  el.lobby.classList.remove("hidden");
+
+  el.hostControls.style.display = isHost ? "block" : "none";
+
+  settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
+  updateSettingsCard();
+  localInputMode = settings?.inputMode || el.inputMode?.value || "kbm";
+
+  const win = (settings.winMode === "money") ? " Win: Money." : " Win: Standard.";
+  el.lobbyHint.textContent =
+    (settings.mode === "ffa")
+      ? ("All vs All: teams are automatic." + win)
+      : ("Teams mode: host can assign teams." + (settings.friendlyFire ? " Friendly fire: ON." : " Friendly fire: OFF.") + win);
+
+  renderPlayers(Array.isArray(players) ? players : []);
+});
+
 
     socket.on("JOIN_FAILED", ({ reason }) => {
       el.status.textContent = "Join failed: " + reason;
