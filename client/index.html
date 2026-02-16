@@ -1317,16 +1317,24 @@ initStartSelectOptions();
   function updateRoleUI(){
   const guest = el.role.value === "guest";
 
-  // join code is always visible, but only editable for guests
-  el.joinCode.disabled = !guest;
-  el.joinCode.placeholder = guest ? "Game code (guest)" : "Game code (guest) — switch to Guest to type";
+  if (el.joinCode) {
+    el.joinCode.disabled = !guest;
+    el.joinCode.placeholder = guest
+      ? "Game code (guest)"
+      : "Game code (guest) — switch to Guest to type";
+  }
 
-  // host settings only shown for host
-  el.hostSettings.classList.toggle("hidden", guest);
+  if (el.hostSettings) {
+    el.hostSettings.classList.toggle("hidden", guest);
+  }
 
-  // guests cannot change host settings controls
   setHostSettingsDisabled(guest);
+
+  if (guest && el.joinCode) {
+    setTimeout(() => el.joinCode.focus(), 0);
+  }
 }
+
 
 
     el.role.addEventListener("change", updateRoleUI);
