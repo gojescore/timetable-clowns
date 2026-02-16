@@ -2034,6 +2034,14 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
   costsEl.appendChild(rowUse);
 }
 
+const tipEl = document.getElementById("upgTooltip");
+
+function hideUpgTip() {
+  if (!tipEl) return;
+  tipEl.classList.add("hidden");
+  tipEl.style.left = "";
+  tipEl.style.top = "";
+}
 
 function openUpgradeOffer(payload = {}) {
   const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
@@ -2050,23 +2058,6 @@ function openUpgradeOffer(payload = {}) {
   const tipEl = document.getElementById("upgTooltip");
   const tipTitleEl = document.getElementById("upgTooltipTitle");
   const tipDescEl = document.getElementById("upgTooltipDesc");
-
-  function hideUpgTip() {
-    if (!tipEl) return;
-    tipEl.classList.add("hidden");
-    tipEl.style.left = "";
-    tipEl.style.top = "";
-  }
-
-  function priceLineForOpt(opt){
-    if (!opt) return "";
-    if (opt.kind === "permanent") {
-      const c = Number.isFinite(opt.acquireCost) ? opt.acquireCost : 0;
-      return `Permanent · buy $${c}`;
-    }
-    const c = Number.isFinite(opt.useCost) ? opt.useCost : 0;
-    return `Consumable · use $${c}`;
-  }
 
 function showUpgTipNearTile(tileEl, opt) {
   if (!tipEl || !tileEl) return;
