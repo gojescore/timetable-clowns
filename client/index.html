@@ -749,17 +749,25 @@
   </div>
 
   <!-- ✅ Upgrade overlay (fixed ids + header + close text) -->
-  <div class="overlay" id="upgradeOverlay">
-    <div class="modal upgrade-modal">
-      <div class="upgrade-header">
-        <h3>Choose an upgrade</h3>
-        <button id="upgradeCloseBtn" class="close-btn">Close (Esc)</button>
-      </div>
-
-      <div id="upgradeList"></div>
-      <div class="msg" id="upgradeMsg"></div>
+<div class="overlay" id="upgradeOverlay">
+  <div class="modal upgrade-modal">
+    <div class="upgrade-header">
+      <h3>Choose an upgrade</h3>
+      <button id="upgradeCloseBtn" class="close-btn">Close (Esc)</button>
     </div>
-  </div>
+
+    <div id="upgradeList"></div>
+    <div class="msg" id="upgradeMsg"></div>
+
+    <!-- ✅ ADD TOOLTIP HERE (inside modal, before closing modal div) -->
+    <div id="upgTooltip" class="upgTooltip hidden">
+      <div class="tTitle" id="upgTooltipTitle">—</div>
+      <div class="tDesc" id="upgTooltipDesc">—</div>
+    </div>
+
+  </div> <!-- ← THIS is the modal closing div -->
+</div>
+
 
   <!-- Drop/Replace overlay -->
   <div class="overlay" id="dropOverlay">
