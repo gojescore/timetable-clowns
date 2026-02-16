@@ -3351,15 +3351,7 @@ fogCtx.drawImage(edgeCanvas, 0, 0, VIEW_W, VIEW_H);
       drawVectorFeet(px, py, ang, nowMs, moving);
       drawPixelHead(px, py, ang, p.teamId);
 
-      if (isMe) {
-        ctx.save();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(255,255,255,.30)";
-        ctx.beginPath();
-        ctx.arc(px, py, 18, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
+
 
       if (invuln) {
         ctx.save();
