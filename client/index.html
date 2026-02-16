@@ -1213,10 +1213,12 @@ function updateInvulnHudFromMe(me, nowMs) {
     }
     el.mode.addEventListener("change", updateHostModeUI);
 
-    function updateSessionUI(){
-      const timed = (el.sessionMode && el.sessionMode.value === "timed");
-      if (el.sessionMinutes) el.sessionMinutes.classList.toggle("hidden", !timed);
-    }
+function updateSessionUI(){
+  const timed = (el.sessionMode && el.sessionMode.value === "timed");
+  const wrap = document.getElementById("sessionMinutesWrap");
+  if (wrap) wrap.classList.toggle("hidden", !timed);
+}
+
     el.sessionMode.addEventListener("change", updateSessionUI);
 
     updateRoleUI();
