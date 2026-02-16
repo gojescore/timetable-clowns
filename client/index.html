@@ -1462,6 +1462,7 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
       el.hostControls.style.display = isHost ? "block" : "none";
 
       settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
+      setHostSettingsDisabled(!isHost);
       updateSettingsCard();
       localInputMode = settings?.inputMode || el.inputMode?.value || "kbm";
 
@@ -1481,6 +1482,7 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
     socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
       if (s) {
         settings = s;
+        setHostSettingsDisabled(!isHost);
         updateSettingsCard();
         localInputMode = settings?.inputMode || localInputMode;
       }
