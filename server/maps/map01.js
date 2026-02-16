@@ -89,7 +89,7 @@ module.exports = {
         { side: "S", at: 210, size: 120 },
       ],
       // old 2 -> new 2
-      machines: [{ id: "m2", num: 2, x: 830, y: 270 }],
+      machines: [{ id: "m2", num: 3, x: 830, y: 270 }],
     },
     {
       id: "r3",
@@ -99,7 +99,7 @@ module.exports = {
         { side: "S", at: 210, size: 120 },
       ],
       // old 3 -> new 3
-      machines: [{ id: "m3", num: 3, x: 1310, y: 270 }],
+      machines: [{ id: "m3", num: 2, x: 1310, y: 270 }],
     },
     {
       id: "r4",
