@@ -1385,6 +1385,21 @@ function updateSettingsCard(){
   el.guestSettingsCard.classList.remove("hidden");
   el.guestSettingsText.textContent = settingsSummary(settings);
 }
+function setHostSettingsDisabled(disabled){
+  const controls = [
+    el.mode,
+    el.tableBase,
+    el.teamCount,
+    el.friendlyFire,
+    el.mapChoice,
+    el.inputMode,
+    el.winMode,
+    el.sessionMode,
+    el.sessionMinutes,
+  ].filter(Boolean);
+
+  for (const c of controls) c.disabled = !!disabled;
+}
 
 
 const upgradeImgOk = new Map(); // id -> true/false
