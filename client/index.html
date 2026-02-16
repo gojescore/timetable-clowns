@@ -1294,11 +1294,16 @@ initStartSelectOptions();
 
 
     // ===== Role UI =====
-    function updateRoleUI(){
-      const guest = el.role.value === "guest";
-      el.joinCode.classList.toggle("hidden", !guest);
-      el.hostSettings.classList.toggle("hidden", guest);
-    }
+  function updateRoleUI(){
+  const guest = el.role.value === "guest";
+
+  el.joinCode.classList.toggle("hidden", !guest);
+  el.hostSettings.classList.toggle("hidden", guest);
+
+  // ✅ Guests cannot change options on the start screen
+  setHostSettingsDisabled(guest);
+}
+
     el.role.addEventListener("change", updateRoleUI);
 
     function updateHostModeUI(){
