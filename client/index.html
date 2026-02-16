@@ -401,6 +401,30 @@
   line-height: 1.35;
   white-space: pre-line; /* allows price + newline + desc */
 }
+    .upgTooltip .tCosts{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin: 6px 0 8px;
+}
+
+.upgTooltip .tCostRow{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  font-size:12px;
+  color: rgba(230,237,247,.88);
+}
+
+.upgTooltip .tCostLabel{
+  color: rgba(230,237,247,.70);
+  font-weight:900;
+}
+
+.upgTooltip .tCostVal{
+  font-weight:1000;
+}
+
 
 
     .upgTile:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
@@ -752,10 +776,15 @@
     <div class="msg" id="upgradeMsg"></div>
 
     <!-- ✅ ADD TOOLTIP HERE (inside modal, before closing modal div) -->
-    <div id="upgTooltip" class="upgTooltip hidden">
-      <div class="tTitle" id="upgTooltipTitle">—</div>
-      <div class="tDesc" id="upgTooltipDesc">—</div>
-    </div>
+<div id="upgTooltip" class="upgTooltip hidden">
+  <div class="tTitle" id="upgTooltipTitle">—</div>
+
+  <!-- ✅ ADD THIS LINE -->
+  <div class="tCosts" id="upgTooltipCosts"></div>
+
+  <div class="tDesc" id="upgTooltipDesc">—</div>
+</div>
+
 
   </div> <!-- ← THIS is the modal closing div -->
 </div>
