@@ -352,19 +352,58 @@
       min-height:110px;
       height:clamp(110px, 16vh, 150px);
     }
-    .upgTile{
-  background-size: cover;
-  background-position: center;
+/* Upgrade tiles: show full image (no crop) */
+.upgTile{
   position: relative;
   overflow: hidden;
+
+  /* ✅ do NOT crop the image */
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+
+  /* helps when images have transparency */
+  background-color: rgba(0,0,0,.18);
 }
 
+/* ✅ remove the heavy gradient overlay (so image is not "cut" visually) */
 .upgTile::before{
   content:"";
   position:absolute;
   inset:0;
-  background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.65));
+  background: rgba(0,0,0,.10);
   pointer-events:none;
+}
+
+.upgTile > *{
+  position: relative;
+  z-index: 1;
+}
+
+/* --- Tooltip (side popup) --- */
+.upgTooltip{
+  position: fixed;
+  z-index: 9999;
+  width: 260px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(10, 14, 26, .92);
+  color: rgba(230,237,247,.95);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+  pointer-events: none;
+}
+.upgTooltip.hidden{ display:none; }
+
+.upgTooltip .tTitle{
+  font-weight: 1000;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.upgTooltip .tDesc{
+  font-size: 12px;
+  color: rgba(230,237,247,.78);
+  line-height: 1.35;
 }
 
 .upgTile > *{
