@@ -951,6 +951,8 @@ const SPLAT_LIFETIME_MS = 500; // 0.5 secs, tweak
       friendlyFire: document.getElementById("friendlyFire"),
       mapChoice: document.getElementById("mapChoice"),
       inputMode: document.getElementById("inputMode"),
+      guestSettingsCard: document.getElementById("guestSettingsCard"),
+      guestSettingsText: document.getElementById("guestSettingsText"),
 
       winMode: document.getElementById("winMode"),
       sessionMode: document.getElementById("sessionMode"),
@@ -1042,7 +1044,36 @@ const SPLAT_LIFETIME_MS = 500; // 0.5 secs, tweak
     // ✅ Only show invuln visuals after DEATH->RESPAWN (not on hit/save)
 const alivePrev = new Map();              // playerId -> boolean
 const respawnInvulnUntil = new Map();     // playerId -> ms timestamp
-  
+
+    function settingsSummary(s){
+  if (!s) return "—";
+  const mode = s.mode === "teams" ? `Teams (${(s.teamCount ?? 2)} teams)` : "FFA";
+  const ff = (s.mode === "teams") ? (s.friendlyFire ? "ON" : "OFF") : "—";
+  const base = Number.isFinite(s.tableBase) ? s.tableBase : "—";
+  const map = s.mapChoice || "—";
+  const input = s.inputMode || "—";
+  const win = (s.winMode === "money") ? "Money" : "Standard";
+  const session = (s.sessionMode === "timed")
+    ? `Timed (${s.sessionMinutes ?? 5} min)`
+    : "Standard";
+
+  return [
+    `Mode: ${mode}`,
+    `Friendly fire: ${ff}`,
+    `Table: ${base}`,
+    `Map: ${map}`,
+    `Input: ${input}`,
+    `Win: ${win}`,
+    `Session: ${session}`,
+  ].join(" · ");
+}
+
+function updateGuestSettingsUI(){
+  const isGuest = !isHost;
+  el.guestSettingsCard.classList.toggle("hidden", !isGuest);
+  if (isGuest) el.guestSettingsText.textContent = settingsSummary(settings);
+}
+
     function noteDeathSplatsFromSnapshot(snap, nowMs){
   const ps = Array.isArray(snap?.players) ? snap.players : [];
   for (const p of ps) {
