@@ -628,6 +628,7 @@
       </p>
     </div>
 
+<!-- ✅ START / CONNECT CARD (FIXED: one hostSettings, one Go button, clean nesting) -->
 <div class="card" id="startCard">
   <div class="row">
     <input id="name" placeholder="Your name" />
@@ -637,75 +638,70 @@
       <option value="guest">Guest</option>
     </select>
 
-    <!-- Always visible, but only editable when Guest -->
+    <!-- Always visible, but only editable when Guest (JS handles disabling) -->
     <input id="joinCode" placeholder="Game code (guest)" />
   </div>
 
-  <!-- Host settings (host only) -->
+  <!-- ✅ Host settings (ONE place, ONE id) -->
   <div id="hostSettings" class="settingsCol">
-    <!-- your host settings fields here -->
+    <div class="field">
+      <label for="mode">Game mode</label>
+      <select id="mode">
+        <option value="ffa" selected>All vs All (FFA)</option>
+        <option value="teams">Teams</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="tableBase">Times table</label>
+      <select id="tableBase"></select>
+    </div>
+
+    <div class="field" id="teamCountWrap">
+      <label for="teamCount">Teams count</label>
+      <select id="teamCount"></select>
+    </div>
+
+    <div class="field" id="friendlyFireWrap">
+      <label for="friendlyFire">Friendly fire</label>
+      <select id="friendlyFire"></select>
+    </div>
+
+    <div class="field">
+      <label for="mapChoice">Map</label>
+      <select id="mapChoice"></select>
+    </div>
+
+    <div class="field">
+      <label for="inputMode">Input</label>
+      <select id="inputMode"></select>
+    </div>
+
+    <div class="field">
+      <label for="winMode">Win mode</label>
+      <select id="winMode"></select>
+    </div>
+
+    <div class="field">
+      <label for="sessionMode">Session</label>
+      <select id="sessionMode"></select>
+    </div>
+
+    <div class="field" id="sessionMinutesWrap">
+      <label for="sessionMinutes">Timed minutes</label>
+      <input id="sessionMinutes" type="number" min="1" max="60" value="5" />
+    </div>
   </div>
 
-  <!-- Go button UNDER role row -->
+  <!-- ✅ ONE Go row, ONE Go button -->
   <div class="row">
     <button id="go" class="primary">Go</button>
     <span id="status" class="muted">Connecting…</span>
   </div>
 </div>
 
-
-<div id="hostSettings" class="settingsCol">
-  <div class="field">
-    <label for="mode">Game mode</label>
-    <select id="mode">
-      <option value="ffa" selected>All vs All (FFA)</option>
-      <option value="teams">Teams</option>
-    </select>
-  </div>
-
-  <div class="field">
-    <label for="tableBase">Times table</label>
-    <select id="tableBase"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="teamCount">Teams count</label>
-    <select id="teamCount"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="friendlyFire">Friendly fire</label>
-    <select id="friendlyFire"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="mapChoice">Map</label>
-    <select id="mapChoice"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="inputMode">Input</label>
-    <select id="inputMode"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="winMode">Win mode</label>
-    <select id="winMode"> ... </select>
-  </div>
-
-  <div class="field">
-    <label for="sessionMode">Session</label>
-    <select id="sessionMode"> ... </select>
-  </div>
-
-  <div class="field" id="sessionMinutesWrap">
-    <label for="sessionMinutes">Timed minutes</label>
-    <input id="sessionMinutes" type="number" min="1" max="60" value="5" />
-  </div>
-</div>
-
+<!-- ✅ LOBBY CARD (unchanged, just included so the section is complete) -->
 <div class="card hidden" id="lobbyCard">
-
   <div class="row" style="align-items:flex-end">
     <div>
       <div class="muted">Game code</div>
@@ -731,71 +727,72 @@
     </div>
   </div>
 
-  <!-- 👇 Guest-only settings summary -->
+  <!-- Guest-only settings summary -->
   <div class="card hidden" id="guestSettingsCard">
     <h3>Host settings</h3>
     <div class="muted" id="guestSettingsText">—</div>
   </div>
 
-      <h3>Players</h3>
-      <ul id="playerList"></ul>
-      <p class="muted" id="lobbyHint">Everyone must have a team before Start game works.</p>
+  <h3>Players</h3>
+  <ul id="playerList"></ul>
+  <p class="muted" id="lobbyHint">Everyone must have a team before Start game works.</p>
+</div>
+
+<!-- ✅ RUNNING CARD (unchanged, included for continuity) -->
+<div class="card hidden" id="runningCard">
+  <div class="gameLayout">
+    <div class="canvasWrap" id="canvasWrap">
+      <div class="hudOverlay">
+        <div class="hudPill" title="Money">
+          <span class="dotCoin"></span>
+          <span id="hudMoney">$0</span>
+        </div>
+
+        <div class="hudPill" title="Life">
+          ❤️ <span id="hudLife">1</span>
+        </div>
+
+        <div class="hudPill" title="Cakes (ammo)">
+          🍰 <span id="hudCakes">7</span>
+        </div>
+
+        <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
+          🛡️ <span id="hudInvulnText">INV 0.0s</span>
+        </div>
+
+        <div class="hudPill timer hidden" id="hudTimer" title="Time left">
+          ⏱️ <span id="hudTimerText">--:--</span>
+        </div>
+
+        <div class="hudPill balloon hidden" id="hudBalloon" title="Balloon active">
+          🎈 <span id="hudBalloonText">BAL 0.0s</span>
+        </div>
+      </div>
+
+      <canvas id="game"></canvas>
     </div>
 
-    <div class="card hidden" id="runningCard">
-      <div class="gameLayout">
-        <div class="canvasWrap" id="canvasWrap">
-          <div class="hudOverlay">
-            <div class="hudPill" title="Money">
-              <span class="dotCoin"></span>
-              <span id="hudMoney">$0</span>
-            </div>
+    <div class="sidePanel">
+      <div class="sideCard">
+        <div class="sideTitle">Menu</div>
+        <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
+      </div>
 
-            <div class="hudPill" title="Life">
-              ❤️ <span id="hudLife">1</span>
-            </div>
+      <div class="sideCard" style="flex:1 1 auto">
+        <div class="sideTitle">Consumables (8 / 9 / 0)</div>
+        <div class="upgradeSlotsCol" id="upgradeSlotsCons"></div>
 
-            <div class="hudPill" title="Cakes (ammo)">
-              🍰 <span id="hudCakes">7</span>
-            </div>
+        <div class="sideTitle" style="margin-top:12px">Permanents (stacking)</div>
+        <div class="upgradeSlotsCol" id="upgradeSlotsPerm"></div>
 
-            <div class="hudPill invuln hidden" id="hudInvuln" title="Invulnerable after respawn">
-              🛡️ <span id="hudInvulnText">INV 0.0s</span>
-            </div>
-
-            <div class="hudPill timer hidden" id="hudTimer" title="Time left">
-              ⏱️ <span id="hudTimerText">--:--</span>
-            </div>
-
-            <div class="hudPill balloon hidden" id="hudBalloon" title="Balloon active">
-              🎈 <span id="hudBalloonText">BAL 0.0s</span>
-            </div>
-          </div>
-
-          <canvas id="game"></canvas>
-        </div>
-
-        <div class="sidePanel">
-          <div class="sideCard">
-            <div class="sideTitle">Menu</div>
-            <button id="leaveGame" class="danger" title="Safe: reload page">Leave / Back to lobby</button>
-          </div>
-
-          <div class="sideCard" style="flex:1 1 auto">
-            <div class="sideTitle">Consumables (8 / 9 / 0)</div>
-            <div class="upgradeSlotsCol" id="upgradeSlotsCons"></div>
-
-            <div class="sideTitle" style="margin-top:12px">Permanents (stacking)</div>
-            <div class="upgradeSlotsCol" id="upgradeSlotsPerm"></div>
-
-            <p class="muted" style="margin:10px 0 0; font-size:13px">
-              Consumables cost money to use. Permanents cost money to buy and can stack (x2, x3…).
-            </p>
-          </div>
-        </div>
+        <p class="muted" style="margin:10px 0 0; font-size:13px">
+          Consumables cost money to use. Permanents cost money to buy and can stack (x2, x3…).
+        </p>
       </div>
     </div>
   </div>
+</div>
+
 
   <!-- Prompt overlay -->
   <div class="overlay" id="overlay">
