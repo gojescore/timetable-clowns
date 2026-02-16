@@ -2006,6 +2006,42 @@ function hideUpgTip(){
       if (b && typeof b.click === "function") b.click();
     }
 
+    function setTooltipContent(opt){
+  const titleEl = document.getElementById("upgTooltipTitle");
+  const costsEl = document.getElementById("upgTooltipCosts");
+  const descEl  = document.getElementById("upgTooltipDesc");
+  if (!titleEl || !costsEl || !descEl) return;
+
+  // 1) Headline / name
+  const name = opt?.name || opt?.id || "Upgrade";
+  titleEl.textContent = name;
+
+  // 4) Description (last)
+  const desc = opt?.desc || "";
+  descEl.textContent = desc;
+
+  // 2) Purchase cost (always shown)
+  const purchaseCost = Number.isFinite(opt?.acquireCost) ? opt.acquireCost : 0;
+
+  // 3) Use cost (always shown)
+  const useCost = Number.isFinite(opt?.useCost) ? opt.useCost : 0;
+
+  costsEl.innerHTML = "";
+
+  const rowBuy = document.createElement("div");
+  rowBuy.className = "tCostRow";
+  rowBuy.innerHTML =
+    `<div class="tCostLabel">Purchase cost</div><div class="tCostVal">$${purchaseCost}</div>`;
+  costsEl.appendChild(rowBuy);
+
+  const rowUse = document.createElement("div");
+  rowUse.className = "tCostRow";
+  rowUse.innerHTML =
+    `<div class="tCostLabel">Use cost</div><div class="tCostVal">$${useCost}</div>`;
+  costsEl.appendChild(rowUse);
+}
+
+
 function openUpgradeOffer(payload = {}) {
   const offerId = payload.offerId ?? payload.offerID ?? payload.offer_id ?? null;
   const options = payload.options;
