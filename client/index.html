@@ -39,6 +39,32 @@
     .muted{color:var(--muted)}
     .hidden{display:none}
 
+    /* Lobby: stacked settings (host) */
+.settingsCol{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:10px;
+  max-width: 420px;
+}
+
+.field{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.field label{
+  font-size:12px;
+  font-weight:900;
+  color:rgba(230,237,247,.75);
+}
+
+.field select, .field input{
+  width:100%;
+}
+
+
     .card{
       background:var(--panel);
       border:1px solid var(--line);
@@ -612,54 +638,56 @@
         <input id="joinCode" placeholder="Game code (guest)" class="hidden" />
       </div>
 
-      <div class="row" id="hostSettings">
-        <select id="mode">
-          <option value="ffa" selected>All vs All (FFA)</option>
-          <option value="teams">Teams</option>
-        </select>
+<div id="hostSettings" class="settingsCol">
+  <div class="field">
+    <label for="mode">Game mode</label>
+    <select id="mode">
+      <option value="ffa" selected>All vs All (FFA)</option>
+      <option value="teams">Teams</option>
+    </select>
+  </div>
 
-        <select id="tableBase">
-          <option value="1">Table 1</option><option value="2">Table 2</option><option value="3">Table 3</option>
-          <option value="4" selected>Table 4</option>
-          <option value="5">Table 5</option><option value="6">Table 6</option><option value="7">Table 7</option>
-          <option value="8">Table 8</option><option value="9">Table 9</option><option value="10">Table 10</option>
-        </select>
+  <div class="field">
+    <label for="tableBase">Times table</label>
+    <select id="tableBase"> ... </select>
+  </div>
 
-        <select id="teamCount">
-          <option value="1">1 team</option>
-          <option value="2">2 teams</option>
-          <option value="3">3 teams</option>
-          <option value="4" selected>4 teams</option>
-        </select>
+  <div class="field">
+    <label for="teamCount">Teams count</label>
+    <select id="teamCount"> ... </select>
+  </div>
 
-        <select id="friendlyFire" title="Friendly fire (teams)">
-          <option value="0" selected>Friendly fire: OFF</option>
-          <option value="1">Friendly fire: ON</option>
-        </select>
+  <div class="field">
+    <label for="friendlyFire">Friendly fire</label>
+    <select id="friendlyFire"> ... </select>
+  </div>
 
-        <select id="mapChoice" title="Map">
-          <option value="map01" selected>Training Hall (map01)</option>
-          <option value="random">Random</option>
-        </select>
+  <div class="field">
+    <label for="mapChoice">Map</label>
+    <select id="mapChoice"> ... </select>
+  </div>
 
-        <select id="inputMode">
-          <option value="kbm" selected>Keyboard + Mouse</option>
-          <option value="kb">Keyboard only</option>
-          <option value="kbm_gamepad">Keyboard + Mouse + Controller</option>
-        </select>
+  <div class="field">
+    <label for="inputMode">Input</label>
+    <select id="inputMode"> ... </select>
+  </div>
 
-        <select id="winMode" title="Win mode">
-          <option value="standard" selected>Win: Standard</option>
-          <option value="money">Win: Money (most money wins)</option>
-        </select>
+  <div class="field">
+    <label for="winMode">Win mode</label>
+    <select id="winMode"> ... </select>
+  </div>
 
-        <select id="sessionMode" title="Session">
-          <option value="standard" selected>Session: Standard</option>
-          <option value="timed">Session: Timed</option>
-        </select>
+  <div class="field">
+    <label for="sessionMode">Session</label>
+    <select id="sessionMode"> ... </select>
+  </div>
 
-        <input id="sessionMinutes" type="number" min="1" max="60" value="5" title="Timed minutes" />
-      </div>
+  <div class="field" id="sessionMinutesWrap">
+    <label for="sessionMinutes">Timed minutes</label>
+    <input id="sessionMinutes" type="number" min="1" max="60" value="5" />
+  </div>
+</div>
+
 
       <div class="row">
         <button id="go" class="primary">Go</button>
