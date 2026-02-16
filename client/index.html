@@ -1567,75 +1567,84 @@ socket.on("JOIN_SUCCESS", ({ gameCode, players, settings: s }) => {
       }
     }
 
-    socket.on("GAME_STARTED", (payload = {}) => {
-      document.body.classList.add("inGame");
-      alivePrev.clear();
-      respawnInvulnUntil.clear();
+socket.on("GAME_STARTED", (payload = {}) => {
+  // ✅ show ONLY the game screen
+  document.body.classList.add("inGame");
+  el.start.classList.add("hidden");
+  el.lobby.classList.add("hidden");
+  el.running.classList.remove("hidden");
 
-      el.lobby.classList.add("hidden");
-      el.running.classList.remove("hidden");
-      el.status.textContent = "Game running.";
+  // reset death/respawn tracking
+  alivePrev.clear();
+  respawnInvulnUntil.clear();
 
-      mapData = payload.map || null;
-      if (mapData?.world) world = mapData.world;
+  el.status.textContent = "Game running.";
 
-      settings = payload.settings || settings;
-      localInputMode = settings?.inputMode || localInputMode;
+  mapData = payload.map || null;
+  if (mapData?.world) world = mapData.world;
 
-      el.hudMoney.textContent = "$0";
-      el.hudLife.textContent = "1";
-      el.hudCakes.textContent = String(MAX_CAKES);
+  settings = payload.settings || settings;
+  localInputMode = settings?.inputMode || localInputMode;
 
-      el.hudInvuln.classList.add("hidden");
-      el.hudBalloon.classList.add("hidden");
+  // reset HUD
+  el.hudMoney.textContent = "$0";
+  el.hudLife.textContent = "1";
+  el.hudCakes.textContent = String(MAX_CAKES);
 
-      gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
-      if (gameEndAt) {
-        el.hudTimer.classList.remove("hidden");
-        el.hudTimerText.textContent = formatMMSS(gameEndAt - Date.now());
-      } else {
-        el.hudTimer.classList.add("hidden");
-      }
+  el.hudInvuln.classList.add("hidden");
+  el.hudBalloon.classList.add("hidden");
 
-      myServerUpgrades = { permanent: [], slots: [] };
-      lastUpgSig = "";
-      activeConsumableSlotIndex = 0;
-      renderUpgradeBar(true);
+  // timed session HUD
+  gameEndAt = Number.isFinite(payload?.endAt) ? payload.endAt : null;
+  if (gameEndAt) {
+    el.hudTimer.classList.remove("hidden");
+    el.hudTimerText.textContent = formatMMSS(gameEndAt - Date.now());
+  } else {
+    el.hudTimer.classList.add("hidden");
+  }
 
-      // reset kb picker
-      upgradePicker = { buttons: [], cols: 3, index: 0, open: false };
+  // reset upgrades UI
+  myServerUpgrades = { permanent: [], slots: [] };
+  lastUpgSig = "";
+  activeConsumableSlotIndex = 0;
+  renderUpgradeBar(true);
 
-      el.endOverlay.classList.remove("show");
+  // reset kb picker
+  upgradePicker = { buttons: [], cols: 3, index: 0, open: false };
 
-      // reset mouse aim state each round (prevents stale values)
-      mouseAim.has = false;
+  // close end screen
+  el.endOverlay.classList.remove("show");
 
-      // rebuild fog caches for this map (visual-only)
-      rebuildWallCachesFromMap(mapData);
-    });
+  // reset mouse aim state each round (prevents stale values)
+  mouseAim.has = false;
 
-    socket.on("STATE_SNAPSHOT", (snap) => {
-      lastSnapshot = snap;
-      if (snap.world) world = snap.world;
+  // rebuild fog caches for this map (visual-only)
+  rebuildWallCachesFromMap(mapData);
+});
 
-      const nowMs = Date.now();
-      noteRespawnInvulnFromSnapshot(snap, nowMs);
+socket.on("STATE_SNAPSHOT", (snap) => {
+  lastSnapshot = snap;
+  if (snap.world) world = snap.world;
 
-      updateTimerHudFromSnapshot(snap, nowMs);
+  const nowMs = Date.now();
+  noteRespawnInvulnFromSnapshot(snap, nowMs);
 
-      const me = snap.players?.find(p => p.id === myId);
-      if (me) {
-        el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
-        el.hudLife.textContent = me.alive === false ? "0" : "1";
-        el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
+  updateTimerHudFromSnapshot(snap, nowMs);
 
-        updateInvulnHudFromMe(me, nowMs);
-        updateBalloonHudFromMe(me, nowMs);
+  const me = snap.players?.find(p => p.id === myId);
+  if (me) {
+    el.hudMoney.textContent = "$" + (typeof me.money === "number" ? me.money : 0);
+    el.hudLife.textContent = me.alive === false ? "0" : "1";
+    el.hudCakes.textContent = String(Number.isFinite(me.cakes) ? me.cakes : MAX_CAKES);
 
-        myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
-        renderUpgradeBar(false);
-      }
-    });
+    updateInvulnHudFromMe(me, nowMs);
+    updateBalloonHudFromMe(me, nowMs);
+
+    myServerUpgrades = me.upgrades || { permanent: [], slots: [] };
+    renderUpgradeBar(false);
+  }
+});
+
 
     // GAME_ENDED + bigger leaderboard + TEAM winner highlight
     socket.on("GAME_ENDED", (p = {}) => {
