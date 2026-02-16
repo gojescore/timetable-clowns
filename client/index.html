@@ -1453,6 +1453,7 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
       el.hostControls.style.display = isHost ? "block" : "none";
 
       settings = s || { mode: "ffa", teamCount: 0, friendlyFire: false };
+      updateSettingsCard();
       localInputMode = settings?.inputMode || el.inputMode?.value || "kbm";
 
       const win = (settings.winMode === "money") ? " Win: Money." : " Win: Standard.";
@@ -1471,6 +1472,7 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
     socket.on("LOBBY_UPDATE", ({ players, settings: s }) => {
       if (s) {
         settings = s;
+        updateSettingsCard();
         localInputMode = settings?.inputMode || localInputMode;
       }
       renderPlayers(Array.isArray(players) ? players : []);
