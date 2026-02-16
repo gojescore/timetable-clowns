@@ -1046,30 +1046,31 @@ socket.on("SPLAT", (payload = {}) => {
     el.leaveGame.addEventListener("click", () => location.reload());
     el.endBackBtn.addEventListener("click", () => location.reload());
 
-    // -----------------------------
-// Remember player name (localStorage)
 // -----------------------------
-const LS_NAME_KEY = "tc_player_name";
+// Remember player name (PER TAB)
+// -----------------------------
+const SS_NAME_KEY = "tc_player_name_tab";
 
-// Load saved name into the input on page load
+// Restore on load (per-tab)
 (function restoreName(){
   try {
-    const saved = localStorage.getItem(LS_NAME_KEY);
+    const saved = sessionStorage.getItem(SS_NAME_KEY);
     if (saved && el.name && !el.name.value) el.name.value = saved;
   } catch {}
 })();
 
-// Save on typing (so it’s always up to date)
+// Save on typing (per-tab)
 if (el.name) {
   el.name.addEventListener("input", () => {
-    try { localStorage.setItem(LS_NAME_KEY, el.name.value.trim()); } catch {}
+    try { sessionStorage.setItem(SS_NAME_KEY, el.name.value.trim()); } catch {}
   });
 }
 
-// Also save right before connecting (covers “click Go” without typing)
+// Save right before connecting / reloading (per-tab)
 function persistNameNow(){
-  try { localStorage.setItem(LS_NAME_KEY, (el.name?.value || "").trim()); } catch {}
+  try { sessionStorage.setItem(SS_NAME_KEY, (el.name?.value || "").trim()); } catch {}
 }
+
 
     let myId = null;
     let isHost = false;
