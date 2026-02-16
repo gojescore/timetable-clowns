@@ -695,28 +695,47 @@
       </div>
     </div>
 
-    <div class="card hidden" id="lobbyCard">
-      <div class="row" style="align-items:flex-end">
-        <div>
-          <div class="muted">Game code</div>
-          <div class="code" id="gameCode">-----</div>
-        </div>
-        <div>
-          <div class="muted">You</div>
-          <div>
-            <span class="pill" id="meId">?</span>
-            <span class="pill" id="meTeam">team: ?</span>
-          </div>
-        </div>
-        <div class="hostOnly" id="hostControls">
-          <div class="muted">Host</div>
-          <button id="startGame" class="primary">Start game</button>
-        </div>
-        <div>
-          <div class="muted">Navigation</div>
-          <button id="leaveLobby" class="danger" title="Safe: reload page">Leave / Back</button>
-        </div>
+<div class="card hidden" id="lobbyCard">
+
+  <div class="row" style="align-items:flex-end">
+    <div>
+      <div class="muted">Game code</div>
+      <div class="code" id="gameCode">-----</div>
+    </div>
+
+    <div>
+      <div class="muted">You</div>
+      <div>
+        <span class="pill" id="meId">?</span>
+        <span class="pill" id="meTeam">team: ?</span>
       </div>
+    </div>
+
+    <div class="hostOnly" id="hostControls">
+      <div class="muted">Host</div>
+      <button id="startGame" class="primary">Start game</button>
+    </div>
+
+    <div>
+      <div class="muted">Navigation</div>
+      <button id="leaveLobby" class="danger">Leave / Back</button>
+    </div>
+  </div>
+
+  <!-- 👇 Guest-only settings summary -->
+  <div class="card hidden" id="guestSettingsCard">
+    <h3>Host settings</h3>
+    <div class="muted" id="guestSettingsText">—</div>
+  </div>
+
+  <h3>Players</h3>
+  <ul id="playerList"></ul>
+
+  <p class="muted" id="lobbyHint">
+    Everyone must have a team before Start game works.
+  </p>
+</div>
+
 
       <h3>Players</h3>
       <ul id="playerList"></ul>
