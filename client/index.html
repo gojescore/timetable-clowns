@@ -3494,6 +3494,7 @@ if (me) {
     // 3) draw masked bullets on top (crisp, only in cone)
     ctx.drawImage(bulletCanvas, 0, 0, VIEW_W, VIEW_H);
     drawWallsFogOutline(camX, camY);
+    if (me) drawClownTopDown(me, camX, camY, true, nowMs);
   }
 }
 
