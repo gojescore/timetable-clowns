@@ -1389,6 +1389,7 @@ function updateSessionUI(){
     }
 
     el.go.addEventListener("click", () => {
+      persistNameNow();   // ✅ remember name
       sayHello();
       if (el.role.value === "host") {
         isHost = true;
