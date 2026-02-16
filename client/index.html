@@ -1310,26 +1310,34 @@ initStartSelectOptions();
 
 
     // ===== Role UI =====
-  function updateRoleUI(){
-  const guest = el.role.value === "guest";
+function setHostSettingsDisabled(disabled){
+  const wrap = el.hostSettings;
+  if (!wrap) return;
+  const controls = wrap.querySelectorAll("input, select, button, textarea");
+  controls.forEach(c => c.disabled = disabled);
+}
 
-  if (el.joinCode) {
-    el.joinCode.disabled = !guest;
-    el.joinCode.placeholder = guest
-      ? "Game code (guest)"
-      : "Game code (guest) — switch to Guest to type";
-  }
+function updateRoleUI(){
+  const guest = (el.role.value === "guest");
 
-  if (el.hostSettings) {
-    el.hostSettings.classList.toggle("hidden", guest);
-  }
+  // join code: always visible, only editable for guest
+  el.joinCode.disabled = !guest;
+  el.joinCode.placeholder = guest
+    ? "Game code (guest)"
+    : "Game code (guest) — switch to Guest to type";
 
+  // host settings only visible for host
+  el.hostSettings.classList.toggle("hidden", guest);
+
+  // also hard-disable host settings controls if guest (extra safety)
   setHostSettingsDisabled(guest);
 
-  if (guest && el.joinCode) {
-    setTimeout(() => el.joinCode.focus(), 0);
-  }
+  if (guest) setTimeout(() => el.joinCode.focus(), 0);
 }
+
+el.role.addEventListener("change", updateRoleUI);
+updateRoleUI(); // ✅ run once on load
+
 
 
 
