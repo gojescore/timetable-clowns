@@ -1969,6 +1969,43 @@ function setUpgradeCardBackground(cardEl, upgradeId) {
       if (next >= btns.length) next = btns.length - 1;
       setUpgradeSel(next);
     }
+
+    // --- Upgrade tooltip ---
+const tipEl = document.getElementById("upgTooltip");
+const tipTitleEl = document.getElementById("upgTooltipTitle");
+const tipDescEl = document.getElementById("upgTooltipDesc");
+
+function showUpgTipNearTile(tileEl, title, desc){
+  if (!tipEl) return;
+
+  tipTitleEl.textContent = title || "Upgrade";
+  tipDescEl.textContent = desc || "";
+
+  tipEl.classList.remove("hidden");
+
+  const r = tileEl.getBoundingClientRect();
+
+  // prefer right side, else left
+  let x = r.right + 12;
+  let y = r.top + 6;
+
+  const pad = 10;
+  const w = 260;
+  const h = 110; // approximate; we'll just clamp safely
+
+  if (x + w + pad > window.innerWidth) x = r.left - w - 12;
+  x = Math.max(pad, Math.min(window.innerWidth - w - pad, x));
+  y = Math.max(pad, Math.min(window.innerHeight - h - pad, y));
+
+  tipEl.style.left = x + "px";
+  tipEl.style.top = y + "px";
+}
+
+function hideUpgTip(){
+  if (!tipEl) return;
+  tipEl.classList.add("hidden");
+}
+
     function clickUpgradeSel(){
       const btns = upgradePicker.buttons || [];
       if (!btns.length) return;
